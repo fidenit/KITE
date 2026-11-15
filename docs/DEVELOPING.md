@@ -75,3 +75,28 @@ card k2 decision ws 3x2 장소 결정
 set k2 text 어디로 할까요?
 add k2 o1 강릉 | 멀지만 시설이 좋음
 ```
+
+## 안드로이드 앱 (`android/`)
+
+폰에서 쓰는 ALI. 엔진은 폰에 없다: 설정에 적은 서버에 SSH 로 붙어서 그 서버의 Claude Code 를 턴마다 돌린다 (데스크톱의 `src/cc.rs` 와 같은 방식). 그래서 서버의 Claude Code 로그인, `CLAUDE.md`, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용된다. 화면은 코틀린(Jetpack Compose)으로 따로 그린다.
+
+```sh
+cd android
+./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
+./gradlew testDebugUnitTest    # 보드·수정 언어·스트림 해석·서버 명령 줄 시험
+```
+
+JDK 17 과 안드로이드 SDK(플랫폼 34)가 필요하다. `android/local.properties` 에 `sdk.dir=` 로 SDK 자리를 적는다.
+
+| 파일 (`app/src/main/java/com/fidenit/ali/`) | 역할 |
+|---|---|
+| `core/Board.kt`, `core/Lang.kt` | 보드와 화면 수정 언어. `src/core.rs`, `src/lang.rs` 를 옮긴 것 |
+| `engine/Ssh.kt`, `engine/ClaudeCode.kt` | SSH 연결, 서버의 `claude -p` 실행과 출력 해석 |
+| `voice/` | 마이크·스피커, ElevenLabs 받아쓰기와 말하기, 멈춤·기다림 낱말 |
+| `AliViewModel.kt` | 한 턴의 흐름, 소리와 카드의 순서, 말로 대화하기 |
+| `ui/` | 화면: 주제, 카드, 설정 |
+
+- 지시문은 데스크톱과 같은 `src/prompt.md` 를 빌드할 때 복사해 쓴다. 부품 표는 `core/Board.kt` 의 `PARTS` 에서 만든다: `src/core.rs` 의 `PARTS` 를 고치면 여기도 같이 고친다 (`partsMatchDesktop` 시험이 어긋남을 잡는다).
+- 서버에는 `~/.ali/system.txt`(지시문)와 `~/.ali/vault/`(기억 노트)가 만들어진다.
+- 실제 서버로 시험: `ALI_SSH_HOST`, `ALI_SSH_PORT`, `ALI_SSH_USER`, `ALI_SSH_KEY`(개인 키 파일)를 주고 `./gradlew testDebugUnitTest --tests '*LiveTest*'`. 실제로 턴을 두 번 돌린다.
+- 데스크톱에 있고 여기 없는 것: 경로 찾기, 작업자, 브라우저 도구, 문자·전화, 판단 모델(Jev), 옛 대화 찾기(`<recall>`), 붙인 사진, 웹·그림 카드의 내용 표시(링크만 보인다).
