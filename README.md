@@ -58,19 +58,63 @@ Tap any card and it comes to the same slot, with only the cards on the same topi
 
 **You can talk to it.** Speak and listen instead of typing. Interrupt it while it is speaking.
 
-## Try it
+## Quick start
 
-You can look around without anything: with no key, KITE opens in a demo that plays prepared scenes and says so on screen. To really use it you need a [Claude API key](https://console.anthropic.com/settings/keys). Usage is billed to your own account. The key can also come from the `ANTHROPIC_API_KEY` environment variable.
+**Look around first.** With no key, KITE opens in a demo that plays prepared scenes and says so on screen. To really use it, pick an engine (below).
 
-**Or use Claude Code as the engine.** If [Claude Code](https://claude.com/claude-code) is installed, choose it in the same window and KITE hands each turn to it instead of calling the API. Your Claude Code login, `CLAUDE.md`, skills, hooks, MCP servers and permission settings all apply, and no API key is needed. Files, commands and the web go through Claude Code's tools, while KITE's own tools (route maps, memory notes, reading the board, workers) are offered to it through a small local MCP server inside KITE. Workers and memory keeping also run through Claude Code. A turn costs more tokens than with the API key, because Claude Code brings its own instructions. By default it does only what your Claude Code settings allow; the same window lets you allow file edits, or everything. Extra options for Claude Code, such as `--model sonnet`, go in `claude-args.txt` in the program folder.
+### Windows: download and run
 
-A second key is optional: a [TypeSafe AI](https://typesafe.ai) Jev key. Jev is a small, fast model that only makes decisions. With it, KITE picks the topic before answering, puts important cards first, tidies overlapping topics, and recalls only the past conversations that matter. Without it, KITE works the same. Both keys can be entered or changed any time from **Keys** at the bottom left (or `TYPESAFE_API_KEY`).
+1. Download `KITE-0.3.0-windows-x64.zip` from [Releases](https://github.com/fidenit/KITE/releases).
+2. Unpack it anywhere.
+3. Run `kite.exe`.
 
-**Windows.** Download the zip from [Releases](https://github.com/fidenit/KITE/releases), unpack it and run `kite.exe`. There is no installer. On first start a window asks for your key; you can skip it and stay in the demo.
+There is no installer. On first start a window asks for a key. Skip it to stay in the demo.
 
-**Mac.** Build it yourself for now: `./run.sh pack` creates `portable/KITE/KITE.app`. See [DEVELOPING](docs/DEVELOPING.md).
+### Build from source
+
+| | You need | Command |
+|---|---|---|
+| Windows | [Rust](https://rustup.rs) `stable-x86_64-pc-windows-gnu`, MinGW ([WinLibs](https://winlibs.com)) | `.\run.ps1` |
+| macOS | Rust via rustup, Xcode command line tools | `./run.sh` |
+| Linux | not supported yet (see below) | |
+
+`run.ps1` and `run.sh` build and start the program. Add `test` to run the tests, or `pack` to make a folder you can carry (`portable/KITE`). Steps and code layout: [docs/DEVELOPING.md](docs/DEVELOPING.md) (Korean).
+
+Linux: the build stops at the GTK and WebKit libraries (`glib-sys`) on a machine without them, and speech, opening the memory folder and the phone tools are written for macOS and Windows. A Linux port is open.
+
+### Pick an engine
+
+| Engine | You need | How |
+|---|---|---|
+| Demo | nothing | Start with no key |
+| Claude API | a [Claude API key](https://console.anthropic.com/settings/keys); usage is billed to your account | Enter it under **Keys** at the bottom left, or set `ANTHROPIC_API_KEY`, or put it in `key.txt` next to the program |
+| Claude Code | [Claude Code](https://claude.com/claude-code) installed and logged in; no API key | Choose it in the same window, or write `claude-code` in `engine.txt` next to the program |
+
+**Claude Code as the engine.** KITE hands each turn to it instead of calling the API. Your Claude Code login, `CLAUDE.md`, skills, hooks, MCP servers and permission settings all apply. Files, commands and the web go through Claude Code's tools. KITE's own tools (route maps, memory notes, reading the board, workers) are offered to it through a small local MCP server inside KITE, and workers and memory keeping also run through Claude Code. A turn costs more tokens than with the API key, because Claude Code brings its own instructions. By default it does only what your Claude Code settings allow; the same window lets you allow file edits, or everything. Extra options for Claude Code, such as `--model sonnet`, go in `claude-args.txt` in the program folder.
+
+**Optional second key.** A [TypeSafe AI](https://typesafe.ai) Jev key (**Keys**, or `TYPESAFE_API_KEY`). Jev is a small, fast model that only makes decisions. With it, KITE picks the topic before answering, puts important cards first, tidies overlapping topics, and recalls only the past conversations that matter. Without it, KITE works the same.
 
 Keys, the board and the memory vault live in the program's own folder. Move the folder and everything moves with it.
+
+### Use it as an engine: drive the board with the protocol
+
+KITE's screen is edited with plain text lines, one op per line. Anything that can write those lines can fill a board. The language is written down in [docs/PROTOCOL.md](docs/PROTOCOL.md) with a [JSON schema](docs/protocol.schema.json), and [examples/](examples) holds boards you can load.
+
+```
+topic ws Team Workshop
+card k2 decision ws 3x3 Which venue?
+set k2 text Where should the workshop be?
+add k2 o1 Gangneung | Far, but better facilities
+add k2 o2 Gapyeong | Close and cheaper
+```
+
+Load an example board in the demo (macOS and Linux shell; in PowerShell set the two variables with `$env:NAME = "value"` first):
+
+```sh
+LYBOARD_DEMO=1 LYBOARD_DEMO_SEED=examples/my-turn.ops ./run.sh
+```
+
+KITE 0.3.0 has no live input port yet, so this works before the window opens, or through the log file `data/ops.log`. [PROTOCOL.md section 11](docs/PROTOCOL.md) lists what works today and what does not.
 
 ## Know before you run
 
@@ -83,7 +127,7 @@ Keys, the board and the memory vault live in the program's own folder. Move the 
 
 Rust, [egui](https://github.com/emilk/egui), and the Claude API called directly over HTTP. No web front end. The model's output is a small line-based language for editing the board, applied as each line arrives; the board, written back in the same language, is what the model sees on the next turn.
 
-Build steps, the layout of the code and how to add a new kind of card are in [docs/DEVELOPING.md](docs/DEVELOPING.md) (Korean).
+The language is specified in [docs/PROTOCOL.md](docs/PROTOCOL.md) (KITE Board Protocol v0.1, with [protocol.schema.json](docs/protocol.schema.json) and [examples](examples)). Build steps, the layout of the code and how to add a new kind of card are in [docs/DEVELOPING.md](docs/DEVELOPING.md) (Korean).
 
 Most of the code was written together with AI (Claude). The idea and the design decisions are human.
 
