@@ -1,6 +1,6 @@
 # KITE Board Protocol v0.1
 
-The line language KITE uses to edit its board, and to show the board back to the model. This document describes what KITE 0.3.0 does today, read from the source (commit `69c0d06`). Where the source does not say, it says "unknown". Line numbers (`src/lang.rs:28`) point at that commit and will drift.
+The line language KITE uses to edit its board, and to show the board back to the model. This document describes what KITE 0.3.0 does today, read from the source (commit `69c0d06`), plus two additions made after it: the version header (section 10) and the live input socket (section 11). Those two are marked **new**. Where the source does not say, it says "unknown". Line numbers (`src/lang.rs:28`) point at that commit and will drift; `src/feed.rs` and the header code in `src/lang.rs` are newer.
 
 Machine-readable form: [protocol.schema.json](protocol.schema.json). Files you can load: [../examples](../examples).
 
@@ -30,13 +30,14 @@ Two properties the rest follows from:
 - There is no escaping. A value runs to the end of the line, so it cannot contain a line break. Cells are split on `|`, so a cell cannot contain `|` (`src/lang.rs:23-25`). The app's own input form replaces both with a space (`src/ui.rs:1768`).
 - Tokens are separated by any whitespace; the first word is the verb (`src/lang.rs:6-12`).
 
-The same ops reach the board by three routes today:
+The same ops reach the board by four routes today:
 
 | Route | What it is | Source |
 |---|---|---|
 | Model text stream | Engine output, line by line | `src/main.rs:1724-1750` |
 | `screen` tool | Mid-turn board edit by the model; the `ops` string holds newline-separated lines; the reply is the verdict (section 8) | `src/tools.rs:38-41`, `src/main.rs:1709-1723` |
 | User gestures | Clicks, ticks, drags, form sends become ops with author `user` | `src/ui.rs:1144-1152, 1774-1778, 2323, 2545` |
+| Live input socket (**new**, off by default) | Another program on the same computer sends lines over TCP (section 11.1) | `src/feed.rs`, `src/main.rs` (`Msg::Feed`) |
 
 ## 3. Names and limits
 
@@ -159,7 +160,7 @@ The model's turn envelope (informative, internal to KITE): `<board>`, then optio
 
 ### Persistence
 
-The app keeps an append-only log, `data/ops.log`, next to the program. One line per accepted op: `A<TAB><op line>` for model ops, `U<TAB><op line>` for user ops, and `T<TAB><date>` marking a new day. Rejected ops are not written (`src/main.rs:790-800`). On start the log is replayed in order onto an empty board, and ops that fail on replay are skipped (`src/main.rs:741-761`). So the board is event-sourced and the log is a complete, human-readable copy of it.
+The app keeps an append-only log, `data/ops.log`, next to the program. One line per accepted op: `A<TAB><op line>` for model ops, `U<TAB><op line>` for user ops, and `T<TAB><date>` marking a new day. Rejected ops are not written (`src/main.rs:790-800`). On start the log is replayed in order onto an empty board, and ops that fail on replay are skipped (`src/main.rs:741-761`). **New:** a log KITE creates starts with the line `# kite-protocol 0.1` (section 10). It has no tab, so it is a comment to the replay; logs without it are read as 0.1. So the board is event-sourced and the log is a complete, human-readable copy of it.
 
 ## 8. Errors
 
@@ -302,9 +303,9 @@ The last cell of each `upd` is the user's value.
 
 ## 10. Versioning
 
-- The wire format has no version marker. KITE 0.3.0 (`Cargo.toml:3`) is the only implementation and the protocol is whatever it accepts.
+- KITE 0.3.0 (`Cargo.toml:3`) is the only implementation and the protocol is whatever it accepts. **New:** a version marker, below. Streams and files from before it have none and count as 0.1.
 - This document is v0.1 of the description. Treat these changes as breaking: a new verb (an old parser rejects it as unknown, `src/lang.rs:108`), a new card type (`Kind::parse` fails, `src/core.rs:339`), a changed limit, a changed serialization order.
-- Proposal, not implemented: start a stream or log with a comment line `# kite-protocol 0.1`. Old parsers ignore it (`src/lang.rs:30`). Emitters declare the version they target; readers refuse a major version they do not know.
+- **Version header (new).** The first line of a saved file or a stream is `# kite-protocol 0.1`. It is an ordinary comment, so a parser that predates it ignores it (`src/lang.rs:30`) and `lang::parse` still returns no op for it. Writing: KITE writes it as the first line of a new `data/ops.log`; the files in [../examples](../examples) and `tools/promo` seeds carry it. Reading: a line `# kite-protocol <major>.<minor>` is a declaration (`lang::declared_version`, `lang::can_read`). Same major: read. Different major: the live socket answers `err` and closes the connection; the log replay writes a note to `data/feed.log` and still replays, because dropping a board is worse than skipping lines that fail. The header is not added to the board text sent to the model (section 7), and an emitter that writes a log must write it on the first line only. The minor number is for additions an old reader can skip; the major number changes on a breaking change (list above).
 - Open items for v0.2: stable error codes in place of Korean sentences; a name for the author field in the log beyond `A` and `U`; a way to carry values with a line break or `|`.
 
 ## 11. Driving a KITE board from another app or agent
@@ -319,13 +320,46 @@ What exists today, and what does not.
 4. **Be the engine through Claude Code.** In the Claude Code engine, KITE appends the language to the system prompt and takes the text output as the screen (`src/cc.rs:21-30`). Your Claude Code setup (CLAUDE.md, skills, MCP servers, hooks) applies. The engine file `engine.txt` or `LYBOARD_ENGINE=claude-code` selects it (`src/llm.rs:71-72`).
 5. **Re-implement the protocol.** The parser is about 85 lines and the checker about 280 (`src/lang.rs:28-111`, `src/core.rs:279-559`). `docs/protocol.schema.json` validates a JSON form; the tests at `src/lang.rs:216-300` and `src/core.rs:562-614` are usable as test vectors.
 
-**Not available in 0.3.0**
+**New: live input** (section 11.1) lets another program drive a running board. Everything above still works.
 
-- No live input channel: no socket, stdin reader or file watcher feeds ops to a running board. The only listener the app opens is a local MCP server for Claude Code, bound to `127.0.0.1` on a random port with a per-run token (`src/cc.rs:387-408`); it offers KITE's tools such as `board_read` (`src/cc.rs:379`) and takes no `screen` edits.
+**Not available**
+
+- No stdin reader, named pipe, unix socket or file watcher. The live socket (11.1) is the one channel. The local MCP server for Claude Code (`127.0.0.1`, random port, per-run token, `src/cc.rs:387-408`) is separate and takes no `screen` edits.
 - No pluggable engine: the engine is the Anthropic API, Claude Code, or the demo script (`src/llm.rs:62-83`).
 - No headless mode and no non-egui renderer.
 
-Smallest change that would make KITE drivable by other software: read op lines from a local socket or a watched file and pass each through `apply_line` (`src/main.rs:784`) as author `ai`, returning the verdict as the `screen` tool does (`src/main.rs:1722`). Not done here; it is a code change.
+### 11.1 Live input socket (new)
+
+Off by default. Set `KITE_PROTOCOL_PORT` to a number from 1024 to 65535 before starting KITE and it listens on `127.0.0.1` (not on any other address) for protocol lines. Windows, macOS and Linux behave the same: it is plain TCP from the standard library, no platform code.
+
+| Setting | Meaning |
+|---|---|
+| `KITE_PROTOCOL_PORT=<port>` | Turn it on. Anything else (unset, not a number, below 1024) leaves it off; a bad value is written to `data/feed.log`. If the port is taken, KITE starts without it and says so in `data/feed.log`. |
+| `KITE_PROTOCOL_TOKEN=<secret>` | Optional. When set, a connection must send `auth <secret>` as its first line, or it is answered `err auth required` and closed. Any program on the computer can reach a local port, so set it if other users or untrusted programs share the machine. |
+
+How it behaves:
+
+- One op per line, UTF-8, ended by `\n`, exactly as in section 2. Blank lines and `#` lines are ignored and get no reply.
+- Every other line is answered with one line, in order: `ok`; `ok <note>` when text was clipped (section 8); or `err <line> → <reason>` when the line was rejected. The reason text is the same Korean sentence a model would get (section 8), so match on `ok` / `err`, not on the words.
+- Each line goes through the same function as a model line (`apply_line`, `src/main.rs:784`) with author `ai`. So it follows the same checks and limits (sections 3 to 5), pinned cards refuse `size` and `move`, and `pin` and `unpin` are refused. The change appears on screen at once, is appended to `data/ops.log` as `A<TAB><op>`, and is part of the board text the model reads on its next turn. A rejected external line is answered to the sender; it is not put in the model's `<rejected>`.
+- Limits (`src/feed.rs`): a line over 4096 bytes is rejected and the rest of it is dropped; invalid UTF-8 is rejected; 50 lines per second per connection with a burst of 100, over that `err` and the line is not applied; 4 connections at once; a connection with no traffic for 10 minutes is closed. A first line `# kite-protocol <major>.<minor>` with an unknown major gets `err` and the connection is closed.
+- Every connection, line and verdict is logged to `data/feed.log` with the date and time and the peer address. A logging failure does not stop the feed.
+- It works in the demo too, but the demo keeps no `ops.log`, so the lines are not saved.
+- `web` and `image` cards read local paths and URLs (section 5). Whoever can connect can create them. That is why the port is off by default and has an optional token.
+
+Five lines of Python that build a card on the running board:
+
+```python
+import socket
+s = socket.create_connection(("127.0.0.1", 7878))   # KITE_PROTOCOL_PORT=7878
+f = s.makefile("rw", encoding="utf-8", newline="\n")
+for line in ["topic demo Demo", "card k1 metric demo 2x2 Users", "set k1 value 42"]:
+    f.write(line + "\n"); f.flush(); print(f.readline().strip())   # ok, ok, ok
+```
+
+From a shell: `printf 'topic demo Demo\nsay hello\n' | nc 127.0.0.1 7878`. Test vectors for the feeder are in `src/feed.rs` (`mod tests`).
+
+Not built, and why: a named pipe or a watched inbox file. The socket covers the same need on every platform with less code. Using the socket with a Claude Code or other agent as the writer is the intended case; the agent should read the board first (section 7 text, or `board_read` through the MCP server) and send only the lines that change it.
 
 ## 12. Where this sits next to A2UI and AG-UI
 
@@ -340,14 +374,14 @@ Both are described here from their own README files (fetched 2026-11-16 from `go
 | Streaming | Yes ("progressive rendering") | Yes ("real-time agentic chat with streaming") | Yes; a line is applied the moment it ends |
 | Component vocabulary | A catalog the app developer chooses; a basic catalog exists (details unknown) | Not its concern (unknown) | Fixed: 14 card types in `PARTS` |
 | Renderers | Lit, Angular, React, Flutter, SwiftUI | Clients such as CopilotKit; renderers are not its concern | One: the egui desktop app |
-| Who generates | Agent, "typically backed by a language or a decision model" | Agent backend emitting events | A language model and the user's gestures; other programs only offline today (section 11) |
+| Who generates | Agent, "typically backed by a language or a decision model" | Agent backend emitting events | A language model and the user's gestures; other programs through the opt-in local socket (section 11.1) |
 | Security stance | Stated: validate against a schema, no executable code | Unknown | None stated; `web` and `image` cards read paths and URLs (section 5) |
 | Maturity | Protocol v1.0 spec linked, v1.1 being scoped | Several SDKs and integrations listed | v0.1 description of one implementation |
 
 How they relate, as far as the READMEs support it:
 
 - KITE ops and A2UI both answer "what does the model write to change the screen". A2UI sits across more layers and platforms. KITE is narrower: one board, one renderer, a closed set of card types, and the state is written back every turn so the model never has to remember it.
-- AG-UI answers "how do events travel between the agent and the app". KITE has no such layer today (section 11). Whether KITE ops could ride inside AG-UI events is untested here; the AG-UI README says it allows "loose event format matching" and any transport, which does not settle it.
+- AG-UI answers "how do events travel between the agent and the app". KITE has only a local line socket today, with no event types (section 11.1). Whether KITE ops could ride inside AG-UI events is untested here; the AG-UI README says it allows "loose event format matching" and any transport, which does not settle it.
 - Unknown from the READMEs: whether A2UI messages are full-surface or incremental edits; the exact AG-UI event names; whether either has a line-based form.
 
 ## 13. Conformance in one paragraph

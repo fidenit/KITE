@@ -18,9 +18,9 @@ The name says it twice. KITE is a **Kinetic Interactive Task Environment**: a wo
 
 Nothing like it existed, so we built it. We hope it makes working with AI less tiring and more productive for everyone.
 
-![KITE by FIDENIT: a wall of text gives way to a live board. One request plans a workshop; the route, schedule, budget and checklist appear, and the one decision that needs you comes to the left.](docs/images/hero.gif)
+![KITE by FIDENIT: a wall of text gives way to a live board. One request plans a workshop; the route, schedule, budget and checklist appear, and the one decision that needs your confirmation is always shown at the left.](docs/images/hero.gif)
 
-**See it in two minutes.** One request from start to finish, then each part up close: cards shaped to the content, the decisions that come to you one at a time through a long project, and moving freely around the board.
+**See it in two minutes.** One request from start to finish, then each part up close: cards shaped to the content, a long project that always shows what to do next and what needs your confirmation, and moving freely around the board.
 
 [![Watch the 2-minute video. A frame from it: weeks into a project, the next decision waits on the left while the board turns to the part of the project it belongs to.](docs/images/promo.jpg)](https://github.com/fidenit/KITE/releases/download/v0.3.0/KITE-promo.mp4)
 
@@ -30,7 +30,7 @@ Nothing like it existed, so we built it. We hope it makes working with AI less t
 
 ![Asking for a to-do list, then reporting progress: the same cards update](docs/images/todo.gif)
 
-**Work comes to you.** When the AI needs a decision or a value from you, that one card moves to the "my turn" slot beside the conversation, and the board slides to the part of the work it belongs to. Answer it and the next one arrives. You do not go looking for what is waiting on you.
+**You do not have to say what to do next.** It always shows what to do next and what needs your confirmation. When the AI needs a decision or a value from you, that one card moves to the "my turn" slot beside the conversation, and the board slides to the part of the work it belongs to. Answer it and the next one arrives.
 
 ![The AI compares options, then brings the question it needs answered to the "my turn" slot](docs/images/myturn.gif)
 
@@ -44,7 +44,7 @@ Tap any card and it comes to the same slot, with only the cards on the same topi
 
 **The right card for each piece.** Big numbers, timelines, checklists, progress, tables, charts, forms to fill in, routes, drawings, pictures and web pages. When a topic has more than fits at a readable size, the less important cards fold under "+N more" instead of the text shrinking.
 
-![One request, many kinds of cards: big numbers, a timeline, a bar chart, a checklist, and a form that comes to you](docs/images/components.gif)
+![One request, many kinds of cards: big numbers, a timeline, a bar chart, a checklist, and a form that waits for your confirmation](docs/images/components.gif)
 
 **It draws.** Routes with real distances and travel times, line, bar and donut charts, flows and layouts, pictures. The AI picks the form that reads fastest.
 
