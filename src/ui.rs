@@ -233,6 +233,8 @@ pub struct View {
     /// 카드별로 이 창 크기에서 잰 가장 큰 내용 높이 (카드 rev, 높이). 몇 장을 접을지 정할 때만 쓴다:
     /// 접는 수가 바뀌면 카드 폭이 바뀌고, 폭이 바뀌면 높이가 바뀌어서, 지금 높이로만 정하면 접었다 폈다를 되풀이할 수 있다.
     tall: HashMap<String, (u64, f32)>,
+    /// 소개 영상용 (LYBOARD_VIDEO 일 때만 채운다): 이번 프레임에 판 위에 그린 카드의 화면 위치
+    pub shown: Vec<(String, Rect)>,
 }
 
 impl View {
@@ -1498,6 +1500,16 @@ pub fn board(
             draw_cards(&mut over, true, slot.min - vec2(0.0, view.inbox_scroll), 1.0);
         }
         drop(draw_cards);
+        static VIDEO: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *VIDEO.get_or_init(|| std::env::var("LYBOARD_VIDEO").is_ok()) {
+            let z = area.width() / drawn.width();
+            view.shown = view
+                .cards
+                .iter()
+                .filter(|(_, v)| v.dying.is_none() && !v.sticky)
+                .map(|(id, v)| (id.clone(), Rect::from_min_size(area.min + (v.pos.at(now) - drawn.min.to_vec2()) * z, v.size.at(now) * z)))
+                .collect();
+        }
         // 확인용: LYBOARD_TRACE 가 있으면 프레임마다 판 크기, 확대 비율, 카드의 화면 위치를 data\trace.log 에 남긴다.
         static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *TRACE.get_or_init(|| std::env::var("LYBOARD_TRACE").is_ok()) {

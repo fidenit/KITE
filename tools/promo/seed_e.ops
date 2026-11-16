@@ -1,0 +1,33 @@
+T	2026-11-03
+A	topic rel Release 2.0
+A	topic pay Payments
+A	topic onb Onboarding Redesign
+A	card r1 progress rel 4x2 Release 2.0
+A	set r1 pct 58
+A	add r1 a done | Scope frozen
+A	add r1 b done | Payments API
+A	add r1 c run | Refund flow
+A	add r1 d todo | Beta with testers
+A	add r1 e todo | Store review
+A	card r2 timeline rel 3x3 Milestones
+A	add r2 a Nov 3 | Kickoff | done
+A	add r2 b Nov 20 | Beta build | run
+A	add r2 c Dec 1 | Store review | todo
+A	add r2 d Dec 8 | Launch | todo
+A	card r3 metric rel 2x2 Open bugs
+A	set r3 value 23
+A	set r3 delta -9 this week
+A	card p1 checklist pay 3x3 Refund flow
+A	add p1 a done | Refund API endpoint
+A	add p1 b run | Partial refunds
+A	add p1 c todo | Integration tests
+A	add p1 d todo | Update receipts
+A	card p2 status pay 3x1 Payments API
+A	set p2 state ok
+A	set p2 text Live in staging since Nov 12
+A	card o1 chart onb 3x2 Day-1 drop-off by screen
+A	set o1 unit %
+A	add o1 a Welcome | 12
+A	add o1 b Permissions | 31
+A	add o1 c Profile | 18
+A	say Refund flow is next. I'll keep the tests running overnight.

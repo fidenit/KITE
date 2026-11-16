@@ -188,6 +188,14 @@ struct App {
     fake_input: std::collections::VecDeque<Vec<egui::Event>>,
     fake_marks: std::collections::VecDeque<(usize, String)>,
     fake_frame: usize,
+    /// 흉내 낸 마우스가 마지막으로 가 있기로 한 자리 (다음 동작은 여기서부터 미끄러지듯 옮겨 간다)
+    fake_at: egui::Pos2,
+    /// 흉내 낸 마우스의 지금 자리와 눌림 (소개 영상에 커서를 그리는 데 쓴다)
+    cursor: Option<egui::Pos2>,
+    cursor_down: bool,
+    /// 소개 영상용: 입력창에 글을 한 글자씩 적는 중 (적을 글, 시작 시각). 다 적으면 보낸다.
+    typing: Option<(String, std::time::Instant)>,
+    video: Option<Video>,
     /// 답하는 중에 사용자가 더 적은 말. 도구를 쓰는 사이에 모델에게 전해지고, 그 전에 턴이 끝나면 다음 턴으로 간다.
     pub queue: Arc<std::sync::Mutex<Vec<String>>>,
     /// 지금 도는 턴을 멈추라는 신호
@@ -281,12 +289,74 @@ fn gif_writer(path: String, width: u32) -> Sender<(f64, usize, usize, Vec<u8>)> 
     tx
 }
 
+/// 소개 영상 녹화 (LYBOARD_VIDEO=파일.mp4). 프레임마다 화면을 찍어 ffmpeg 에 넘기고,
+/// "파일.mp4.jsonl" 에 프레임마다 카드 자리와 마우스 자리를 적는다 (편집할 때 어디를 확대할지 정하는 데 쓴다).
+struct Video {
+    tx: Option<std::sync::mpsc::SyncSender<(f64, usize, usize, Vec<u8>)>>,
+    side: Option<std::io::BufWriter<std::fs::File>>,
+    began: std::time::Instant,
+    busy_at: std::time::Instant,
+    fps: f64,
+    /// 마지막으로 찍은 영상 프레임 번호 (같은 번호 자리에는 두 번 찍지 않는다)
+    slot: i64,
+    /// 흉내 낸 손이 마지막으로 움직인 걸음 번호 (초당 60걸음)
+    hand: i64,
+}
+
+/// 찍힌 그림을 받아 ffmpeg 로 넘기는 스레드. 영상은 정해진 프레임 수(fps)로 흐르므로,
+/// 그림이 늦게 오면 앞 그림을 되풀이하고 너무 빨리 오면 버린다. 영상 속 시각 = 녹화 시작부터 지난 시간.
+fn video_writer(path: String, fps: f64) -> std::sync::mpsc::SyncSender<(f64, usize, usize, Vec<u8>)> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<(f64, usize, usize, Vec<u8>)>(6);
+    std::thread::spawn(move || {
+        use std::io::Write;
+        let mut child: Option<(std::process::Child, std::process::ChildStdin)> = None;
+        let mut size = (0, 0);
+        let mut written: u64 = 0;
+        while let Ok((t, w, h, rgba)) = rx.recv() {
+            if child.is_none() {
+                size = (w, h);
+                let mut cmd = std::process::Command::new("ffmpeg");
+                cmd.args(["-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", &format!("{w}x{h}"), "-r", &fps.to_string(), "-i", "-"])
+                    .args(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "6", "-pix_fmt", "yuv444p", &path])
+                    .stdin(std::process::Stdio::piped());
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(0x0800_0000); // 콘솔 창을 띄우지 않는다
+                }
+                let Ok(mut c) = cmd.spawn() else { return };
+                let Some(stdin) = c.stdin.take() else { return };
+                child = Some((c, stdin));
+            }
+            let Some((_, stdin)) = child.as_mut() else { break };
+            if (w, h) != size {
+                continue;
+            }
+            let target = (t * fps).round() as u64;
+            while written <= target {
+                if stdin.write_all(&rgba).is_err() {
+                    break;
+                }
+                written += 1;
+            }
+        }
+        if let Some((mut c, stdin)) = child {
+            drop(stdin);
+            let _ = c.wait();
+        }
+        let _ = std::fs::write(format!("{path}.done"), written.to_string());
+    });
+    tx
+}
+
 /// 소개 영상용 장면 (LYBOARD_PROMO=로고 그림 파일). 실제 화면 위에 여는 장면과 닫는 장면을 덧그린다.
 /// 여는 장면: 글자의 벽 → 한 문장 → 로고. 그 뒤 실제 화면이 드러나 시연이 돈다. 시연이 끝나면 닫는 장면.
+/// LYBOARD_PROMO_MODE=intro 면 여는 장면만, outro 면 닫는 장면만 그린다 (영상을 여러 토막으로 찍을 때).
 struct Promo {
     logo: String,
     began: std::time::Instant,
     outro: Option<std::time::Instant>,
+    outro_on: bool,
 }
 
 /// 여는 장면이 화면을 덮고 있는 시간 (초). 이 뒤에 시연이 시작된다.
@@ -297,7 +367,7 @@ impl App {
     /// 소개 장면이 아직 움직이고 있는가 (녹화가 이 동안 끝나지 않게 한다).
     fn promo_moving(&self) -> bool {
         match &self.promo {
-            Some(p) => p.began.elapsed().as_secs_f32() < PROMO_INTRO + 0.3 || p.outro.map(|o| o.elapsed().as_secs_f32() < PROMO_OUTRO).unwrap_or(true),
+            Some(p) => p.began.elapsed().as_secs_f32() < PROMO_INTRO + 0.3 || (p.outro_on && p.outro.map(|o| o.elapsed().as_secs_f32() < PROMO_OUTRO).unwrap_or(true)),
             None => false,
         }
     }
@@ -306,7 +376,7 @@ impl App {
         let idle = self.autoplay.is_empty() && !self.busy && !talking && self.react_at.is_none() && self.fake_input.is_empty() && self.idle_since.elapsed().as_millis() > 1800;
         let Some(p) = &mut self.promo else { return };
         let t = p.began.elapsed().as_secs_f32();
-        if p.outro.is_none() && t > PROMO_INTRO + 2.0 && idle {
+        if p.outro_on && p.outro.is_none() && t > PROMO_INTRO + 2.0 && idle {
             p.outro = Some(std::time::Instant::now());
         }
         let screen = ctx.content_rect();
@@ -386,7 +456,7 @@ impl App {
             }
             text(c - egui::vec2(0.0, 44.0), "KITE", ui::bold(88.0 * (0.92 + 0.08 * back(fade(u, 0.5, 1.2)))), ui::TEXT(), fade(u, 0.5, 1.0));
             text(c + egui::vec2(0.0, 30.0), "Kinetic Interactive Task Environment", ui::font(19.0), ui::DIM(), fade(u, 0.8, 1.3));
-            text(c + egui::vec2(0.0, 92.0), "Less reading. More done.", ui::bold(25.0), ui::TEXT(), fade(u, 1.2, 1.7));
+            text(c + egui::vec2(0.0, 92.0), "Keep Information To Essentials.", ui::bold(25.0), ui::TEXT(), fade(u, 1.2, 1.7));
             spaced(egui::pos2(c.x, screen.bottom() - 64.0), "FIDENIT", 15.0, 15.0, ui::DIM(), fade(u, 1.6, 2.1));
             text(egui::pos2(c.x, screen.bottom() - 38.0), "for the world", ui::font(12.5), ui::FAINT(), fade(u, 1.8, 2.3));
         }
@@ -507,7 +577,23 @@ impl App {
             reset_armed: None,
             probe: None,
             page: page::Page::default(),
-            promo: std::env::var("LYBOARD_PROMO").ok().map(|logo| Promo { logo, began: std::time::Instant::now(), outro: None }),
+            promo: std::env::var("LYBOARD_PROMO").ok().map(|logo| {
+                let mode = std::env::var("LYBOARD_PROMO_MODE").unwrap_or_default();
+                let now = std::time::Instant::now();
+                // 닫는 장면만 쓸 때는 여는 장면이 이미 끝난 것으로 친다.
+                let began = if mode == "outro" { now.checked_sub(std::time::Duration::from_secs_f32(PROMO_INTRO + 0.5)).unwrap_or(now) } else { now };
+                Promo { logo, began, outro: None, outro_on: mode != "intro" }
+            }),
+            video: std::env::var("LYBOARD_VIDEO").ok().map(|path| {
+                let now = std::time::Instant::now();
+                let fps = std::env::var("LYBOARD_VIDEO_FPS").ok().and_then(|v| v.parse().ok()).unwrap_or(60.0);
+                let side = std::fs::File::create(format!("{path}.jsonl")).ok().map(std::io::BufWriter::new);
+                Video { tx: Some(video_writer(path, fps)), side, began: now, busy_at: now, fps, slot: -1, hand: -1 }
+            }),
+            typing: None,
+            fake_at: egui::pos2(900.0, 520.0),
+            cursor: None,
+            cursor_down: false,
             gif: std::env::var("LYBOARD_GIF").ok().map(|path| {
                 let now = std::time::Instant::now();
                 let width = std::env::var("LYBOARD_GIF_WIDTH").ok().and_then(|v| v.parse().ok()).unwrap_or(900);
@@ -552,6 +638,22 @@ impl App {
         }
         // 시연 모드는 매번 빈 보드에서 시작한다. 실제 모드는 조작 기록을 재생해 보드를 되살린다.
         app.key_popup = app.cfg.demo() && std::env::var("LYBOARD_DEMO").is_err() && std::env::var("LYBOARD_NO_KEY_WINDOW").is_err();
+        // 소개 영상용: 시연 모드에서도 LYBOARD_DEMO_SEED 의 조작 기록으로 보드를 채워 두고 시작한다 (이미 몇 주째 진행 중인 프로젝트 등).
+        if let Some(text) = std::env::var("LYBOARD_DEMO_SEED").ok().filter(|_| app.cfg.demo()).and_then(|p| std::fs::read_to_string(p).ok()) {
+            for l in text.lines() {
+                let Some((who, line)) = l.split_once('\t') else { continue };
+                if who == "T" {
+                    continue;
+                }
+                let by = if who == "U" { Author::User } else { Author::Ai };
+                if let Ok(Some(op)) = lang::parse(line) {
+                    if app.board.apply(op, by).is_ok() {
+                        app.touch(line);
+                    }
+                }
+            }
+            app.board.notes.clear();
+        }
         if !app.cfg.demo() {
             if std::env::args().any(|a| a == "--fresh") {
                 let _ = std::fs::remove_file(log_path());
@@ -825,49 +927,88 @@ impl App {
         self.start_real_mode(); // 빈 보드와 빈 기억으로 다시 시작한다
     }
 
-    /// 흉내 낸 마우스·글자 입력 한 걸음을 줄 세운다 ("click 230 190", "drag x y dx dy", "wheel x y 줄수", "type 글").
+    /// 흉내 낸 마우스를 지금 자리에서 `to` 까지 사람 손처럼 미끄러지듯 옮긴다 (처음과 끝은 느리게).
+    fn glide(&mut self, to: egui::Pos2) {
+        let from = self.fake_at;
+        let d = (to - from).length();
+        let n = if d < 1.0 { 1 } else { (d / 1100.0 * 60.0).clamp(12.0, 42.0) as usize };
+        for i in 1..=n {
+            let s = ui::ease_in_out_cubic(i as f32 / n as f32);
+            self.fake_input.push_back(vec![egui::Event::PointerMoved(from + (to - from) * s)]);
+        }
+        self.fake_at = to;
+    }
+
+    /// 흉내 낸 마우스·글자 입력 한 걸음을 줄 세운다
+    /// ("click 230 190", "dclick x y", "drag x y dx dy [프레임 수]", "wheel x y 줄수", "move x y", "wait 프레임 수", "type 글").
     fn queue_fake(&mut self, step: &str) {
         let m = egui::Modifiers::NONE;
         let w: Vec<&str> = step.split_whitespace().collect();
         let n: Vec<f32> = w.iter().skip(1).filter_map(|x| x.parse().ok()).collect();
-        let q = &mut self.fake_input;
+        let press = |p: egui::Pos2, pressed: bool| vec![egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: m }];
+        let mut rest = 90;
         match (w.first().copied(), n.as_slice()) {
-            (Some("drag"), [x, y, dx, dy]) => {
+            (Some("drag"), [x, y, dx, dy, more @ ..]) => {
                 let p = egui::pos2(*x, *y);
-                q.push_back(vec![egui::Event::PointerMoved(p)]);
-                q.push_back(vec![egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: m }]);
-                for i in 1..=20 {
-                    q.push_back(vec![egui::Event::PointerMoved(p + egui::vec2(*dx, *dy) * (i as f32 / 20.0))]);
+                let frames = more.first().map(|f| *f as usize).unwrap_or(20).max(2);
+                self.glide(p);
+                let q = &mut self.fake_input;
+                q.push_back(Vec::new());
+                q.push_back(press(p, true));
+                for i in 1..=frames {
+                    let s = ui::ease_in_out_cubic(i as f32 / frames as f32);
+                    q.push_back(vec![egui::Event::PointerMoved(p + egui::vec2(*dx, *dy) * s)]);
                 }
                 for _ in 0..12 {
                     q.push_back(Vec::new());
                 }
-                q.push_back(vec![egui::Event::PointerButton { pos: p + egui::vec2(*dx, *dy), button: egui::PointerButton::Primary, pressed: false, modifiers: m }]);
+                q.push_back(press(p + egui::vec2(*dx, *dy), false));
+                self.fake_at = p + egui::vec2(*dx, *dy);
             }
             (Some("click"), [x, y]) => {
                 // 짧게 눌렀다 뗀다 (오래 누르면 클릭으로 치지 않는다)
                 let p = egui::pos2(*x, *y);
-                q.push_back(vec![egui::Event::PointerMoved(p)]);
+                self.glide(p);
+                let q = &mut self.fake_input;
                 for _ in 0..6 {
                     q.push_back(Vec::new());
                 }
-                q.push_back(vec![egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: m }]);
+                q.push_back(press(p, true));
                 q.push_back(Vec::new());
-                q.push_back(vec![egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: m }]);
+                q.push_back(press(p, false));
             }
+            (Some("dclick"), [x, y]) => {
+                let p = egui::pos2(*x, *y);
+                self.glide(p);
+                let q = &mut self.fake_input;
+                for _ in 0..6 {
+                    q.push_back(Vec::new());
+                }
+                for _ in 0..2 {
+                    q.push_back(press(p, true));
+                    q.push_back(Vec::new());
+                    q.push_back(press(p, false));
+                    q.push_back(Vec::new());
+                }
+            }
+            (Some("move"), [x, y]) => {
+                self.glide(egui::pos2(*x, *y));
+                rest = 0;
+            }
+            (Some("wait"), [frames]) => rest = *frames as usize,
             (Some("type"), _) => {
-                q.push_back(vec![egui::Event::Text(step.trim_start_matches("type").trim().to_string())]);
+                self.fake_input.push_back(vec![egui::Event::Text(step.trim_start_matches("type").trim().to_string())]);
             }
             (Some("wheel"), [x, y, amount]) => {
-                q.push_back(vec![egui::Event::PointerMoved(egui::pos2(*x, *y))]);
+                self.glide(egui::pos2(*x, *y));
                 for _ in 0..10 {
-                    q.push_back(vec![egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta: egui::vec2(0.0, *amount / 10.0), phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Wheel, modifiers: m }]);
+                    self.fake_input.push_back(vec![egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta: egui::vec2(0.0, *amount / 10.0), phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Wheel, modifiers: m }]);
                 }
             }
             _ => {}
         }
-        for _ in 0..90 {
-            q.push_back(Vec::new());
+        for _ in 0..rest {
+            self.fake_input.push_back(Vec::new());
         }
     }
 
@@ -1874,6 +2015,10 @@ impl App {
     }
 
     fn status_line(&self) -> String {
+        // 소개 영상에는 개발용 숫자(걸린 시간, 글자 수 등)를 싣지 않는다.
+        if self.video.is_some() {
+            return String::new();
+        }
         let mut parts = Vec::new();
         if self.cfg.demo() && self.promo.is_none() {
             parts.push(if std::env::var("LYBOARD_DEMO").is_ok() { sys::tr("시연 모드 · 무엇을 입력해도 준비된 장면이 재생됩니다", "Demo mode · any input plays the prepared scenes") } else { sys::tr("데모 · API 키 없음", "Demo · no API key") }.to_string());
@@ -1931,7 +2076,23 @@ impl eframe::App for App {
         if self.fake_input.is_empty() && self.fake_marks.is_empty() {
             return;
         }
+        // 영상을 찍을 때는 화면 주기를 기다리지 않아 프레임이 아주 빨리 돈다. 흉내 낸 손은 초당 60걸음으로만 움직인다.
+        if let Some(v) = &mut self.video {
+            let due = (v.began.elapsed().as_secs_f64() * 60.0) as i64;
+            if due <= v.hand {
+                ctx.request_repaint();
+                return;
+            }
+            v.hand = due;
+        }
         if let Some(events) = self.fake_input.pop_front() {
+            for e in &events {
+                match e {
+                    egui::Event::PointerMoved(p) => self.cursor = Some(*p),
+                    egui::Event::PointerButton { pressed, .. } => self.cursor_down = *pressed,
+                    _ => {}
+                }
+            }
             raw.events.extend(events);
         }
         self.fake_frame += 1;
@@ -2076,13 +2237,34 @@ impl eframe::App for App {
                 }
             }
             let intro_done = self.promo.as_ref().map(|p| p.began.elapsed().as_secs_f32() > PROMO_INTRO - 0.4).unwrap_or(true);
-            if intro_done && !self.busy && !talking && self.job_news.is_empty() && self.idle_since.elapsed().as_millis() > 1200 {
+            let hands_free = self.fake_input.is_empty() && self.typing.is_none() && self.react_at.is_none();
+            if intro_done && hands_free && !self.busy && !talking && self.job_news.is_empty() && self.idle_since.elapsed().as_millis() > 1200 {
                 // 확인용 대본에서는 "|" 가 입력 구분자라서, 조작 줄 안의 "|" 는 "¦" 로 적는다.
                 let next = self.autoplay.pop_front().unwrap_or_default().replace('¦', "|");
                 if let Some(step) = next.strip_prefix('@') {
                     // "@" 로 시작하면 마우스·글자 입력을 흉내 낸다 (앞의 턴이 끝난 뒤에 실행된다).
+                    // 영상을 찍을 때는 동작이 끝나자마자 다음 걸음으로 간다 (쉬는 시간은 "~초" 로 따로 준다).
                     self.queue_fake(step);
-                    self.idle_since = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                    let now = std::time::Instant::now();
+                    self.idle_since = if self.video.is_some() { now.checked_sub(std::time::Duration::from_millis(1200)).unwrap_or(now) } else { now + std::time::Duration::from_secs(2) };
+                } else if let Some(text) = next.strip_prefix('>') {
+                    // ">" 로 시작하면 입력창에 한 글자씩 적은 뒤 보낸다 (소개 영상용).
+                    self.typing = Some((text.to_string(), std::time::Instant::now()));
+                    self.focus_input = true;
+                } else if let Some(name) = next.strip_prefix('#') {
+                    // "#" 는 영상의 표시: 편집할 때 이 시각에 자막이나 확대를 붙인다. 기다리지 않고 다음 걸음으로 간다.
+                    if let Some(v) = &mut self.video {
+                        let t = v.began.elapsed().as_secs_f64();
+                        if let Some(side) = v.side.as_mut() {
+                            use std::io::Write;
+                            let _ = writeln!(side, "{}", serde_json::json!({ "t": t, "mark": name }));
+                        }
+                    }
+                } else if let Some(secs) = next.strip_prefix('~') {
+                    // "~초" 는 그만큼 쉬었다가 다음 걸음으로 간다.
+                    let secs: f32 = secs.trim().parse().unwrap_or(1.0);
+                    let now = std::time::Instant::now();
+                    self.idle_since = if secs >= 1.2 { now + std::time::Duration::from_secs_f32(secs - 1.2) } else { now.checked_sub(std::time::Duration::from_secs_f32(1.2 - secs)).unwrap_or(now) };
                 } else if let Some(line) = next.strip_prefix('!') {
                     // "!" 로 시작하면 입력이 아니라 사용자의 화면 조작으로 넣는다 (클릭을 흉내 내는 확인용).
                     // 한 번의 조작이 여러 줄이면 ⏎ 로 이어 적는다 (입력 카드의 보내기처럼).
@@ -2098,6 +2280,18 @@ impl eframe::App for App {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
 
+        // 소개 영상용: 입력창에 한 글자씩 적는다. 다 적고 잠깐 뒤에 보낸다.
+        if let Some((text, at)) = self.typing.clone() {
+            let total = text.chars().count();
+            let n = (at.elapsed().as_secs_f32() * 24.0) as usize;
+            self.input = text.chars().take(n.min(total)).collect();
+            if n >= total + 12 {
+                self.typing = None;
+                self.send(&ctx);
+                self.focus_input = true;
+            }
+            ctx.request_repaint();
+        }
         self.take_pics(&ctx);
         self.pick_task();
         // 고른 카드가 지워졌으면 닫는다. Esc 로도 닫는다 (글을 쓰고 있지 않을 때).
@@ -2153,6 +2347,83 @@ impl eframe::App for App {
             });
         self.key_window(&ctx);
         self.promo_frame(&ctx, talking);
+        self.record_frame(&ctx, talking, promo_moving);
+    }
+}
+
+impl App {
+    /// 소개 영상: 이 프레임을 찍어 보내고, 카드와 마우스 자리를 적는다. 할 일이 다 끝나고 조용해지면 녹화를 마친다.
+    fn record_frame(&mut self, ctx: &egui::Context, talking: bool, promo_moving: bool) {
+        let busy = self.busy
+            || talking
+            || self.react_at.is_some()
+            || !self.autoplay.is_empty()
+            || !self.job_news.is_empty()
+            || !self.fake_input.is_empty()
+            || self.typing.is_some()
+            || self.probe.is_some()
+            || promo_moving;
+        let Some(v) = &mut self.video else { return };
+        if v.tx.is_none() {
+            return;
+        }
+        if busy {
+            v.busy_at = std::time::Instant::now();
+        }
+        let tail: u128 = std::env::var("LYBOARD_VIDEO_TAIL").ok().and_then(|x| x.parse().ok()).unwrap_or(2500);
+        let max: u64 = std::env::var("LYBOARD_VIDEO_MAX").ok().and_then(|x| x.parse().ok()).unwrap_or(300);
+        let age = v.began.elapsed();
+        if age.as_secs() > max || (age.as_secs() >= 4 && v.busy_at.elapsed().as_millis() > tail) {
+            v.tx = None; // 보내는 쪽을 닫으면 적는 스레드가 영상을 마무리한다
+            if let Some(mut side) = v.side.take() {
+                use std::io::Write;
+                let _ = side.flush();
+            }
+            return;
+        }
+        let t = age.as_secs_f64();
+        ctx.request_repaint();
+        // 다음 영상 프레임 자리가 오기 전에는 찍지 않는다.
+        let slot = (t * v.fps).round() as i64;
+        if slot <= v.slot {
+            return;
+        }
+        v.slot = slot;
+        if let Some(tx) = v.tx.clone() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::ScreenshotCallback::new(move |img| {
+                let _ = tx.try_send((t, img.size[0], img.size[1], img.as_raw().to_vec()));
+            })));
+        }
+        if let Some(side) = v.side.as_mut() {
+            use std::io::Write;
+            let r1 = |x: f32| (x * 10.0).round() / 10.0;
+            let rects: std::collections::HashMap<&str, egui::Rect> = self.view.shown.iter().map(|(id, r)| (id.as_str(), *r)).collect();
+            let cards: Vec<serde_json::Value> = self
+                .board
+                .cards
+                .iter()
+                .filter_map(|c| {
+                    let r = rects.get(c.id.as_str())?;
+                    Some(serde_json::json!([c.id, format!("{:?}", c.kind), c.rev, c.topic, r1(r.min.x), r1(r.min.y), r1(r.width()), r1(r.height())]))
+                })
+                .collect();
+            let screen = ctx.content_rect();
+            let line = serde_json::json!({
+                "t": (t * 1000.0).round() / 1000.0,
+                "screen": [screen.width(), screen.height(), ctx.pixels_per_point()],
+                "cur": self.cursor.map(|p| [r1(p.x), r1(p.y)]),
+                "down": self.cursor_down,
+                "lv": self.view.level,
+                "zoom": self.view.zoom,
+                "task": self.view.task,
+                "pick": self.view.picked,
+                "slot": self.view.task_rect.map(|r| [r1(r.min.x), r1(r.min.y), r1(r.width()), r1(r.height())]),
+                "busy": self.busy,
+                "cards": cards,
+            });
+            let _ = writeln!(side, "{line}");
+        }
+        ctx.request_repaint();
     }
 }
 
@@ -2202,6 +2473,11 @@ fn main() -> eframe::Result {
             .with_position(std::env::var("LYBOARD_POS").ok().and_then(|v| v.split_once(',').and_then(|(x, y)| Some([x.trim().parse::<f32>().ok()?, y.trim().parse::<f32>().ok()?]))).unwrap_or([80.0, 60.0])),
         ..Default::default()
     };
+    // 영상을 찍을 때는 화면 주기에 맞춰 기다리지 않는다 (한 프레임을 찍는 데 시간이 걸려 주기를 놓치면 초당 30장으로 떨어진다).
+    let mut options = options;
+    if std::env::var("LYBOARD_VIDEO").is_ok() {
+        options.wgpu_options.surface.present_mode = eframe::egui_wgpu::wgpu::PresentMode::AutoNoVsync;
+    }
     eframe::run_native(
         title(),
         options,
@@ -2215,6 +2491,10 @@ fn main() -> eframe::Result {
                 _ => cc.egui_ctx.system_theme() == Some(egui::Theme::Light),
             };
             set_theme(&cc.egui_ctx, light, false);
+            // 확인·소개용: 화면 배율 (LYBOARD_SCALE=1.35 면 같은 배치를 1.35배 촘촘한 화소로 그린다. 영상을 선명하게 찍는 데 쓴다).
+            if let Some(z) = std::env::var("LYBOARD_SCALE").ok().and_then(|v| v.parse::<f32>().ok()) {
+                cc.egui_ctx.set_zoom_factor(z);
+            }
             Ok(Box::new(App::new(&cc.egui_ctx)))
         }),
     )

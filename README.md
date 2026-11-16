@@ -20,6 +20,10 @@ Nothing like it existed, so we built it. We hope it makes working with AI less t
 
 ![KITE by FIDENIT: a wall of text gives way to a live board. One request plans a workshop; the route, schedule, budget and checklist appear, and the one decision that needs you comes to the left.](docs/images/hero.gif)
 
+**See it in two minutes.** One request from start to finish, then each part up close: cards shaped to the content, the decisions that come to you one at a time through a long project, and moving freely around the board.
+
+[![Watch the 2-minute video. A frame from it: weeks into a project, the next decision waits on the left while the board turns to the part of the project it belongs to.](docs/images/promo.jpg)](https://github.com/fidenit/KITE/releases/download/v0.3.0/KITE-promo.mp4)
+
 ## What is different
 
 **The screen is the answer.** The AI does not write to you. It edits a board of cards, one line at a time, and you watch the board change. Ask about the same thing again and the same card updates. The board shows where things stand now. It is not a transcript.

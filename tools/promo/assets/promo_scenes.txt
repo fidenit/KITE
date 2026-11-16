@@ -1,0 +1,40 @@
+say Workshop is laid out. One thing to decide.
+topic ws Gangneung Team Workshop
+card r1 route ws 5x3 Seoul Station → Anmok → Gyeongpo
+set r1 total 242km · 3h 42m
+set r1 text Kakao Map, current traffic · tolls approx. ₩11,300
+add r1 s1 Seoul Station | 37.55617,126.96962 | 233km · 3h 27m
+add r1 s2 Anmok Beach (coffee) | 37.77210,128.94795 | 8.6km · 15m
+add r1 s3 Gyeongpo Beach | 37.75253,128.87595
+card t1 timeline ws 3x3 Friday
+add t1 a 08:00 | Leave Seoul Station
+add t1 b 11:30 | Coffee at Anmok Beach
+add t1 c 14:00 | Check in, session one
+add t1 d 18:30 | Team dinner
+card c1 checklist ws 3x3 To prepare
+add c1 i1 todo | Book lodging for six
+add c1 i2 todo | Reserve the van
+add c1 i3 todo | Book Friday dinner
+card m1 metric ws 2x2 Budget
+set m1 value ₩1.46M
+set m1 text about ₩244k per person
+card d1 decision ws 3x3 How do we travel?
+set d1 text Rented van, or KTX and taxis?
+add d1 o1 Rented van | One car for all six
+add d1 o2 KTX + taxis | Faster, costs more
+focus d1
+===
+say Van it is. Bookings updated.
+del d1
+upd c1 i2 done | Reserve the van
+set m1 value ₩1.38M
+set m1 delta -₩80k
+card s1 status ws 2x1 Travel
+set s1 state ok
+set s1 text Rented van, leaving 08:00
+card p1 progress ws 3x2 Getting ready
+set p1 pct 40
+add p1 a done | Route and schedule
+add p1 b run | Bookings
+add p1 c todo | Share with the team
+focus p1

@@ -328,9 +328,11 @@ fn demo(turn_no: usize, send: &dyn Fn(Msg)) -> Result<Stats, String> {
     std::thread::sleep(Duration::from_millis(500));
     let first_ms = started.elapsed().as_millis() as u64;
     let chars: Vec<char> = script.chars().collect();
+    // 소개 영상용: LYBOARD_DEMO_LINE_MS 를 주면 줄마다 그만큼 쉬어서, 카드가 한 줄씩 채워지는 모습이 보이게 한다.
+    let line_ms: u64 = std::env::var("LYBOARD_DEMO_LINE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     for piece in chars.chunks(3) {
         send(Msg::Delta(piece.iter().collect()));
-        std::thread::sleep(Duration::from_millis(9));
+        std::thread::sleep(Duration::from_millis(if piece.contains(&'\n') { 9 + line_ms } else { 9 }));
     }
     Ok(Stats {
         model: crate::sys::tr("시연 대본", "demo script").into(),

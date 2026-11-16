@@ -1,0 +1,37 @@
+say Refunds are done and every test passes. Three things need your OK.
+upd p1 b done | Partial refunds
+upd p1 c done | Integration tests
+set p2 text Refunds live in staging · 214 tests passing
+set r1 pct 66
+upd r1 c done | Refund flow
+upd r1 d run | Beta with testers
+set r3 value 17
+set r3 delta -6 overnight
+card r4 decision rel 3x3 Ship to beta?
+set r4 text Build 2.0.3 is ready. Send it to the 40 testers?
+add r4 o1 Ship it | Testers get it within the hour
+add r4 o2 Wait a day | One more round of internal tests
+card p3 decision pay 3x2 Refund window
+set p3 text Allow refunds up to how many days?
+add p3 o1 14 days | Common for apps
+add p3 o2 30 days | Friendlier, more risk
+card o2 decision onb 3x3 Profile step
+set o2 text Keep the profile step at sign-up?
+add o2 o1 Move it later | Ask after the first task
+add o2 o2 Keep it | Better data, more drop-off
+focus r4
+===
+say Build 2.0.3 is on its way to 40 testers. Next one.
+del r4
+card r5 status rel 3x1 Beta 2.0.3
+set r5 state ok
+set r5 text Sent to 40 testers · feedback form open
+upd r2 b Nov 20 | Beta build | done
+set r1 pct 72
+focus p3
+===
+say Refund window set to 14 days. The profile question can wait for Friday's review.
+del p3
+add p1 e done | Refund window: 14 days
+upd p1 d run | Update receipts
+focus o2

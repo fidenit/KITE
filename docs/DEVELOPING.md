@@ -22,6 +22,8 @@ Mac (Rust는 [rustup](https://rustup.rs)으로 설치, Xcode 명령줄 도구 �
 
 Windows 빌드에는 Rust(`stable-x86_64-pc-windows-gnu`)와 MinGW(WinLibs)가 필요하다. 실행 파일 옆에 `WebView2Loader.dll`이 있어야 뜬다(`run.ps1`이 복사한다).
 
+소개 영상(`KITE-promo.mp4`)을 다시 찍고 편집하는 방법과 녹화용 환경 변수는 [`tools/promo/README.md`](../tools/promo/README.md)에 있다.
+
 ## 키
 
 프로그램 폴더(실행 파일이 있는 폴더)에 텍스트 파일로 둔다. 처음 실행하면 왼쪽 구역에서 입력할 수도 있다.

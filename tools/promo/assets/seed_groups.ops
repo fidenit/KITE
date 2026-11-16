@@ -1,0 +1,157 @@
+T	2026-11-13
+A	say Here's a draft 2-day Busan plan for two. Add your dates and starting city so I can finish it.
+A	topic busan Busan Weekend Trip
+A	card t1 timeline busan 5x6 Draft Itinerary (1 night, 2 days)
+A	add t1 a Sat 07:00 | KTX from Seoul, arrive Busan Station ~09:40 | todo
+A	add t1 b Sat 10:30 | Gamcheon Culture Village (colorful hillside lanes) | todo
+A	add t1 c Sat 13:00 | Lunch at Jagalchi Fish Market | todo
+A	add t1 d Sat 14:30 | Nampo-dong, BIFF Square street food, Busan Tower | todo
+A	add t1 e Sat 18:00 | Check in near Gwangalli or Haeundae | todo
+A	add t1 f Sat 19:30 | Dinner and Gwangan Bridge light show at the beach | todo
+A	add t1 g Sun 09:30 | Haeundae Blueline Park sky capsule to Cheongsapo | todo
+A	add t1 h Sun 12:00 | Grilled clams lunch in Cheongsapo | todo
+A	add t1 i Sun 14:00 | Haedong Yonggungsa seaside temple | todo
+A	add t1 j Sun 17:30 | KTX back from Busan Station | todo
+A	card b1 chart busan 4x3 Estimated Budget for Two (₩)
+A	set b1 form donut
+A	set b1 unit k
+A	add b1 a KTX round trip | 240
+A	add b1 b Hotel, 1 night | 150
+A	add b1 c Food | 160
+A	add b1 d Sky capsule & entry fees | 60
+A	add b1 e Taxis & subway | 40
+A	card m1 metric busan 2x2 Total Estimate
+A	set m1 value ₩650k
+A	set m1 text For two people, assuming you leave from Seoul
+A	card c1 checklist busan 3x3 Bookings
+A	add c1 a todo | Book KTX tickets (weekends sell out fast)
+A	add c1 b todo | Book a hotel in Gwangalli or Haeundae
+A	add c1 c todo | Reserve sky capsule slot (Blueline Park)
+A	card f1 input busan 3x3 Trip Details
+A	set f1 text To finish the plan, tell me when you're going, where you're leaving from, and your budget.
+A	add f1 a Saturday departure | date
+A	add f1 b Leaving from | e.g. Seoul
+A	add f1 c Total budget for two | slider 30~150 ₩10k
+A	focus f1
+A	say Drafting Monday's sales meeting agenda now.
+A	say Drafted a 60-min agenda for Mon, Nov 16. Add details to tailor it.
+A	topic sales Monday Sales Meeting
+A	card s1 timeline sales 5x5 Draft Agenda – Mon, Nov 16 (60 min)
+A	add s1 a 0:00 | Welcome & meeting goals (5 min) | todo
+A	add s1 b 0:05 | Last week's results vs. target (10 min) | todo
+A	add s1 c 0:15 | Pipeline review: top deals & next steps (15 min) | todo
+A	add s1 d 0:30 | Wins, losses & lessons learned (10 min) | todo
+A	add s1 e 0:40 | Blockers & support needed (10 min) | todo
+A	add s1 f 0:50 | Action items, owners & deadlines (10 min) | todo
+A	card s2 checklist sales 3x3 Prep Before Monday
+A	add s2 a todo | Pull last week's sales numbers
+A	add s2 b todo | Update pipeline / CRM report
+A	add s2 c todo | Send agenda to attendees
+A	add s2 d todo | Book room or video link
+A	card s3 input sales 3x3 Meeting Details
+A	set s3 text Tell me the time, length, and any topics to cover so I can fit the agenda to your meeting.
+A	add s3 a Start time | e.g. 10:00
+A	add s3 b Length | slider 15~120 min
+A	add s3 c Topics to include | e.g. Q4 targets, new pricing
+A	focus s3
+A	say I set up a 3-day-a-week running plan for beginners. Tell me where you're starting from.
+A	topic run Running Habit
+A	card r1 timeline run 4x4 Weekly Routine (3 runs)
+A	add r1 a Mon | Run 1: 5-min walk warm-up, then 1 min jog / 2 min walk ×8 | todo
+A	add r1 b Tue | Rest or light stretching | todo
+A	add r1 c Wed | Run 2: same intervals | todo
+A	add r1 d Thu–Fri | Rest | todo
+A	add r1 e Sat | Run 3: same intervals, at an easy pace | todo
+A	add r1 f Sun | Optional 20-min walk | todo
+A	card r2 chart run 4x3 8-Week Build-Up: Running Minutes per Week
+A	set r2 form line
+A	set r2 unit min
+A	add r2 w1 Wk 1 | 24
+A	add r2 w2 Wk 2 | 30
+A	add r2 w3 Wk 3 | 36
+A	add r2 w4 Wk 4 | 45
+A	add r2 w5 Wk 5 | 54
+A	add r2 w6 Wk 6 | 63
+A	add r2 w7 Wk 7 | 75
+A	add r2 w8 Wk 8 | 90
+A	card r3 checklist run 3x3 Before Your First Run
+A	add r3 a todo | Get comfortable running shoes
+A	add r3 b todo | Pick a flat 2–3 km route near home
+A	add r3 c todo | Set reminders for Mon / Wed / Sat
+A	add r3 d todo | First run: Mon, Nov 16
+A	card r4 decision run 3x3 Your Starting Fitness Level
+A	set r4 text How much can you run right now? I'll adjust the plan to match.
+A	add r4 o1 Starting from zero | Walking is fine, but running is hard
+A	add r4 o2 About 10 min nonstop | Some running already
+A	add r4 o3 30 min or more | Want to build speed or distance
+A	focus r4
+A	say Looking up the best work laptops around $1,500 right now.
+A	say Which two laptops should I compare? I picked out some top models around $1,500.
+A	topic laptop Work Laptop Comparison
+A	card l1 decision laptop 4x3 Which Two Work Laptops to Compare?
+A	set l1 text Which two laptops should I compare side by side? These are top-rated work laptops under $1,500 right now.
+A	add l1 o1 MacBook Air M5 vs Dell XPS 13 | Mac vs. a compact Windows laptop for business
+A	add l1 o2 Dell XPS 13 vs ASUS Zenbook S 16 | Windows only: small and light vs. big screen
+A	add l1 o3 MacBook Air M5 vs ASUS Zenbook S 16 | Mac vs. a Windows laptop with a large screen
+A	add l1 o4 Two other models | I'll tell you which two I have in mind
+A	focus l1
+A	say I've set up a prep plan for Mom's birthday dinner on Sat, Nov 21, and sorted your topics into Personal and Work.
+A	topic mom Mom's Birthday Dinner
+A	group pers Personal
+A	group work Work
+A	put busan pers
+A	put run pers
+A	put mom pers
+A	put sales work
+A	put laptop work
+A	let bday Sat, Nov 21
+A	card mt1 timeline mom 4x4 Countdown to {bday}
+A	add mt1 a Fri, Nov 13 | Choose a venue and guest list | run
+A	add mt1 b Sat, Nov 14 | Book the restaurant and invite family | todo
+A	add mt1 c Mon–Wed | Order the cake and buy a gift | todo
+A	add mt1 d Thu, Nov 19 | Confirm the booking and headcount | todo
+A	add mt1 e Fri, Nov 20 | Pick up the gift and write a card | todo
+A	add mt1 f {bday} | Pick up the cake, then dinner | todo
+A	card mt2 checklist mom 3x4 Prep To-Dos
+A	add mt2 a todo | Book the restaurant or plan the home menu
+A	add mt2 b todo | Invite family and confirm who's coming
+A	add mt2 c todo | Order the cake (2–3 days ahead)
+A	add mt2 d todo | Buy and wrap the gift
+A	add mt2 e todo | Write a birthday card
+A	add mt2 f todo | Plan a toast or small surprise (photos, flowers)
+A	card mt3 decision mom 3x3 Where to Hold Mom's Dinner
+A	set mt3 text Should Mom's birthday dinner on {bday} be at a restaurant or at home?
+A	add mt3 o1 Restaurant | Less work, but you need to book early
+A	add mt3 o2 Home-cooked | More personal, and I'll plan the menu
+A	add mt3 o3 Restaurant + cake at home | Eat out, then have dessert at home
+A	card mt4 input mom 3x3 Dinner Details
+A	set mt4 text Let me know who's coming, your budget, and what Mom likes so I can suggest places, a menu, and gifts.
+A	add mt4 a Number of guests | number
+A	add mt4 b Total budget | slider 10~100 ₩10k
+A	add mt4 c Mom's favorite food or interests | e.g. Korean BBQ, gardening
+A	focus mt3
+A	say Drafted a quarterly report outline. Add a few details to tailor it.
+A	topic qrep Quarterly Report for Manager
+A	put qrep work
+A	card q1 table qrep 6x5 Report Outline (sections and contents)
+A	set q1 cols # | Section | What goes in
+A	add q1 a 1 | Executive summary | 3–5 bullets: headline results, biggest win, key risk
+A	add q1 b 2 | Goals vs. results | Each quarterly goal: target, actual, % achieved
+A	add q1 c 3 | Key metrics and trends | Revenue/output, quarter-over-quarter change, 1–2 charts
+A	add q1 d 4 | Highlights and wins | Projects shipped, deals closed, milestones
+A	add q1 e 5 | Challenges and lessons | What missed, why, and what changes
+A	add q1 f 6 | Next quarter plan | Top 3 priorities, targets, timeline
+A	add q1 g 7 | Asks and support needed | Budget, headcount, decisions from manager
+A	add q1 h 8 | Appendix | Detailed data tables, sources
+A	card q2 checklist qrep 3x3 Gather Before Writing
+A	add q2 a todo | Pull this quarter's numbers vs. targets
+A	add q2 b todo | List top 3 wins and top 2 setbacks
+A	add q2 c todo | Draft next quarter's priorities
+A	add q2 d todo | Check manager's preferred format and length
+A	card q3 input qrep 3x3 Report Details
+A	set q3 text Tell me which quarter, your team or role, and the due date so I can fill in the outline.
+A	add q3 a Quarter covered | e.g. Q3 2026 (Jul–Sep)
+A	add q3 b Your team or role | e.g. Sales, Marketing, Engineering
+A	add q3 c Due date | date
+A	add q3 d Key goals this quarter | e.g. $500k revenue, launch v2
+A	focus q3
