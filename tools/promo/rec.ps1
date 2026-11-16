@@ -1,6 +1,6 @@
 ﻿# 소개 영상 한 토막을 녹화한다: 시험용 KITE 를 화면 밖에 띄워 자동 재생 대본을 돌리고, 프레임마다 찍어 MP4 + 위치 기록(.jsonl)을 만든다.
 # 창을 앞으로 가져오지 않고 키도 보내지 않는다. 할 일이 다 끝나면 프로그램이 스스로 녹화를 마친다.
-#   .\rec.ps1 -Name a -Autoplay "입력|@click 1 2" [-Demo scenes.txt] [-LineMs 200] [-Seed ops.log] [-Promo intro|outro]
+#   .\rec.ps1 -Name a -Autoplay "입력|@click 1 2" [-Demo scenes.txt] [-LineMs 200] [-Seed ops.log] [-Promo intro|outro] [-Theme light|dark]
 param(
     [Parameter(Mandatory)] [string] $Name,
     [string] $Autoplay = " ",
@@ -13,7 +13,8 @@ param(
     [int] $Tail = 2500,
     [string] $Size = "2160,1215",
     [string] $Zoom = "1.35",
-    [int] $Fps = 60
+    [int] $Fps = 60,
+    [ValidateSet("light", "dark")] [string] $Theme = "light"
 )
 $root = (Resolve-Path "$PSScriptRoot\..\..").Path
 $here = $PSScriptRoot
@@ -25,7 +26,7 @@ Remove-Item $base -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force "$base\data" | Out-Null
 Copy-Item "$root\target\release\kite.exe", "$root\target\release\WebView2Loader.dll" $base -Force
 Set-Content "$base\data\lang.txt" "en" -NoNewline
-Set-Content "$base\data\theme.txt" "dark" -NoNewline
+Set-Content "$base\data\theme.txt" $Theme -NoNewline
 if ($Seed) { Copy-Item $Seed "$base\data\ops.log" -Force }
 if ($Routes) { Copy-Item $Routes "$base\data\routes" -Recurse -Force }
 Remove-Item $out, "$out.done", "$out.jsonl" -ErrorAction SilentlyContinue

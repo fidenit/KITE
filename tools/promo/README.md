@@ -11,7 +11,10 @@
 ```powershell
 powershell -File tools\promo\record-all.ps1            # 네 토막 전부
 powershell -File tools\promo\record-all.ps1 -Only e    # 한 토막만
+powershell -File tools\promo\record-all.ps1 -Theme dark  # 어두운 화면으로 (기본은 밝은 화면)
 ```
+
+여러 토막을 고를 때는 PowerShell 안에서 `& tools\promo\record-all.ps1 -Only b,e,d` 로 부른다 (`-File` 로 넘기면 `b,e,d` 가 한 덩어리 글자로 들어가 아무것도 찍지 않는다).
 
 시험 창은 화면 밖에 뜨고 키보드·마우스를 건드리지 않는다. 결과는 이 폴더에 `a.mp4` `b.mp4` `e.mp4` `d.mp4`(2160x1215, 화면 배율 1.35 = 논리 1600x900)와 각각의 `.jsonl`(프레임마다 카드 자리, 마우스 자리, 지금 일), `.done` 으로 남는다. 저장소에는 넣지 않는다.
 
@@ -29,15 +32,17 @@ AI 응답은 실제 AI 대신 정해 둔 장면이다 (시연 모드). b 는 실
 ```powershell
 python tools\promo\edit.py KITE-promo.mp4              # 최종본 (약 6분)
 python tools\promo\edit.py preview.mp4 --preview       # 960x540 미리보기 (약 4분)
+python tools\promo\edit.py KITE-promo.mp4 --dark       # 어두운 화면으로 찍은 토막일 때
 ```
 
-자막 문구, 확대할 곳, 챕터 제목은 `edit.py` 의 `build()` 에 있다. 커서와 클릭 물결은 편집할 때 그린다 (화면 캡처에는 마우스가 찍히지 않는다). Python 에 Pillow 가 있어야 하고, `dupcheck.py` 는 numpy 도 쓴다. ffmpeg 가 PATH 에 있어야 한다.
+자막·챕터 제목·끝 장면의 색은 녹화한 화면에 맞춘다: 기본은 밝은 화면, 어둡게 찍었으면 `--dark` 를 붙인다. 자막 문구, 확대할 곳, 챕터 제목은 `edit.py` 의 `build()` 에 있다. 커서와 클릭 물결은 편집할 때 그린다 (화면 캡처에는 마우스가 찍히지 않는다). Python 에 Pillow 가 있어야 하고, `dupcheck.py` 는 numpy 도 쓴다. ffmpeg 가 PATH 에 있어야 한다.
 
 ## 4. 확인
 
 ```powershell
 python tools\promo\sheet.py 영상.mp4 모음.png 시작초 끝초 간격초 [열] [칸폭]   # 프레임 모음 그림
 python tools\promo\dupcheck.py 영상.mp4                                         # 움직이는 중에 멈춘 프레임 세기
+python tools\promo\poster.py KITE-promo.mp4 시각초 docs\images\promo.jpg        # README 에 거는 영상 그림 (재생 단추 얹음)
 ```
 
 ## 앱 쪽 환경 변수

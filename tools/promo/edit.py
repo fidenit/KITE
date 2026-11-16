@@ -1,6 +1,6 @@
 # KITE 소개 영상 편집: 녹화한 토막(a, b, e, d)을 이어 붙이고, 카메라 확대·커서·자막·챕터 제목을 입혀 1080p MP4 로 만든다.
 # 녹화 때 남긴 .jsonl(프레임마다 카드 자리, 마우스 자리, 지금 일)을 읽어 어디를 확대할지와 자막 시각을 정한다.
-#   python edit.py 출력.mp4 [--preview]
+#   python edit.py 출력.mp4 [--preview] [--dark]      (--dark: 어두운 화면으로 녹화한 토막일 때)
 import bisect
 import json
 import math
@@ -23,7 +23,24 @@ S = OW / 1920.0              # 결과 크기 배율 (미리보기면 절반)
 FB = "C:/Windows/Fonts/malgunbd.ttf"
 FR = "C:/Windows/Fonts/malgun.ttf"
 ACCENT = (240, 146, 45)
-BG = (17, 18, 20)
+# 자막·챕터 제목·끝 장면의 색은 녹화한 화면의 밝기에 맞춘다 (앱의 ui.rs 색과 같은 계열).
+DARK = "--dark" in sys.argv
+if DARK:
+    BG = (17, 18, 20)          # 챕터 제목 바탕, 자막 아래 그늘
+    INK = (246, 246, 246)      # 큰 글자
+    INK_SUB = (176, 178, 184)  # 작은 글자
+    TITLE_SUB = (170, 172, 178)
+    NUM = ACCENT               # 챕터 번호
+    HALO = (0, 0, 0)           # 글자 둘레 번짐
+    END = (0, 0, 0)            # 마지막에 사라져 가는 색
+else:
+    BG = (243, 243, 241)
+    INK = (26, 27, 30)
+    INK_SUB = (88, 89, 96)
+    TITLE_SUB = (108, 109, 116)
+    NUM = (232, 116, 12)
+    HALO = BG
+    END = BG
 
 
 def font(path, size):
@@ -189,11 +206,11 @@ def caption_img(title, sub):
     H = int(130 * S)
     txt = Image.new("RGBA", (OW, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt)
-    d.text((OW / 2, 52 * S), title, font=ft, fill=(246, 246, 246, 255), anchor="ms")
+    d.text((OW / 2, 52 * S), title, font=ft, fill=INK + (255,), anchor="ms")
     if sub:
-        d.text((OW / 2, 96 * S), sub, font=fs, fill=(176, 178, 184, 255), anchor="ms")
-    sh = Image.new("RGBA", (OW, H), (0, 0, 0, 0))
-    sh.paste((0, 0, 0, 255), (0, 0), txt.getchannel("A").filter(ImageFilter.GaussianBlur(7 * S)).point(lambda v: int(v * 0.85)))
+        d.text((OW / 2, 96 * S), sub, font=fs, fill=INK_SUB + (255,), anchor="ms")
+    sh = Image.new("RGBA", (OW, H), HALO + (0,))
+    sh.paste(HALO + (255,), (0, 0), txt.getchannel("A").filter(ImageFilter.GaussianBlur(7 * S)).point(lambda v: int(v * 0.85)))
     img = Image.alpha_composite(sh, txt)
     _caps[key] = img
     return img
@@ -225,9 +242,9 @@ def title_card(num, title, sub):
     img = Image.new("RGB", (OW, OH), BG)
     d = ImageDraw.Draw(img)
     cx, cy = OW / 2, OH / 2
-    d.text((cx, cy - 78 * S), num, font=font(FB, 30), fill=ACCENT, anchor="ms")
-    d.text((cx, cy + 10 * S), title, font=font(FB, 66), fill=(246, 246, 246), anchor="ms")
-    d.text((cx, cy + 66 * S), sub, font=font(FR, 30), fill=(170, 172, 178), anchor="ms")
+    d.text((cx, cy - 78 * S), num, font=font(FB, 30), fill=NUM, anchor="ms")
+    d.text((cx, cy + 10 * S), title, font=font(FB, 66), fill=INK, anchor="ms")
+    d.text((cx, cy + 66 * S), sub, font=font(FR, 30), fill=TITLE_SUB, anchor="ms")
     return img
 
 
@@ -438,9 +455,9 @@ def main():
             total += 1
             last = img
         prev = last
-    # 끝: 마지막 장면을 잠시 두었다가 어둡게
+    # 끝: 마지막 장면을 잠시 두었다가 바탕색으로 사라지게
     for n in range(int(0.8 * FPS)):
-        enc.stdin.write(Image.blend(prev, Image.new("RGB", (OW, OH), (0, 0, 0)), ease(n / (0.8 * FPS))).tobytes())
+        enc.stdin.write(Image.blend(prev, Image.new("RGB", (OW, OH), END), ease(n / (0.8 * FPS))).tobytes())
         total += 1
     enc.stdin.close()
     enc.wait()

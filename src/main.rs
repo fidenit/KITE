@@ -388,6 +388,8 @@ impl App {
             1.0 + c3 * (x - 1.0).powi(3) + c1 * (x - 1.0).powi(2)
         };
         let logo = crate::pics::show(ctx, &p.logo);
+        // 로고 그림은 흰색이다. 밝은 화면에서는 글자색으로 물들여 보이게 한다.
+        let ink = if ui::is_light() { ui::TEXT() } else { egui::Color32::WHITE };
         let text = |pos: egui::Pos2, s: &str, font: egui::FontId, color: egui::Color32, a: f32| {
             if a > 0.01 {
                 paint.text(pos, egui::Align2::CENTER_CENTER, s, font, color.gamma_multiply(a));
@@ -440,7 +442,7 @@ impl App {
             if let crate::pics::Shown::Ready(id, size) = logo {
                 let h = screen.height() * 0.26 * (0.80 + 0.20 * back(fade(t, 3.1, 3.8)));
                 let r = egui::Rect::from_center_size(c - egui::vec2(0.0, 56.0), egui::vec2(h * size[0] / size[1], h));
-                paint.image(id, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE.gamma_multiply(mark));
+                paint.image(id, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), ink.gamma_multiply(mark));
             }
             spaced(c + egui::vec2(0.0, 84.0), "FIDENIT", 26.0, 25.0, ui::TEXT(), fade(t, 3.7, 4.2) * cover);
             text(c + egui::vec2(0.0, 126.0), "presents  KITE  ·  Kinetic Interactive Task Environment", ui::font(15.0), ui::DIM(), fade(t, 4.2, 4.7) * cover);
@@ -452,7 +454,7 @@ impl App {
             if let crate::pics::Shown::Ready(id, size) = crate::pics::show(ctx, &p.logo) {
                 let h = 86.0;
                 let r = egui::Rect::from_center_size(c - egui::vec2(0.0, 150.0), egui::vec2(h * size[0] / size[1], h));
-                paint.image(id, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE.gamma_multiply(fade(u, 0.3, 0.8)));
+                paint.image(id, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), ink.gamma_multiply(fade(u, 0.3, 0.8)));
             }
             text(c - egui::vec2(0.0, 44.0), "KITE", ui::bold(88.0 * (0.92 + 0.08 * back(fade(u, 0.5, 1.2)))), ui::TEXT(), fade(u, 0.5, 1.0));
             text(c + egui::vec2(0.0, 30.0), "Kinetic Interactive Task Environment", ui::font(19.0), ui::DIM(), fade(u, 0.8, 1.3));
