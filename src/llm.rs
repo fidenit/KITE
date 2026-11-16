@@ -11,6 +11,8 @@ pub enum Msg {
     Activity(String),
     /// 일하는 도중에 화면을 고쳐 달라는 요청. 거부된 명령의 이유를 `reply` 로 돌려준다.
     Screen { ops: String, reply: Sender<String> },
+    /// 다른 프로그램이 소켓(`feed.rs`)으로 보낸 프로토콜 줄 하나. 판정 한 줄(`ok` / `err <이유>`)을 `reply` 로 돌려준다.
+    Feed { line: String, reply: Sender<String> },
     /// 웹 카드 안의 페이지에서 스크립트를 실행해 달라는 요청. 결과를 `reply` 로 돌려준다.
     Browser { card: String, script: String, reply: Sender<String> },
     /// 판단 모델이 메인 모델보다 먼저 내린 결정 (요청의 종류, 주제 등)

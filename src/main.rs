@@ -7,6 +7,7 @@ mod chat;
 mod core;
 mod decide;
 mod eleven;
+mod feed;
 mod jev;
 mod jobs;
 mod lang;
@@ -616,6 +617,7 @@ impl App {
             let wake = ctx.clone();
             jobs::init(app.tx.clone(), move || wake.request_repaint());
         }
+        start_feed(&app.tx, ctx);
         sys::register_obsidian_vault(&vault::root()); // 보관함 폴더를 만들고 옵시디언에 등록해 둔다
         // 확인용: 사람이 말하지 않아도 받아쓰기와 마이크를 시험할 수 있게 한다. 결과는 data\stt.log 에 남는다.
         if let Ok(path) = std::env::var("LYBOARD_STT_FILE") {
@@ -742,6 +744,10 @@ impl App {
         self.board = Board::default();
         if let Ok(text) = std::fs::read_to_string(log_path()) {
             for l in text.lines() {
+                // 첫 줄 머리글(`# kite-protocol 0.1`)은 주석이다. 모르는 주 버전이면 알리고 그래도 재생한다 (실패하는 줄은 건너뛴다).
+                if let Some(v) = lang::declared_version(l).filter(|v| !lang::can_read(v)) {
+                    sys::log("feed.log", &format!("ops.log 가 프로토콜 {v} 을 선언함 (이 프로그램은 {})", lang::VERSION));
+                }
                 if let Some((who, line)) = l.split_once('\t') {
                     if who == "T" {
                         // 날짜 표시 줄: 이 뒤의 조작은 이 날짜에 있었던 것이다.
@@ -760,6 +766,12 @@ impl App {
             self.board.notes.clear();
         }
         self.log = std::fs::OpenOptions::new().create(true).append(true).open(log_path()).ok();
+        // 새 기록 파일은 프로토콜 버전을 적은 머리글로 시작한다. 머리글 없는 옛 파일은 0.1 로 읽으며 고치지 않는다.
+        if let Some(f) = &mut self.log {
+            if f.metadata().map(|m| m.len() == 0).unwrap_or(false) {
+                let _ = writeln!(f, "{}", lang::header());
+            }
+        }
         self.replay_date = None;
         // 지난번까지의 대화를 되살린다.
         let (past, tail) = memory::Past::load(RECENT);
@@ -1721,6 +1733,20 @@ impl App {
                     notes.extend(new);
                     let _ = reply.send(if notes.is_empty() { "반영됨".to_string() } else { format!("일부 거부되거나 잘림:\n{}", notes.join("\n")) });
                 }
+                llm::Msg::Feed { line, reply } => {
+                    // 바깥 프로그램이 보낸 줄: 모델의 줄과 같은 문으로 들어가되, 거부와 잘림은 모델이 아니라 보낸 쪽에 돌려준다.
+                    let (rejects_before, notes_before) = (self.rejects.len(), self.board.notes.len());
+                    self.apply_line(&line, Author::Ai);
+                    let rejected: Vec<String> = self.rejects.drain(rejects_before..).collect();
+                    let notes: Vec<String> = self.board.notes.drain(notes_before..).collect();
+                    let _ = reply.send(if !rejected.is_empty() {
+                        format!("err {}", rejected.join(" / "))
+                    } else if notes.is_empty() {
+                        "ok".to_string()
+                    } else {
+                        format!("ok {}", notes.join(" / "))
+                    });
+                }
                 llm::Msg::Delta(d) => {
                     if !d.trim().is_empty() {
                         self.got_output = true;
@@ -2063,6 +2089,44 @@ impl App {
 fn debug_log(name: &str, text: &str) {
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(sys::data_dir().join(name)) {
         let _ = f.write_all(text.as_bytes());
+    }
+}
+
+/// 바깥 프로그램이 줄을 넣는 통로의 쪽: 화면 쪽 스레드로 줄을 보내고 판정을 기다린다. 기록은 data\\feed.log.
+struct FeedSink {
+    tx: Sender<llm::Msg>,
+    wake: egui::Context,
+}
+
+impl feed::Sink for FeedSink {
+    fn line(&self, peer: &str, line: &str) -> String {
+        let (reply, got) = channel();
+        let verdict = if self.tx.send(llm::Msg::Feed { line: line.to_string(), reply }).is_err() {
+            "err 프로그램이 닫히는 중".to_string()
+        } else {
+            self.wake.request_repaint();
+            got.recv_timeout(std::time::Duration::from_secs(10)).unwrap_or_else(|_| "err 화면이 응답하지 않음".to_string())
+        };
+        sys::log("feed.log", &format!("{peer}  {}  → {verdict}", line.chars().take(300).collect::<String>()));
+        verdict
+    }
+    fn note(&self, text: &str) {
+        sys::log("feed.log", text);
+    }
+}
+
+/// KITE_PROTOCOL_PORT 가 있으면 127.0.0.1 에서 줄을 받기 시작한다 (기본은 꺼짐). KITE_PROTOCOL_TOKEN 이 있으면 첫 줄이 `auth <암호>` 여야 한다.
+fn start_feed(tx: &Sender<llm::Msg>, ctx: &egui::Context) {
+    let Ok(v) = std::env::var("KITE_PROTOCOL_PORT") else { return };
+    let token = std::env::var("KITE_PROTOCOL_TOKEN").ok().filter(|t| !t.trim().is_empty());
+    match v.trim().parse::<u16>() {
+        Ok(port) if port >= 1024 => {
+            let sink = Arc::new(FeedSink { tx: tx.clone(), wake: ctx.clone() });
+            if let Err(e) = feed::start(port, token, sink) {
+                sys::log("feed.log", &format!("시작 못 함: {e}"));
+            }
+        }
+        _ => sys::log("feed.log", &format!("KITE_PROTOCOL_PORT '{v}' 는 1024~65535 의 숫자여야 함. 꺼 둠")),
     }
 }
 

@@ -3,6 +3,29 @@
 
 use crate::core::{Board, Op};
 
+/// 이 구현이 쓰고 읽는 프로토콜 버전 (docs/PROTOCOL.md 10장).
+pub const VERSION: &str = "0.1";
+
+/// 저장하는 기록·씨앗 파일의 첫 줄. `#` 로 시작하므로 옛 파서는 주석으로 넘긴다.
+pub fn header() -> String {
+    format!("# kite-protocol {VERSION}")
+}
+
+/// 머리글 줄이면 그 줄이 말하는 버전. 머리글이 아니면 None.
+pub fn declared_version(line: &str) -> Option<&str> {
+    let rest = line.trim().strip_prefix('#')?.trim_start().strip_prefix("kite-protocol")?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    rest.split_whitespace().next()
+}
+
+/// 이 버전을 읽을 수 있는가. 주 번호(첫 숫자)가 같으면 읽는다.
+pub fn can_read(version: &str) -> bool {
+    let major = |v: &str| v.split('.').next().and_then(|m| m.parse::<u32>().ok());
+    major(version).is_some() && major(version) == major(VERSION)
+}
+
 fn split1(s: &str) -> (&str, &str) {
     let s = s.trim_start();
     match s.find(char::is_whitespace) {
@@ -248,6 +271,19 @@ mod tests {
         assert!(run(&mut b2, &text, Author::User).is_empty());
         assert_eq!(serialize(&b2), text);
         assert_eq!(b.card("k2").unwrap().w, 2); // 기본 크기
+    }
+
+    #[test]
+    fn version_header() {
+        assert_eq!(header(), "# kite-protocol 0.1");
+        assert_eq!(declared_version("# kite-protocol 0.1"), Some("0.1"));
+        assert_eq!(declared_version("  #kite-protocol 0.2  "), Some("0.2"));
+        assert_eq!(declared_version("# kite-protocolX 0.1"), None);
+        assert_eq!(declared_version("# note"), None);
+        assert_eq!(declared_version("say # kite-protocol 0.1"), None);
+        assert!(can_read("0.1") && can_read("0.9") && !can_read("1.0") && !can_read("x"));
+        // 머리글은 주석이라 보드를 바꾸지 않는다
+        assert!(matches!(parse(&header()), Ok(None)));
     }
 
     #[test]
