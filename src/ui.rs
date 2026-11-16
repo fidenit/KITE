@@ -69,8 +69,7 @@ palette! {
 }
 
 
-// 전환 시간 (초)
-const T_MOVE: f64 = 0.42;
+// 전환 시간 (초). 자리 이동은 시간이 아니라 용수철로 움직인다 (`Tween`).
 const T_IN: f64 = 0.38;
 const T_OUT: f64 = 0.26;
 const T_ITEM: f64 = 0.34;
@@ -105,29 +104,52 @@ pub fn bold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("bold".into()))
 }
 
-/// 출발값에서 목표값으로 이징하며 가는 2차원 값.
+/// 목표값을 따라가는 2차원 값. 임계 감쇠 용수철처럼 움직인다.
+/// 가는 도중에 목표가 바뀌어도(창 크기를 끌어 바꾸면 매 프레임 바뀐다) 지금의 속도를 이어받으므로 끊기지 않는다.
+/// (예전에는 목표가 바뀔 때마다 이징을 처음부터 다시 시작해서, 속도가 0으로 떨어졌다 붙었다 하며 끊겨 보였다.)
+/// 시간에 대한 식으로 풀어 두어서 프레임 간격과 상관없이 같은 길을 간다.
 struct Tween {
+    /// t0 때의 위치와 속도
     from: Vec2,
+    vel: Vec2,
     to: Vec2,
     t0: f64,
+    /// 빠르기 (ω)
+    w: f32,
 }
+
+/// 카드·구역 용수철의 빠르기. 멈춘 상태에서 출발하면 0.34초에 95%, 0.47초에 99% 간다.
+const SPRING: f32 = 14.0;
+/// 카메라 용수철의 빠르기. 창 끝을 끄는 손을 카드보다 바짝(0.1초 안팎 늦게) 따라온다.
+const CAM_SPRING: f32 = 22.0;
 
 impl Tween {
     fn fixed(v: Vec2) -> Self {
-        Tween { from: v, to: v, t0: 0.0 }
+        Self::spring(v, SPRING)
+    }
+    fn spring(v: Vec2, w: f32) -> Self {
+        Tween { from: v, vel: Vec2::ZERO, to: v, t0: 0.0, w }
+    }
+    /// (위치, 속도). x(t) = 목표 + (a + b·t)·e^(-ωt)
+    fn state(&self, now: f64) -> (Vec2, Vec2) {
+        let t = (now - self.t0).max(0.0) as f32;
+        let a = self.from - self.to;
+        let b = self.vel + a * self.w;
+        let e = (-self.w * t).exp();
+        (self.to + (a + b * t) * e, (self.vel - b * (self.w * t)) * e)
     }
     fn at(&self, now: f64) -> Vec2 {
-        self.from + (self.to - self.from) * ease_in_out_cubic(unit(now, self.t0, T_MOVE))
+        if self.busy(now) { self.state(now).0 } else { self.to }
     }
     fn retarget(&mut self, to: Vec2, now: f64) {
         if (to - self.to).length() > 0.5 {
-            self.from = self.at(now);
-            self.to = to;
-            self.t0 = now;
+            let (from, vel) = self.state(now);
+            *self = Tween { from, vel, to, t0: now, w: self.w };
         }
     }
     fn busy(&self, now: f64) -> bool {
-        now - self.t0 < T_MOVE && self.from != self.to
+        let (p, v) = self.state(now);
+        (p - self.to).length() > 0.2 || v.length() > 2.0
     }
 }
 
@@ -179,6 +201,10 @@ pub struct View {
     goto: Option<String>,
     /// 지금 사용자 앞에 가져다 놓은 일 (결정 카드의 ID). 이 카드는 판이 아니라 왼쪽의 "내 차례" 자리에 그린다.
     pub task: Option<String>,
+    /// 사용자가 눌러서 고른 카드. 있으면 "내 차례" 자리에 일 대신 이 카드를 놓고, 판에는 같은 주제의 카드만 보인다.
+    pub picked: Option<String>,
+    /// 처음 보기로 돌아가 달라는 예약 (고른 카드를 닫았을 때)
+    home_req: bool,
     /// 왼쪽 "내 차례" 자리의 화면 위치 (대화 구역이 정해 준다)
     pub task_rect: Option<Rect>,
     /// 이 주제의 구역을 "내 차례" 자리 바로 옆에 붙여 보여 달라는 예약
@@ -188,6 +214,25 @@ pub struct View {
     docked: Option<(String, Rect)>,
     /// 이 카드가 제 크기(100%)로 화면 안에 다 들어오게 해 달라는 예약
     card_goto: Option<String>,
+    /// 지난 프레임의 판 크기. 창 크기가 바뀐 것을 알아채는 데 쓴다.
+    area: Option<Vec2>,
+    /// 지금 보는 단계: 0 카드, 1 주제(이름만), 2 분류(이름만). 스크롤 한 번에 한 단계씩 옮긴다.
+    /// 무엇을 보일지는 확대 비율이 아니라 이 단계가 정한다.
+    pub level: u8,
+    /// 단계별 보이는 정도의 전환 (카드, 주제 이름, 분류 이름)
+    blend: HashMap<String, (f32, f32, f64)>,
+    /// 아직 한 단계를 채우지 못한 스크롤 양, 마지막으로 스크롤이 들어온 시각
+    wheel: (f32, f64),
+    /// 이 시각까지는 단계를 다시 옮기지 않는다 (한 번의 손짓이 이어지는 동안 여러 단계를 건너뛰지 않게)
+    step_lock: f64,
+    /// 창 크기를 바꾸는 동안의 카메라: (보는 범위의 왼쪽 위, 확대 비율×1000) 을 따라가는 용수철.
+    /// 이때는 정해진 시간에 날아가지 않는다 (목표가 매 프레임 바뀌므로). 가라앉으면 없어진다.
+    follow: Option<(Tween, Tween)>,
+    /// 사용자가 "+N개 더"를 눌러 접힌 카드까지 다 펼쳐 둔 주제
+    unfolded: HashSet<String>,
+    /// 카드별로 이 창 크기에서 잰 가장 큰 내용 높이 (카드 rev, 높이). 몇 장을 접을지 정할 때만 쓴다:
+    /// 접는 수가 바뀌면 카드 폭이 바뀌고, 폭이 바뀌면 높이가 바뀌어서, 지금 높이로만 정하면 접었다 폈다를 되풀이할 수 있다.
+    tall: HashMap<String, (u64, f32)>,
 }
 
 impl View {
@@ -209,6 +254,37 @@ impl View {
 
     pub fn want_topic(&mut self, topic: String) {
         self.goto = Some(topic);
+    }
+
+    /// 카드를 골라 왼쪽 자리에 놓는다 (None 이면 닫고 처음 보기로 돌아간다). `topic` 은 그 카드의 주제.
+    /// 고른 카드의 주제가 판의 왼쪽 위, 그 카드 바로 옆에 붙는다.
+    pub fn pick(&mut self, card: Option<String>, topic: Option<String>) {
+        match (card, topic) {
+            (Some(c), Some(t)) => {
+                self.picked = Some(c);
+                self.dock = Some(t);
+                self.level = 0;
+            }
+            _ => {
+                if self.picked.take().is_some() {
+                    self.home_req = true;
+                }
+            }
+        }
+    }
+
+    /// 왼쪽 "내 차례" 자리에 놓을 카드: 사용자가 고른 카드, 없으면 AI 가 가져온 일.
+    pub fn slot_card(&self) -> Option<&str> {
+        self.picked.as_deref().or(self.task.as_deref())
+    }
+
+    /// 지금 단계의 이름 (상태 줄에 쓴다)
+    pub fn level_name(&self) -> &'static str {
+        match self.level {
+            2 => crate::sys::tr("분류", "groups"),
+            1 => crate::sys::tr("주제", "topics"),
+            _ => crate::sys::tr("카드", "cards"),
+        }
     }
 
     pub fn set_importance(&mut self, m: HashMap<String, f64>) {
@@ -257,15 +333,12 @@ struct Slot {
     row: i32,
     /// 화면을 내려도 제자리에 붙어 있는 카드인가 ("내 차례" 구역의 카드)
     sticky: bool,
-    /// 이 카드가 속한 주제 구역 안에서 격자가 시작되는 지점과, 그 구역의 가로 칸 수
+    /// 이 카드가 속한 주제 구역 안에서 격자가 시작되는 지점
     origin: Vec2,
-    limit: i32,
     /// 이 구역에서 한 칸의 가로 폭. 구역이 화면 폭을 채우도록 칸을 늘리므로 구역마다 다르다.
     cw: f32,
     /// 카드의 세로 크기 (픽셀). 줄 높이는 그 줄에 놓인 카드들의 내용에 맞추므로 칸 수만으로는 정해지지 않는다.
     ph: f32,
-    /// 이 구역에서 각 줄이 시작하는 세로 위치 (격자 시작점 기준). 끌어다 놓을 때 가까운 줄을 찾는 데 쓴다.
-    rows: std::rc::Rc<Vec<f32>>,
 }
 
 /// 주제 하나의 구역.
@@ -276,6 +349,10 @@ struct Zone {
     size: Vec2,
     /// 답이 필요한 카드가 모이는 "내 차례" 구역인가
     inbox: bool,
+    /// 읽을 수 있는 크기로 한 화면에 넣으려고 접은(또는 펼쳐 두지 않았다면 접었을) 카드 수
+    hidden: usize,
+    /// 사용자가 펼쳐 두어서 접지 않고 다 보여 주는 중인가
+    unfolded: bool,
 }
 
 /// 배치. 주제마다 구역을 하나씩 만들고, 카드는 자기 주제의 구역 안에서만 격자에 놓는다.
@@ -284,10 +361,17 @@ struct Zone {
 fn layout(board: &Board, width: f32, screen: Vec2, view: &View, only: Option<&str>, with_inbox: bool) -> (HashMap<String, Slot>, Vec<Zone>) {
     let cells = |avail: f32| (((avail - 2.0 * ZONE_PAD + GAP) / (CW + GAP)).floor() as i32).max(2);
     // 답이 필요한 카드(decision)는 주제 구역에 두지 않고 오른쪽 "내 차례" 구역으로 모은다.
-    let asks: Vec<&Card> = board.cards.iter().filter(|c| view.task.as_deref() == Some(c.id.as_str())).collect();
-    let away = |c: &Card| view.task.as_deref() == Some(c.id.as_str());
-    let topics: Vec<&crate::core::Topic> =
-        board.topics.iter().filter(|t| only.map(|g| t.group.as_deref().unwrap_or("") == g).unwrap_or(true)).filter(|t| board.cards.iter().any(|c| c.topic == t.id && !away(c))).collect();
+    let asks: Vec<&Card> = board.cards.iter().filter(|c| view.slot_card() == Some(c.id.as_str())).collect();
+    let away = |c: &Card| view.slot_card() == Some(c.id.as_str());
+    // 사용자가 카드를 골랐으면 판에는 그 카드와 같은 주제의 카드만 놓는다.
+    let only_topic = view.picked.as_deref().and_then(|id| board.card(id)).map(|c| c.topic.as_str());
+    let topics: Vec<&crate::core::Topic> = board
+        .topics
+        .iter()
+        .filter(|t| only.map(|g| t.group.as_deref().unwrap_or("") == g).unwrap_or(true))
+        .filter(|t| only_topic.map(|o| o == t.id).unwrap_or(true))
+        .filter(|t| board.cards.iter().any(|c| c.topic == t.id && !away(c)))
+        .collect();
     // 한 주제의 카드는 스크롤 없이 한 화면에 들어와야 한다. 그래서 구역마다 가로 칸 수를 몇 가지로 놓아 보고,
     // 화면에 가장 크게 들어오는 배치를 고른다. 칸을 늘리면 구역이 넓고 낮아져서, 조금 축소하면 통째로 보인다.
     // 제 크기(100%)로 들어오면 그것이 가장 좋고, 아니면 FIT_MIN 까지 축소해서 들어오는 것을 찾는다.
@@ -299,8 +383,9 @@ fn layout(board: &Board, width: f32, screen: Vec2, view: &View, only: Option<&st
     let (mut x, mut y, mut shelf_h) = (0.0_f32, 0.0_f32, 0.0_f32);
     for t in topics {
         let mine: Vec<&Card> = board.cards.iter().filter(|c| c.topic == t.id && !away(c)).collect();
-        // 가로 `limit` 칸으로 놓아 본다. (놓인 자리들, 쓴 가로 칸 수, 쓴 세로 칸 수)
-        let place = |limit: i32| -> (Vec<(&Card, i32, i32, i32, i32)>, i32, i32) {
+        // `show`(mine 의 번호, 작은 것부터) 카드만 가로 `limit` 칸으로 놓아 본다. (놓인 자리들, 쓴 가로 칸 수, 쓴 세로 칸 수)
+        let place = |show: &[usize], limit: i32| -> (Vec<(&Card, i32, i32, i32, i32)>, i32, i32) {
+            let mine: Vec<&Card> = show.iter().map(|i| mine[*i]).collect();
             let mut used: HashSet<(i32, i32)> = HashSet::new();
             let mut placed: Vec<(&Card, i32, i32, i32, i32)> = Vec::new();
             let width_of = |c: &Card| (c.w as i32).min(limit);
@@ -357,19 +442,24 @@ fn layout(board: &Board, width: f32, screen: Vec2, view: &View, only: Option<&st
         };
         // 줄 높이는 칸 단위로 끊지 않고 그 줄에 놓인 카드의 내용에 맞춘다. 칸 단위로 끊으면 카드마다 아래에 빈 자리가 남는다.
         // 카드가 필요한 높이: 내용의 높이 (카드가 정한 칸 수를 넘지는 않는다). 사용자가 크기를 정한 카드는 정한 그대로.
-        let need_px = |c: &Card, h: i32| -> f32 {
+        // `sure` 이면 이 창 크기에서 잰 가장 큰 높이를 쓴다 (몇 장을 접을지 정할 때. `View::tall` 참고).
+        let need_px = |c: &Card, h: i32, sure: bool| -> f32 {
             let full = h as f32 * (CH + GAP) - GAP;
             if c.pinned {
                 return full;
             }
-            match view.cards.get(&c.id) {
-                // 내용이 카드가 정한 크기보다 길면, 화면 한 장에 들어오는 데까지는 카드를 키운다 (카드 안에서 잘리지 않게).
-                Some(v) if v.content_h > 0.0 => (HEAD + v.content_h + 14.0).clamp(72.0, full.max(room.y - ZONE_HEAD - ZONE_PAD)),
-                _ => full,
+            let now_h = view.cards.get(&c.id).map(|v| v.content_h).filter(|h| *h > 0.0);
+            let most = view.tall.get(&c.id).filter(|t| sure && t.0 == c.rev && t.1 > 0.0).map(|t| t.1);
+            match (now_h, most) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
             }
+            // 내용이 카드가 정한 크기보다 길면, 화면 한 장에 들어오는 데까지는 카드를 키운다 (카드 안에서 잘리지 않게).
+            .map(|ch| (HEAD + ch + 14.0).clamp(72.0, full.max(room.y - ZONE_HEAD - ZONE_PAD)))
+            .unwrap_or(full)
         };
         // 각 줄의 높이: 끝나는 줄이 이른 카드부터, 카드가 걸친 줄들의 합이 필요한 높이가 되도록 마지막 줄을 늘린다.
-        let row_heights = |placed: &Vec<(&Card, i32, i32, i32, i32)>, nrows: i32| -> Vec<f32> {
+        let row_heights = |placed: &Vec<(&Card, i32, i32, i32, i32)>, nrows: i32, sure: bool| -> Vec<f32> {
             let mut rh = vec![0.0_f32; nrows.max(1) as usize];
             let mut order: Vec<usize> = (0..placed.len()).collect();
             order.sort_by_key(|i| placed[*i].2 + placed[*i].4);
@@ -377,7 +467,7 @@ fn layout(board: &Board, width: f32, screen: Vec2, view: &View, only: Option<&st
                 let (c, _, row, _, h) = placed[i];
                 let span = row as usize..(row + h) as usize;
                 let have: f32 = rh[span.clone()].iter().sum::<f32>() + (h - 1) as f32 * GAP;
-                let need = need_px(c, h);
+                let need = need_px(c, h, sure);
                 if have < need {
                     rh[span.end - 1] += need - have;
                 }
@@ -385,21 +475,56 @@ fn layout(board: &Board, width: f32, screen: Vec2, view: &View, only: Option<&st
             rh
         };
         let natural = |ncols: i32, rh: &Vec<f32>| vec2(ncols as f32 * (CW + GAP) - GAP + 2.0 * ZONE_PAD, ZONE_HEAD + rh.iter().sum::<f32>() + (rh.len() as f32 - 1.0) * GAP + ZONE_PAD);
-        let mut best: Option<(f32, i32, Vec<(&Card, i32, i32, i32, i32)>, i32, Vec<f32>)> = None;
-        for limit in lo..=hi.max(lo) {
-            let (placed, ncols, nrows) = place(limit);
-            let rh = row_heights(&placed, nrows);
-            let n = natural(ncols, &rh);
-            let k = (room.x / n.x).min(room.y / n.y).min(1.0);
-            // 눈에 띄게 더 크게 들어올 때만 칸을 늘린 배치로 바꾼다 (같으면 카드가 큰 쪽).
-            if best.as_ref().map(|b| k > b.0 + 0.02).unwrap_or(true) {
-                best = Some((k, limit, placed, ncols, rh));
+        // 칸 수 후보마다 놓아 보고 화면에 가장 크게 들어오는 배치를 고른다. (축소 비율, 칸 수, 놓인 자리, 쓴 칸 수, 줄 높이)
+        let arrange = |show: &[usize], sure: bool| {
+            let mut best: Option<(f32, i32, Vec<(&Card, i32, i32, i32, i32)>, i32, Vec<f32>)> = None;
+            for limit in lo..=hi.max(lo) {
+                let (placed, ncols, nrows) = place(show, limit);
+                let rh = row_heights(&placed, nrows, sure);
+                let n = natural(ncols, &rh);
+                let k = (room.x / n.x).min(room.y / n.y).min(1.0);
+                // 눈에 띄게 더 크게 들어올 때만 칸을 늘린 배치로 바꾼다 (같으면 카드가 큰 쪽).
+                if best.as_ref().map(|b| k > b.0 + 0.02).unwrap_or(true) {
+                    best = Some((k, limit, placed, ncols, rh));
+                }
+                if k >= 1.0 {
+                    break;
+                }
             }
-            if k >= 1.0 {
-                break;
+            best.expect("칸 수 후보는 하나 이상이다")
+        };
+        // 읽을 수 있는 크기(FIT_MIN)로 줄여도 한 화면에 다 안 들어가면, 덜 중요한 카드부터 접는다 (구역 머리에 "+N개 더").
+        // 남기는 순서: AI 가 짚은 카드, 답이 필요한 카드, 사용자가 자리나 크기를 정한 카드, 중요도, 먼저 생긴 카드.
+        // 중요도가 같으면 먼저 생긴 카드를 남긴다: AI 는 보통 가장 중요한 카드부터 만들고,
+        // 새 카드가 들어올 때마다 있던 카드가 빠지면 판이 계속 뒤섞인다 (새 카드는 "+N개 더"로 간다).
+        let mut rank: Vec<usize> = (0..mine.len()).collect();
+        let keep = |i: usize| {
+            let c = mine[i];
+            let imp = view.importance.get(&c.id).copied().unwrap_or(0.5);
+            (board.focus.as_deref() == Some(c.id.as_str()), c.kind.asks(), c.pinned || c.grid.is_some(), (imp * 1000.0) as i64, std::cmp::Reverse(i))
+        };
+        rank.sort_by_key(|i| std::cmp::Reverse(keep(*i)));
+        let first = |n: usize| {
+            let mut s = rank[..n].to_vec();
+            s.sort_unstable();
+            s
+        };
+        let fits = |n: usize| arrange(&first(n), true).0 >= FIT_MIN - 0.005;
+        let mut shown = mine.len();
+        if shown > 1 && !fits(shown) {
+            // 적게 놓을수록 잘 들어가므로, 들어가는 가장 많은 수를 반으로 나눠 찾는다. 한 장은 늘 보인다.
+            let (mut ok, mut bad) = (1, shown);
+            while bad - ok > 1 {
+                let mid = (ok + bad) / 2;
+                if fits(mid) { ok = mid } else { bad = mid }
             }
+            shown = ok;
         }
-        let (k, limit, placed, ncols, rh) = best.expect("칸 수 후보는 하나 이상이다");
+        let hidden = mine.len() - shown;
+        let unfolded = hidden > 0 && view.unfolded.contains(&t.id);
+        let (k, _, placed, ncols, rh) = arrange(&first(if unfolded { mine.len() } else { shown }), false);
+        // 펼쳐 둔 주제는 읽을 수 있는 크기를 지키고 세로로 넘치게 둔다 (끌어서 본다).
+        let k = if unfolded { k.max(FIT_MIN) } else { k };
         // 각 줄이 시작하는 위치
         let mut tops = Vec::with_capacity(rh.len() + 1);
         let mut acc = 0.0_f32;
@@ -408,7 +533,6 @@ fn layout(board: &Board, width: f32, screen: Vec2, view: &View, only: Option<&st
             acc += h + GAP;
         }
         tops.push(acc);
-        let tops = std::rc::Rc::new(tops);
         // 그 축소 비율에서 화면의 가로를 다 쓰도록 칸을 늘린다. 카드가 너무 넓적해지지 않게 1.6배까지만.
         let cw = (((room.x / k - 2.0 * ZONE_PAD) - (ncols - 1) as f32 * GAP) / ncols as f32).clamp(CW, CW * 1.6 / k);
         let size = vec2(ncols as f32 * (cw + GAP) - GAP + 2.0 * ZONE_PAD, natural(ncols, &rh).y);
@@ -422,9 +546,9 @@ fn layout(board: &Board, width: f32, screen: Vec2, view: &View, only: Option<&st
         for (c, col, row, w, h) in placed {
             let (top, end) = (tops[row as usize], tops[(row + h) as usize] - GAP);
             let pos = origin + vec2(col as f32 * (cw + GAP), top);
-            slots.insert(c.id.clone(), Slot { pos, w, h, col, row, origin, limit, sticky: false, cw, ph: end - top, rows: tops.clone() });
+            slots.insert(c.id.clone(), Slot { pos, w, h, col, row, origin, sticky: false, cw, ph: end - top });
         }
-        zones.push(Zone { id: t.id.clone(), name: t.name.clone(), min, size, inbox: false });
+        zones.push(Zone { id: t.id.clone(), name: t.name.clone(), min, size, inbox: false, hidden, unfolded });
         x += size.x + ZONE_GAP;
         shelf_h = shelf_h.max(size.y);
     }
@@ -435,9 +559,9 @@ fn layout(board: &Board, width: f32, screen: Vec2, view: &View, only: Option<&st
                 Some(v) if v.content_h > 0.0 => (((HEAD + v.content_h + 12.0 + GAP) / (CH + GAP)).ceil() as i32).clamp(1, 12),
                 _ => eff_h(c, view),
             };
-            slots.insert(c.id.clone(), Slot { pos: vec2(0.0, 0.0), w: INBOX_COLS, h, col: 0, row: 0, origin: vec2(0.0, 0.0), limit: INBOX_COLS, sticky: true, cw: CW, ph: h as f32 * (CH + GAP) - GAP, rows: std::rc::Rc::new(Vec::new()) });
+            slots.insert(c.id.clone(), Slot { pos: vec2(0.0, 0.0), w: INBOX_COLS, h, col: 0, row: 0, origin: vec2(0.0, 0.0), sticky: true, cw: CW, ph: h as f32 * (CH + GAP) - GAP });
             let size = vec2(INBOX_COLS as f32 * (CW + GAP) - GAP, h as f32 * (CH + GAP) - GAP);
-            zones.push(Zone { id: INBOX_ID.into(), name: "내 차례".into(), min: vec2(0.0, 0.0), size, inbox: true });
+            zones.push(Zone { id: INBOX_ID.into(), name: "내 차례".into(), min: vec2(0.0, 0.0), size, inbox: true, hidden: 0, unfolded: false });
         }
     }
     (slots, zones)
@@ -601,21 +725,51 @@ pub fn board(
         // 하나의 넓은 판. 스크롤로 확대·축소하고 빈 곳을 끌어 옮긴다 (그래프 보기처럼).
         // 멀리서 보면 분류 덩어리와 이름만, 가까이 가면 주제, 더 가까이 가면 카드 내용이 보인다.
         let full_area = ui.available_rect_before_wrap();
+        // 창 크기가 바뀌었는가. 바뀌는 동안은 카메라가 날아가지 않고 바로 따라간다 (아래 `resized`).
+        let prev_area = view.area.replace(full_area.size());
+        let resized = prev_area.map(|a| (a - full_area.size()).length() > 0.5).unwrap_or(false);
+        if resized {
+            // 카드 폭이 바뀌므로 재어 둔 높이는 새로 잰다.
+            view.tall.clear();
+        }
+        view.tall.retain(|id, _| board.card(id).is_some());
+        if let (true, Some(prev)) = (resized, prev_area) {
+            // 확대 비율과 왼쪽 위는 그대로 두고, 보는 범위만 새 창 크기로 바꾼다.
+            // (그대로 두면 예전 범위를 새 창에 억지로 맞추느라 판 전체가 잠깐 커졌다 작아지고, 날아가던 목표도 어긋난다.)
+            let k = vec2(full_area.width() / prev.x.max(1.0), full_area.height() / prev.y.max(1.0));
+            let keep = |r: Rect| Rect::from_min_size(r.min, vec2(r.width() * k.x, r.height() * k.y));
+            if let Some(s) = view.scene.as_mut().filter(|s| s.is_finite() && s.width() > 1.0) {
+                *s = keep(*s);
+            }
+            if let Some(f) = view.fit.as_mut() {
+                *f = keep(*f);
+            }
+            if let Some((a, b, _)) = view.fly.as_mut() {
+                (*a, *b) = (keep(*a), keep(*b));
+            }
+            if let Some((_, r)) = view.docked.as_mut() {
+                *r = keep(*r);
+            }
+        }
 
         // "내 차례": 판 위가 아니라 화면 오른쪽에 고정된다 (확대·축소와 상관없이 항상 같은 자리, 같은 크기).
         let (inbox_slots, inbox_zones) = layout(board, INBOX_COLS as f32 * (CW + GAP) - GAP + 2.0 * ZONE_PAD, full_area.size(), view, Some(NO_GROUP), true);
         let inbox = inbox_zones.into_iter().find(|z| z.inbox);
         // "내 차례" 구역이 오른쪽을 가리므로, 내용은 그 왼쪽 자리에 맞춘다.
         let covered = 0.0_f32;
-        let task_id = view.task.clone();
+        let task_id = view.slot_card().map(str::to_string);
         let task_topic = task_id.as_ref().and_then(|id| board.card(id)).map(|c| c.topic.clone());
         // 판은 "내 차례" 구역의 왼쪽만 쓴다. 판 위의 내용이 그 구역 밑으로 들어가 가려지는 일이 없다.
         let area = Rect::from_min_max(full_area.min, pos2((full_area.right() - covered).max(full_area.left() + 200.0), full_area.bottom()));
         let open = area.size();
         let (mut slots, zones, regions, bounds) = world(board, view, open.x - 36.0, open);
         slots.extend(inbox_slots);
-        // 지금 화면에 없는 카드의 전환 상태는 버린다.
-        view.cards.retain(|id, v| v.dying.is_some() || slots.contains_key(id));
+        // 화면에서 빠진 카드(접힌 카드 등)는 서서히 사라지게 한다. 다 사라지면 위에서 전환 상태를 버린다.
+        for (id, v) in view.cards.iter_mut() {
+            if v.dying.is_none() && !slots.contains_key(id) {
+                v.dying = Some(now);
+            }
+        }
 
         // 왼쪽의 열린 자리에 맞춘 범위를, 가려진 오른쪽만큼 넓혀서 실제로 볼 범위로 만든다.
         let widen = |r: Rect| Rect::from_min_size(r.min, vec2(r.width() * area.width() / open.x, r.height()));
@@ -637,19 +791,118 @@ pub fn board(
         };
         // 평소의 보기: 내용의 가로가 화면에 들어오면 제 크기(100%)로 위·왼쪽부터 보여 준다 (세로로 길면 끌어서 본다).
         // 가로로도 넘칠 때만 전체가 들어오게 줄인다. 화면의 위와 좌우가 비지 않는다.
-        let home = if bounds.width() <= open.x - 8.0 { Rect::from_min_size(bounds.min - vec2(16.0, 16.0), area.size()) } else { everything };
+        // 분류가 없는 판이 가로로 넘치면 가로만 맞춘다 (세로로 넘치면 끌어서 본다).
+        // 판 전체를 한 화면에 넣으려고 글자를 읽을 수 없을 만큼 줄이지 않는다. 분류가 있는 판은 전체를 멀리서 본다.
+        let home = if bounds.width() <= open.x - 8.0 {
+            Rect::from_min_size(bounds.min - vec2(16.0, 16.0), area.size())
+        } else if regions.is_empty() {
+            let k = (open.x / (bounds.width() + 32.0)).clamp(FIT_MIN * 0.95, 1.0);
+            inside(widen(Rect::from_min_size(bounds.min - vec2(16.0, 16.0), open / k)))
+        } else {
+            everything
+        };
+        // 있는 단계: 카드는 늘, 주제는 둘 이상일 때, 분류는 있을 때. 한 주제만 있으면 위 단계가 없다.
+        let can_topics = zones.iter().filter(|z| !z.inbox).count() >= 2;
+        let can_groups = !regions.is_empty();
+        let levels: Vec<u8> = [(0, true), (1, can_topics), (2, can_groups)].into_iter().filter(|l| l.1).map(|l| l.0).collect();
         let mut scene = view.scene.unwrap_or(Rect::NOTHING);
         if !(scene.is_finite() && scene.width() > 1.0) {
             scene = home;
+            // 처음 보기: 분류가 있는 판은 전체를 멀리서(분류 단계), 없는 판은 카드부터.
+            view.level = if can_groups { 2 } else { 0 };
             // 확인용: LYBOARD_ZOOM=0.3 처럼 주면 그 비율로 왼쪽 위부터 보여 준다.
             if let Some(z) = std::env::var("LYBOARD_ZOOM").ok().and_then(|v| v.parse::<f32>().ok()) {
                 scene = Rect::from_min_size(bounds.min - vec2(20.0, 20.0), area.size() / z.clamp(0.05, 1.0));
             }
         }
+        // 지금 단계가 없어졌으면(주제가 하나로 줄었거나 분류가 없어졌으면) 처음 보기로 돌아간다.
+        if !levels.contains(&view.level) {
+            view.level = levels.iter().rev().copied().find(|l| *l < view.level).unwrap_or(0);
+            view.fly = Some((scene, home, now));
+        }
+        // 주제 하나가 다 들어오는 보는 범위 (왼쪽 위에 붙여서). 읽을 수 있는 크기 아래로는 줄이지 않는다.
+        let fit_zone = |zr: Rect| {
+            let k = (open.x / (zr.width() + 32.0)).min(open.y / (zr.height() + 32.0)).clamp(FIT_MIN * 0.9, 1.0);
+            inside(widen(Rect::from_min_size(zr.min - vec2(16.0, 16.0), open / k)))
+        };
+        // ---- 스크롤: 한 번에 한 단계 ----
+        // 휠 한 칸, 두 손가락 쓸기 한 번, 오므리기·벌리기 한 번이 한 단계다. 확대 비율을 조금씩 바꾸지 않는다.
+        // 축소하면 바로 위 단계(카드 → 주제 → 분류), 확대하면 바로 아래 단계. 위나 아래 단계가 없으면 그대로 둔다.
+        if let Some(pointer) = ui.input(|i| i.pointer.hover_pos()).filter(|p| area.contains(*p)) {
+            // 판 위의 스크롤은 여기서 쓰고 지운다 (판이 스스로 확대·축소하거나 밀리지 않게).
+            let (wheel, pinch) = ui.ctx().input_mut(|i| {
+                let w = i.smooth_scroll_delta.x + i.smooth_scroll_delta.y;
+                i.smooth_scroll_delta = Vec2::ZERO;
+                (w, i.zoom_delta())
+            });
+            // 휠 한 칸 ≈ 1 (양수면 확대 쪽)
+            let push = wheel / 50.0 + pinch.max(0.01).ln() * 8.0;
+            if push.abs() > 1e-3 {
+                if now < view.step_lock {
+                    // 같은 손짓(관성 포함)이 이어지는 동안은 한 번만 옮긴다.
+                    view.step_lock = view.step_lock.max(now + 0.12);
+                    view.wheel = (0.0, now);
+                } else {
+                    // 한동안 멈췄다가 다시 들어온 스크롤은 처음부터 센다.
+                    let carry = if now - view.wheel.1 > 0.3 { 0.0 } else { view.wheel.0 };
+                    view.wheel = (carry + push, now);
+                }
+            }
+            if view.wheel.0.abs() >= 0.6 {
+                let up = view.wheel.0 < 0.0;
+                view.wheel = (0.0, now);
+                view.step_lock = now + 0.35;
+                let next = if up { levels.iter().copied().find(|l| *l > view.level) } else { levels.iter().rev().copied().find(|l| *l < view.level) };
+                if let Some(next) = next {
+                    // 가리킨 곳(판 위의 점)에 가장 가까운 분류·주제로 들어간다.
+                    let at = scene.min + (pointer - area.min) * (scene.width() / area.width());
+                    let near_zone = zones.iter().filter(|z| !z.inbox).min_by(|a, b| {
+                        let d = |z: &Zone| Rect::from_min_size(z.min.to_pos2(), z.size).distance_to_pos(at);
+                        d(a).total_cmp(&d(b))
+                    });
+                    let near_region = regions.iter().filter(|r| !r.name.is_empty()).min_by(|a, b| a.rect.distance_to_pos(at).total_cmp(&b.rect.distance_to_pos(at)));
+                    let mut docked = None;
+                    let target = match next {
+                        2 => everything,
+                        1 => match (can_groups, near_region) {
+                            (true, Some(r)) => inside(frame(r.rect.expand(40.0), open, 1.0)),
+                            _ => everything,
+                        },
+                        _ => match near_zone {
+                            Some(z) => {
+                                let zr = Rect::from_min_size(z.min.to_pos2(), z.size);
+                                // 처음 보기가 카드를 읽을 수 있는 보기이고 그 주제가 다 보이면 처음 보기로, 아니면 그 주제에 맞춰 들어간다.
+                                // (분류가 있는 판의 처음 보기는 멀리서 보는 전체라서 카드 단계로 쓰지 않는다.)
+                                if home.contains_rect(zr) && area.width() / home.width() >= FIT_MIN * 0.9 {
+                                    home
+                                } else {
+                                    let t = fit_zone(zr);
+                                    docked = Some((z.id.clone(), t));
+                                    t
+                                }
+                            }
+                            None => home,
+                        },
+                    };
+                    view.level = next;
+                    view.docked = docked;
+                    view.goto = None;
+                    view.bounce = false;
+                    // 용수철로 간다: 가는 도중에 한 번 더 스크롤해도 속도가 이어진다.
+                    if view.follow.is_none() {
+                        let (m0, z0) = cam_of(scene, area.size());
+                        view.follow = Some((Tween::spring(m0, CAM_SPRING), Tween::spring(z0, CAM_SPRING)));
+                    }
+                    view.fly = Some((scene, target, now));
+                }
+            }
+        }
+        // 카메라가 용수철로 따라가는 중이면, "지금 어디를 보고 있는가"는 가고 있는 목표로 판단한다.
+        let aim = view.follow.as_ref().map(|(m, z)| cam_rect(m.to, z.to, area.size())).unwrap_or(scene);
         // 전체를 보고 있었는데 내용이 늘거나 줄었으면(주제가 생김, 보관됨, 다시 꺼냄) 새 전체에 다시 맞춘다.
         if let Some(prev) = view.fit {
             let same = |a: Rect, b: Rect| (a.min - b.min).length() < 2.0 && (a.max - b.max).length() < 2.0;
-            if same(scene, prev) && !same(prev, home) && view.fly.is_none() {
+            if same(aim, prev) && !same(prev, home) && view.fly.is_none() {
                 view.fly = Some((scene, home, now));
             }
         }
@@ -671,21 +924,27 @@ pub fn board(
                     view.bounce = false;
                     view.goto = None;
                 }
+                view.level = 0;
             } else if board.card(&id).is_none() {
                 view.card_goto = None;
             }
         }
+        // 고른 카드를 닫았으면 처음 보기로 돌아간다 (곧이어 다른 일을 가져왔으면 아래에서 그 일 쪽으로 간다).
+        if std::mem::take(&mut view.home_req) {
+            view.docked = None;
+            view.level = if can_groups { 2 } else { 0 };
+            view.fly = Some((scene, home, now));
+        }
         // 사용자 앞에 일을 가져왔으면, 그 일이 속한 구역을 판의 왼쪽 위(그 일 바로 옆)에 붙인다. 주변의 다른 일이 함께 보인다.
         if let Some(topic) = view.dock.take() {
             if let Some(z) = zones.iter().find(|z| z.id == topic) {
-                let zr = Rect::from_min_size(z.min.to_pos2(), z.size);
                 // 구역이 다 들어오는 크기로, 그러나 읽을 수 있는 크기 아래로는 줄이지 않는다.
-                let k = (open.x / (zr.width() + 32.0)).min(open.y / (zr.height() + 32.0)).clamp(FIT_MIN * 0.9, 1.0);
-                let target = inside(widen(Rect::from_min_size(zr.min - vec2(16.0, 16.0), open / k)));
+                let target = fit_zone(Rect::from_min_size(z.min.to_pos2(), z.size));
                 view.fly = Some((scene, target, now));
                 view.bounce = false;
                 view.goto = None;
                 view.docked = Some((topic, target));
+                view.level = 0;
             }
         }
         // 맞춰 둔 구역의 크기가 달라졌으면 다시 맞춘다 (카드가 생기거나 내용에 맞게 줄어든 뒤에도 한 화면에 들어오게).
@@ -693,10 +952,8 @@ pub fn board(
             if let Some((topic, last)) = view.docked.clone() {
                 let close = |a: Rect, b: Rect| (a.min - b.min).length() < 3.0 && (a.max - b.max).length() < 3.0;
                 match zones.iter().find(|z| z.id == topic) {
-                    Some(z) if close(scene, last) => {
-                        let zr = Rect::from_min_size(z.min.to_pos2(), z.size);
-                        let k = (open.x / (zr.width() + 32.0)).min(open.y / (zr.height() + 32.0)).clamp(FIT_MIN * 0.9, 1.0);
-                        let target = inside(widen(Rect::from_min_size(zr.min - vec2(16.0, 16.0), open / k)));
+                    Some(z) if close(aim, last) => {
+                        let target = fit_zone(Rect::from_min_size(z.min.to_pos2(), z.size));
                         if !close(last, target) {
                             view.fly = Some((scene, target, now));
                             view.docked = Some((topic, target));
@@ -712,12 +969,37 @@ pub fn board(
                 let zr = Rect::from_min_size(z.min.to_pos2(), z.size);
                 let zoom_now = area.width() / scene.width();
                 // 구역 전체가 화면에 들어오는 크기로, 왼쪽 위에 붙여서 본다. 이미 그렇게 보고 있으면 움직이지 않는다.
-                let k = (open.x / (zr.width() + 32.0)).min(open.y / (zr.height() + 32.0)).clamp(FIT_MIN * 0.9, 1.0);
-                let target = inside(widen(Rect::from_min_size(zr.min - vec2(16.0, 16.0), open / k)));
+                // 주제·분류 단계(카드가 안 보이는 단계)에 있으면 바뀐 카드를 볼 수 있게 카드 단계로 들어간다.
+                let target = fit_zone(zr);
                 let there = (scene.min - target.min).length() < 3.0 && (scene.width() - target.width()).abs() < 3.0;
-                if !there && (!scene.contains_rect(zr) || zoom_now < 0.55) {
-                    view.fly = Some((scene, target, now));
-                    view.docked = Some((topic.clone(), target));
+                if view.level != 0 || (!there && (!scene.contains_rect(zr) || zoom_now < 0.55)) {
+                    if !there {
+                        view.fly = Some((scene, target, now));
+                        view.docked = Some((topic.clone(), target));
+                    }
+                    view.level = 0;
+                }
+            }
+        }
+        // 창 크기를 바꾸는 동안(과 그 뒤 가라앉는 동안)은 정해진 시간에 날아가지 않고 용수철로 따라간다.
+        // 목표가 매 프레임 바뀌어도 속도가 이어져서 끊기지 않는다 (카드를 접거나 펴서 확대 비율이 바뀔 때도).
+        // 카드와 구역은 제 용수철로 새 자리를 찾아간다.
+        if resized || view.follow.is_some() {
+            let size = area.size();
+            if let Some((_, to, _)) = view.fly.take() {
+                let (m0, z0) = cam_of(scene, size);
+                let f = view.follow.get_or_insert_with(|| (Tween::spring(m0, CAM_SPRING), Tween::spring(z0, CAM_SPRING)));
+                let (m1, z1) = cam_of(to, size);
+                f.0.retarget(m1, now);
+                f.1.retarget(z1, now);
+                view.bounce = false;
+            }
+            let cam = view.follow.as_ref().map(|(m, z)| (m.at(now), z.at(now), m.busy(now) || z.busy(now)));
+            if let Some((m, z, busy)) = cam {
+                scene = cam_rect(m, z, size);
+                moving = true;
+                if !busy && !resized {
+                    view.follow = None;
                 }
             }
         }
@@ -738,17 +1020,25 @@ pub fn board(
         // 확대 정도에 따라 무엇까지 보일지
 
 
-        // 카드는 이만큼 가까워져야 보인다. 그 전에는 주제 이름만 보인다.
-        let cards_seen = smooth(zoom, 0.30, 0.38);
+        // 단계에 따라 카드, 주제 이름, 분류 이름 중 하나가 보인다. 단계가 바뀌면 서서히 넘어간다.
+        let mut blend = |key: &str, on: bool| {
+            let (v, going) = tween_num(&mut view.blend, key, if on { 1.0 } else { 0.0 }, now, T_LEVEL);
+            moving |= going;
+            v
+        };
+        let cards_seen = blend("cards", view.level == 0);
+        let topics_seen = blend("topics", view.level == 1);
+        let groups_seen = blend("groups", view.level == 2);
 
         let mut busy = false;
         let webs_start = webs.len();
         let scene_now = scene;
-        let mut draw_cards = |ui: &mut egui::Ui, sticky_pass: bool, origin: Pos2, zoom: f32| {
-            // 멀어질수록 내용 → 제목 → 상자 순으로 사라진다.
-            let detail = smooth(zoom, 0.44, 0.52);
-            let title_a = smooth(zoom, 0.38, 0.46);
-            let box_a = smooth(zoom, 0.30, 0.38);
+        // `seen`: 카드가 보이는 정도 (카드 단계면 1). 왼쪽 "내 차례" 자리는 늘 1.
+        let mut draw_cards = |ui: &mut egui::Ui, sticky_pass: bool, origin: Pos2, seen: f32| {
+            // 위 단계로 갈 때 내용 → 제목 → 상자 순으로 사라진다 (돌아올 때는 거꾸로 나타난다).
+            let detail = smooth(seen, 0.55, 1.0);
+            let title_a = smooth(seen, 0.3, 0.8);
+            let box_a = smooth(seen, 0.0, 0.5);
             let handy = detail > 0.6; // 이만큼 가까워야 카드를 누르고 끌 수 있다
         // 그리는 순서: 사라지는 카드 → 보통 카드 → 끌고 있는 카드
         let mut order: Vec<(u8, String)> = view
@@ -764,7 +1054,8 @@ pub fn board(
         order.sort_by_key(|o| o.0);
 
         for (_, cid) in order {
-            let live = board.card(&cid);
+            // 보드에는 있어도 자리가 없으면(접힌 카드) 사라지는 중인 카드로 그린다.
+            let live = board.card(&cid).filter(|c| slots.contains_key(&c.id));
             if let Some(c) = live {
                 let s = &slots[&c.id];
                 let w = s.w as f32;
@@ -824,34 +1115,14 @@ pub fn board(
             let mut hovered = false;
             if alive && handy {
                 let s = &slots[&c.id];
-                let (col, row, w) = (s.col, s.row, s.w);
+                let (col, row) = (s.col, s.row);
                 let body_resp = ui.interact(rect, id, Sense::click());
                 hovered = body_resp.hovered();
                 let head_rect = Rect::from_min_size(rect.min, vec2(rect.width() - 30.0, HEAD));
-                let head = ui.interact(head_rect, id.with("head"), Sense::click_and_drag()).on_hover_cursor(CursorIcon::Grab);
-                if head.drag_started() {
-                    v.dragging = true;
-                }
-                if head.dragged() {
-                    let p = v.pos.at(now) + head.drag_delta();
-                    v.pos = Tween::fixed(p);
-                    busy = true;
-                }
-                if head.drag_stopped() {
-                    v.dragging = false;
-                    // 놓은 자리를 그 주제 구역 안의 가장 가까운 칸으로 맞춘다.
-                    let p = v.pos.at(now) - s.origin;
-                    let ncol = ((p.x / (slots.get(&c.id).map(|x| x.cw).unwrap_or(CW) + GAP)).round() as i32).clamp(0, (s.limit - w).max(0));
-                    let nrow = if s.rows.len() >= 2 && p.y < s.rows[s.rows.len() - 1] {
-                        (0..s.rows.len() - 1).min_by(|a, b| (s.rows[*a] - p.y).abs().total_cmp(&(s.rows[*b] - p.y).abs())).unwrap_or(0) as i32
-                    } else {
-                        // 마지막 줄보다 아래: 그 아래로 칸 높이만큼씩 새 줄
-                        let last = s.rows.last().copied().unwrap_or(0.0);
-                        (s.rows.len() as i32 - 1).max(0) + (((p.y - last) / (CH + GAP)).round() as i32).max(0)
-                    };
-                    lines.push(format!("move {} {} {}", c.id, ncol, nrow));
-                }
-                if body_resp.clicked() || head.clicked() {
+                // 카드는 끌어서 옮기지 않는다: 카드 위에서 끌어도 판이 움직인다 (누르기만 받는다).
+                let head = ui.interact(head_rect, id.with("head"), Sense::click()).on_hover_cursor(CursorIcon::PointingHand);
+                // 누르면 그 카드를 왼쪽 자리로 가져온다. 이미 왼쪽 자리에 있는 카드는 누르지 않는다 (닫기로 돌려보낸다).
+                if (body_resp.clicked() || head.clicked()) && !s.sticky {
                     *clicked = Some(c.id.clone());
                 }
                 let grip = Rect::from_min_max(rect.max - vec2(22.0, 22.0), rect.max);
@@ -907,14 +1178,21 @@ pub fn board(
             }
 
             // 제목 오른쪽에 붙는 것(주제 이름, 완료 개수, 고정 표시)의 폭만큼 제목 자리를 줄여서 글자가 겹치지 않게 한다.
-            let topic_label = if sticky_pass { board.topics.iter().find(|t| t.id == c.topic).map(|t| t.name.clone()).unwrap_or_default() } else { String::new() };
-            let reserved = if !topic_label.is_empty() {
-                p.layout_no_wrap(topic_label.clone(), font(11.0), DIM()).size().x + 14.0
-            } else if c.kind == Kind::Checklist && !c.items.is_empty() {
-                64.0
-            } else {
-                0.0
-            } + if c.pinned { 16.0 } else { 0.0 };
+            let mut topic_label = if sticky_pass { board.topics.iter().find(|t| t.id == c.topic).map(|t| t.name.clone()).unwrap_or_default() } else { String::new() };
+            // 체크리스트의 완료 개수·고리 자리. 주제 이름이 함께 있으면 이름은 그 왼쪽에 놓는다 (겹치지 않게).
+            let ring_w = if c.kind == Kind::Checklist && !c.items.is_empty() { 64.0 } else { 0.0 };
+            // 제목과 주제 이름이 한 줄에 다 들어가지 않으면 주제 이름을 뺀다 (제목이 글자 중간에서 잘리지 않게).
+            // 주제 이름은 판에서도 보인다 (고른 카드의 주제가 바로 옆에 붙는다).
+            if !topic_label.is_empty() {
+                let title_w = p.layout_no_wrap(c.title.clone(), bold(16.0), TEXT()).size().x;
+                let label_w = p.layout_no_wrap(topic_label.clone(), font(11.0), DIM()).size().x;
+                if PAD + title_w + 12.0 + label_w + 14.0 + ring_w + PAD > rect.width() {
+                    topic_label.clear();
+                }
+            }
+            let reserved = if !topic_label.is_empty() { p.layout_no_wrap(topic_label.clone(), font(11.0), DIM()).size().x + 14.0 } else { 0.0 }
+                + ring_w
+                + if c.pinned { 16.0 } else { 0.0 };
             let title_clip = Rect::from_min_max(rect.min, pos2(rect.right() - PAD - reserved, rect.top() + HEAD));
             let side_clip = Rect::from_min_max(rect.min, pos2(rect.right() - 6.0, rect.top() + HEAD));
             let mut tp = p.with_clip_rect(title_clip.intersect(p.clip_rect()));
@@ -924,9 +1202,8 @@ pub fn board(
             let mut sp = p.with_clip_rect(side_clip.intersect(p.clip_rect()));
             sp.set_opacity(alpha * title_a);
             // "내 차례" 구역의 카드는 주제 구역 밖에 있으므로, 어느 주제의 질문인지 제목 옆에 적는다.
-            if sticky_pass {
-                let topic = board.topics.iter().find(|t| t.id == c.topic).map(|t| t.name.as_str()).unwrap_or("");
-                sp.text(pos2(rect.right() - if c.pinned { 34.0 } else { PAD }, rect.top() + 19.0), Align2::RIGHT_TOP, topic, font(11.0), ORANGE().gamma_multiply(0.85));
+            if !topic_label.is_empty() {
+                sp.text(pos2(rect.right() - if c.pinned { 34.0 } else { PAD } - ring_w, rect.top() + 19.0), Align2::RIGHT_TOP, &topic_label, font(11.0), ORANGE().gamma_multiply(0.85));
             }
             let right_x = rect.right() - if c.pinned { 34.0 } else { PAD };
             if c.kind == Kind::Checklist && !c.items.is_empty() {
@@ -1016,6 +1293,8 @@ pub fn board(
                 }
                 if alive {
                     v.content_h = used;
+                    let t = view.tall.entry(c.id.clone()).or_insert((c.rev, 0.0));
+                    *t = if t.0 == c.rev { (c.rev, t.1.max(used)) } else { (c.rev, used) };
                 }
                 if used > body.height() + 3.0 {
                     // 내용이 카드보다 길다는 표시
@@ -1029,14 +1308,14 @@ pub fn board(
 
         // ---- 판: 분류 영역, 주제 구역, 카드 ----
         let parent_layer = ui.layer_id();
-        let shown = ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| egui::Scene::new().zoom_range((fit_zoom * 0.86).max(MIN_ZOOM)..=1.0).scroll_zooms(true).show(ui, &mut scene, |ui| {
+        let shown = ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| egui::Scene::new().zoom_range(zoom..=zoom).scroll_zooms(true).show(ui, &mut scene, |ui| {
             let base = ui.painter().clone();
-            // 확대 정도에 따라 세 단계로 보인다. 단계끼리 글자가 겹치지 않게, 한 단계의 이름이 사라진 뒤에 다음 단계가 나타난다.
-            //   멀리 (far)   분류 이름만 크게
-            //   중간 (mid)   주제 이름만 크게
-            //   가까이       카드
-            let far = 1.0 - smooth(zoom, 0.14, 0.18);
-            let mid = smooth(zoom, 0.16, 0.20) * (1.0 - cards_seen);
+            // 단계에 따라 보인다 (`View::level`):
+            //   분류 (far)   분류 이름만 크게
+            //   주제 (mid)   주제 이름만 크게
+            //   카드         카드
+            let far = groups_seen;
+            let mid = topics_seen;
             // 한 줄 글자가 주어진 폭에 들어가는 가장 큰 크기 (한글 한 글자의 폭을 글자 크기와 같다고 본다).
             let fit = |name: &str, width: f32, want: f32| want.min(width / (name.chars().count().max(1) as f32 * 1.05)).max(8.0);
             // 분류 영역: 넓은 바탕. 이름은 영역 바로 위에 적어서 안쪽 내용과 겹치지 않는다.
@@ -1098,7 +1377,35 @@ pub fn board(
                     // 조금 축소된 상태에서도 읽히게, 구역 머리 높이 안에서 글자를 키운다.
                     let name_size = (15.0 / zoom).clamp(15.0, 24.0);
                     let tr = np.text(r.min + vec2(ZONE_PAD + 8.0, (ZONE_HEAD - name_size) * 0.5 - 2.0), Align2::LEFT_TOP, &z.name, bold(name_size), SOFT());
-                    np.text(pos2(tr.right() + 10.0, tr.center().y), Align2::LEFT_CENTER, format!("{count}"), font(12.0), FAINT());
+                    let cr = np.text(pos2(tr.right() + 10.0, tr.center().y), Align2::LEFT_CENTER, format!("{count}"), font(12.0), FAINT());
+                    // 접힌 카드가 있으면 카드 수 바로 옆에 "+N개 더" 단추. 누르면 다 펼치고, 펼친 뒤에는 "접기".
+                    // 오른쪽 끝에 두면 구역이 화면보다 넓을 때 화면 밖으로 나가므로 이름 쪽에 붙인다.
+                    if z.hidden > 0 && !z.inbox {
+                        let label = match (z.unfolded, crate::sys::english()) {
+                            (true, en) => (if en { "Fold" } else { "접기" }).to_string(),
+                            (false, true) => format!("+{} more", z.hidden),
+                            (false, false) => format!("+{}개 더", z.hidden),
+                        };
+                        let size = (12.5 / zoom).clamp(12.5, 18.0);
+                        let g = np.layout_no_wrap(label, font(size), SOFT());
+                        let pill = Rect::from_min_size(pos2(cr.right() + 12.0, tr.center().y - (size + 12.0) * 0.5), vec2(g.size().x + size * 1.8, size + 12.0));
+                        let resp = (cards_seen > 0.6).then(|| {
+                            ui.interact(pill, ui.scope_id().with(("fold", &z.id)), Sense::click()).on_hover_cursor(CursorIcon::PointingHand).on_hover_text(if z.unfolded {
+                                crate::sys::tr("읽을 수 있는 크기로 한 화면에 들어오게 덜 중요한 카드를 다시 접습니다", "Fold the less important cards again so the topic fits one screen at a readable size")
+                            } else {
+                                crate::sys::tr("글자가 너무 작아지지 않게 덜 중요한 카드를 접어 두었습니다. 눌러서 다 보기", "Less important cards are folded so the text stays readable. Click to show all")
+                            })
+                        });
+                        let hover = resp.as_ref().map(|r| r.hovered()).unwrap_or(false);
+                        if resp.map(|r| r.clicked()).unwrap_or(false) && !view.unfolded.remove(&z.id) {
+                            view.unfolded.insert(z.id.clone());
+                        }
+                        if hover {
+                            np.rect_filled(pill, CornerRadius::same(255), RAISED());
+                        }
+                        np.rect_stroke(pill, CornerRadius::same(255), Stroke::new(1.0, if hover { EDGE() } else { BORDER() }), StrokeKind::Inside);
+                        np.galley(pill.center() - g.size() / 2.0, g, SOFT());
+                    }
                 }
                 let mid_here = if grouped { mid } else { 1.0 - cards_seen };
                 if mid_here > 0.02 {
@@ -1129,25 +1436,40 @@ pub fn board(
                     draw_runner(&zp, r, 26.0, now, 1.0);
                 }
             }
-            draw_cards(ui, false, Pos2::ZERO, zoom);
+            draw_cards(ui, false, Pos2::ZERO, cards_seen);
         })).inner;
-        // 손으로 옮기거나 확대하면 자동 이동은 그만둔다. 빈 곳을 두 번 누르면 전체가 보이게 돌아간다.
-        // 전체가 다 보이는 것보다 더 축소해 봐야 작아지기만 한다. 거기까지는 살짝 당겨지지만, 손을 떼면 튕겨 돌아온다.
+        let drawn = scene; // 이번 프레임에 실제로 보여 준 범위 (확인용 기록에 쓴다)
+        // 손으로 끌어 옮기면 자동 이동은 그만둔다. 빈 곳을 두 번 누르면 처음 보기로 돌아간다.
+        // 판은 손으로 확대·축소되지 않는다 (스크롤은 위에서 단계 이동으로 쓴다). 판은 확대 입력이 오면 비율이 그대로여도
+        // "바뀌었다"고 알리므로, 사용자가 옮겼는지는 실제로 끌었는지로 본다.
+        let panned = shown.response.dragged() && shown.response.drag_delta() != Vec2::ZERO;
         let pulling = ui.input(|i| i.smooth_scroll_delta.y.abs() > 0.1 || i.zoom_delta() != 1.0);
-        if area.width() / scene.width() < fit_zoom * 0.995 && !pulling && view.fly.is_none() {
+        // 창 크기를 바꾸는 중에는 튕기지 않는다: 목표만 정해 두면 다음 프레임에 용수철이 따라간다.
+        let following = resized || view.follow.is_some();
+        if panned {
+            view.follow = None;
+        }
+        if area.width() / scene.width() < fit_zoom * 0.995 && !pulling && view.fly.is_none() && view.follow.is_none() {
             view.fly = Some((scene, everything, now));
-            view.bounce = true;
-        } else if shown.response.changed() && !view.bounce {
+            view.bounce = !following;
+        } else if panned && !view.bounce {
             view.fly = None;
         }
         if shown.response.double_clicked() {
-            view.fly = Some((scene, everything, now));
+            view.level = if can_groups { 2 } else { 0 };
+            view.docked = None;
+            view.fly = Some((scene, home, now));
         }
         // 끌어서 옮길 때: 내용의 끝을 넘어가지 않는다. 끝에서는 조금만 당겨지고(화면에서 70픽셀까지), 손을 떼면 튕겨 돌아온다.
         if view.fly.is_none() && area.width() / scene.width() >= fit_zoom * 0.995 {
             let home = inside(scene);
             let over = scene.min - home.min;
-            if over.length() > 0.5 {
+            if over.length() > 0.5 && following {
+                // 창 크기를 바꾸다 내용 끝을 넘어갔다: 튕기지 않고 용수철로 안쪽으로
+                if view.follow.is_none() {
+                    view.fly = Some((scene, home, now));
+                }
+            } else if over.length() > 0.5 {
                 let give = 70.0 / zoom;
                 scene = home.translate(vec2(over.x.clamp(-give, give), over.y.clamp(-give, give)));
                 let held = ui.input(|i| i.pointer.any_down());
@@ -1176,6 +1498,26 @@ pub fn board(
             draw_cards(&mut over, true, slot.min - vec2(0.0, view.inbox_scroll), 1.0);
         }
         drop(draw_cards);
+        // 확인용: LYBOARD_TRACE 가 있으면 프레임마다 판 크기, 확대 비율, 카드의 화면 위치를 data\trace.log 에 남긴다.
+        static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *TRACE.get_or_init(|| std::env::var("LYBOARD_TRACE").is_ok()) {
+            let mut ids: Vec<&String> = view.cards.iter().filter(|(_, v)| v.dying.is_none() && !v.sticky).map(|(id, _)| id).collect();
+            ids.sort();
+            let z = area.width() / drawn.width();
+            let mut line = format!("{now:.4} {:.0} {:.0} {z:.4}", area.width(), area.height());
+            for id in ids {
+                let v = &view.cards[id];
+                let p = area.min + (v.pos.at(now) - drawn.min.to_vec2()) * z;
+                let s = v.size.at(now) * z;
+                line.push_str(&format!(" {id}:{:.1},{:.1},{:.1},{:.1}", p.x, p.y, s.x, s.y));
+            }
+            let hidden: usize = zones.iter().map(|z| z.hidden).sum();
+            line.push_str(&format!(" lv={} seen={cards_seen:.2},{topics_seen:.2},{groups_seen:.2} hidden={hidden}", view.level));
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(crate::sys::data_dir().join("trace.log")) {
+                let _ = writeln!(f, "{line}");
+            }
+        }
         moving |= busy;
         // 판 위의 웹 카드 자리를 화면 좌표로 바꾼다. 축소된 상태에서는 브라우저 화면을 띄우지 않는다.
         for w in webs.iter_mut().skip(webs_start) {
@@ -1203,6 +1545,24 @@ fn smooth(x: f32, a: f32, b: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// 주어진 자리를 다 채우는 카드(웹, 지도, 그림)가 알려 주는 내용 높이: 카드가 정한 칸 수만큼의 본문 높이.
+/// 지금 본문 높이를 그대로 알려 주면 "내용이 길다 → 카드를 키운다 → 본문이 커진다"가 되풀이되어
+/// 카드가 화면 높이까지 조금씩 계속 자란다 (그동안 화면이 쉬지 않고 움직이고, 접히는 카드 수도 바뀐다).
+fn fill_h(c: &Card) -> f32 {
+    c.h as f32 * (CH + GAP) - GAP - HEAD - 14.0
+}
+
+/// 보는 범위 → 카메라 용수철의 값: (왼쪽 위, (확대 비율×1000, 0)).
+/// 확대 비율은 1000배로 적는다: 용수철이 0.5 아래의 변화는 무시하므로 그대로 두면 비율 변화를 놓친다.
+fn cam_of(r: Rect, size: Vec2) -> (Vec2, Vec2) {
+    (r.min.to_vec2(), vec2(size.x / r.width().max(1.0) * 1000.0, 0.0))
+}
+
+/// 카메라 용수철의 값 → 보는 범위
+fn cam_rect(min: Vec2, zoom: Vec2, size: Vec2) -> Rect {
+    Rect::from_min_size(min.to_pos2(), size / (zoom.x / 1000.0).max(0.01))
+}
+
 /// `target` 이 다 들어오면서 화면과 가로세로 비율이 같은 범위. `max_zoom` 보다 더 확대하지는 않는다.
 fn frame(target: Rect, view: Vec2, max_zoom: f32) -> Rect {
     let scale = (view.x / target.width().max(1.0)).min(view.y / target.height().max(1.0)).min(max_zoom);
@@ -1217,13 +1577,15 @@ struct Region {
     asks: usize,
 }
 
-const MIN_ZOOM: f32 = 0.06;
 const T_FLY: f64 = 0.6;
+/// 단계가 바뀔 때 카드·주제 이름·분류 이름이 넘어가는 시간
+const T_LEVEL: f64 = 0.3;
 const T_BOUNCE: f64 = 0.5;
 /// 한 화면에 맞춘 구역이 둘쯤 나란히 놓이는 폭
 const REGION_W: f32 = 2400.0;
-/// 한 주제를 한 화면에 넣으려고 축소할 때의 한도. 이보다 작아지면 글자를 읽기 어렵다.
-const FIT_MIN: f32 = 0.62;
+/// 한 주제를 한 화면에 넣으려고 축소할 때의 한도. 이보다 작아지면 글자를 읽기 어렵다 (본문 12.5~13.5 → 화면에서 11px 안팎).
+/// 이만큼 줄여도 안 들어가면 덜 중요한 카드를 접는다.
+const FIT_MIN: f32 = 0.85;
 const REGION_GAP: f32 = 200.0;
 const REGION_PAD: f32 = 40.0;
 /// 분류 이름은 영역 위에 적으므로 영역 안쪽 위 여백은 작다.
@@ -1278,6 +1640,13 @@ fn world(board: &Board, view: &View, plain_width: f32, screen: Vec2) -> (HashMap
         row_h = row_h.max(size.y);
     }
     (slots, zones, regions, Rect::from_min_size(Pos2::ZERO, max))
+}
+
+/// 값 뒤에 단위를 붙인다. "%", "k", "km", "만원"처럼 짧은 단위는 붙여 쓰고,
+/// "subs", "signups", "min"처럼 세 글자 이상인 영어 단어 단위는 한 칸 띄운다 ("180 signups").
+fn with_unit(value: &str, unit: &str) -> String {
+    let word = unit.chars().count() >= 3 && unit.chars().next().map(|ch| ch.is_ascii_alphabetic()).unwrap_or(false);
+    if word { format!("{value} {unit}") } else { format!("{value}{unit}") }
 }
 
 fn wrapped(p: &Painter, pos: Pos2, width: f32, text: &str, size: f32, color: Color32) -> f32 {
@@ -1428,7 +1797,7 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
             // 화면 밖으로 반쯤 나갔거나, 끌고 있거나, 나타나고 사라지는 중이면 브라우저 화면은 잠시 숨긴다.
             let visible = cx.live && !cx.lifted && cx.alpha > 0.98 && shown.height() > body.height() - 2.0 && shown.width() > body.width() - 2.0;
             cx.webs.push(WebSlot { id: c.id.clone(), rect: body, url, visible });
-            body.height()
+            fill_h(c)
         }
 
         Kind::Status => {
@@ -1511,7 +1880,7 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
                     let lp = rp.with_clip_rect(cell.intersect(rp.clip_rect()));
                     lp.text(pos2(pts[i].x, plot.bottom() + 6.0), Align2::CENTER_TOP, &cells[0], font(11.0), DIM());
                     if n <= 12 {
-                        lp.text(pts[i] - vec2(0.0, 8.0), Align2::CENTER_BOTTOM, format!("{}{}", cells.get(1).map(String::as_str).unwrap_or(""), unit), font(11.0), if top_one { TEXT() } else { SOFT() });
+                        lp.text(pts[i] - vec2(0.0, 8.0), Align2::CENTER_BOTTOM, with_unit(cells.get(1).map(String::as_str).unwrap_or(""), &unit), font(11.0), if top_one { TEXT() } else { SOFT() });
                     }
                 }
             } else {
@@ -1529,7 +1898,7 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
                     p.add(egui::Shape::line(arc, Stroke::new(15.0, shades[i % shades.len()])));
                     start += sweep;
                 }
-                p.text(center, Align2::CENTER_CENTER, format!("{}{}", trim_num(total), unit), bold(14.0), TEXT());
+                p.text(center, Align2::CENTER_CENTER, with_unit(&trim_num(total), &unit), bold(14.0), TEXT());
                 let lx = center.x + rad + 22.0;
                 let rh = 24.0_f32.min((h - 8.0) / vals.len() as f32);
                 let ly = top + (h - rh * vals.len() as f32) / 2.0;
@@ -1697,7 +2066,7 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
                     p.with_clip_rect(Rect::from_min_max(pos2(x, y - 10.0), pos2(body.right(), y + 10.0)).intersect(p.clip_rect())).text(pos2(x + 2.0, y), Align2::LEFT_CENTER, &note, font(11.0), FAINT());
                 }
             }
-            map.height() + list_h
+            fill_h(c)
         }
 
         Kind::Draw => {
@@ -1833,7 +2202,7 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
                 rp.text(
                     pos2(body.right(), y + rh / 2.0),
                     Align2::RIGHT_CENTER,
-                    format!("{}{}", cells.get(1).map(String::as_str).unwrap_or(""), unit_s),
+                    with_unit(cells.get(1).map(String::as_str).unwrap_or(""), &unit_s),
                     font(13.0),
                     SOFT(),
                 );
@@ -1936,6 +2305,8 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
                 let row = Rect::from_min_size(pos2(x, y), vec2(w, 28.0));
                 let r = cx.click(row, ("chk", item));
                 let hover = r.as_ref().map(|r| r.hovered()).unwrap_or(false);
+                // 마우스가 이 줄 위에 있는가 (줄 위의 × 에 올려도 참)
+                let over = r.as_ref().map(|r| r.contains_pointer()).unwrap_or(false);
                 if r.map(|r| r.clicked()).unwrap_or(false) {
                     cx.lines.push(format!("upd {} {} {} | {}", c.id, item, if done { "todo" } else { "done" }, label));
                 }
@@ -1950,6 +2321,20 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
                     }
                 }
                 rp.text(pos2(x + 28.0, y + 14.0 + dy), Align2::LEFT_CENTER, label, font(13.5), mix(TEXT(), FAINT(), fill));
+                // 항목 지우기: 줄에 마우스를 올리면 오른쪽 끝에 × 가 나온다. 줄 전체(체크)보다 나중에 두어서 × 자리에서는 × 가 눌린다.
+                let xr = Rect::from_center_size(pos2(x + w - 11.0, y + 14.0 + dy), vec2(22.0, 22.0));
+                if over {
+                    let del = cx.click(xr, ("chk-del", item)).map(|r| r.on_hover_text(crate::sys::tr("이 항목 지우기", "Remove this item")));
+                    let on = del.as_ref().map(|r| r.hovered()).unwrap_or(false);
+                    if del.map(|r| r.clicked()).unwrap_or(false) {
+                        cx.lines.push(format!("del {} {}", c.id, item));
+                    }
+                    // 긴 글 위에 겹쳐도 보이게 카드 바탕색으로 덮고 그린다.
+                    rp.circle_filled(xr.center(), 10.0, if on { RAISED() } else { CARD() });
+                    let (k, s) = (4.0, Stroke::new(1.5, if on { TEXT() } else { DIM() }));
+                    rp.line_segment([xr.center() + vec2(-k, -k), xr.center() + vec2(k, k)], s);
+                    rp.line_segment([xr.center() + vec2(-k, k), xr.center() + vec2(k, -k)], s);
+                }
                 y += 28.0;
             }
             y - top
@@ -2131,7 +2516,7 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
             if !caption.is_empty() {
                 p.with_clip_rect(Rect::from_min_max(pos2(x, area.bottom()), pos2(body.right(), top + h)).intersect(p.clip_rect())).text(pos2(x + 2.0, area.bottom() + 13.0), Align2::LEFT_CENTER, &caption, font(12.0), DIM());
             }
-            h
+            fill_h(c).max(120.0)
         }
 
         Kind::Decision => {

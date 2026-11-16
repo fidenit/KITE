@@ -1,4 +1,4 @@
-﻿//! 경로. 지도 서비스 화면을 띄우는 대신, 필요한 것만 직접 그린다: 들르는 곳의 위치, 길의 모양, 구간별 거리와 시간.
+//! 경로. 지도 서비스 화면을 띄우는 대신, 필요한 것만 직접 그린다: 들르는 곳의 위치, 길의 모양, 구간별 거리와 시간.
 //!
 //!   좌표 찾기   오픈스트리트맵(Nominatim)
 //!   길 찾기     OSRM 공개 서버 (자동차, 교통 상황은 반영되지 않는다)
@@ -44,7 +44,7 @@ pub fn forget() {
 }
 
 fn get(url: &str) -> Result<Value, String> {
-    let mut resp = crate::agent::http().get(url).header("user-agent", "ALI-desktop/0.1").call().map_err(|e| format!("연결 실패: {e}"))?;
+    let mut resp = crate::agent::http().get(url).header("user-agent", "KITE-desktop/0.1").call().map_err(|e| format!("연결 실패: {e}"))?;
     let text = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
     serde_json::from_str(&text).map_err(|_| format!("응답을 읽지 못함: {}", text.chars().take(160).collect::<String>()))
 }

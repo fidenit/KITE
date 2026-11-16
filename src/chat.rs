@@ -84,7 +84,8 @@ impl App {
                         // 내가 할 일이 있으면 이 구역을 위아래로 반씩 나눈다: 위는 crate::sys::tr("내 차례", "My turn")(지금 처리할 일 하나), 아래는 대화.
                         let whole = ui.available_rect_before_wrap();
                         let asks = self.board.cards.iter().filter(|c| c.kind.asks()).count();
-                        let lower = if asks > 0 {
+                        // 사용자가 카드를 골랐으면 할 일이 없어도 이 자리를 연다 (고른 카드를 놓는다).
+                        let lower = if asks > 0 || self.view.picked.is_some() {
                             let (top, bottom) = whole.split_top_bottom_at_fraction(0.5);
                             ui.scope_builder(egui::UiBuilder::new().max_rect(top), |ui| self.task_slot(ui, asks));
                             Rect::from_min_max(bottom.min + egui::vec2(0.0, 14.0), bottom.max)
@@ -126,6 +127,27 @@ impl App {
     fn task_slot(&mut self, ui: &mut egui::Ui, asks: usize) {
         let now = ui.input(|i| i.time);
         let (r, p) = ui.allocate_painter(egui::vec2(ui.available_width(), 30.0), egui::Sense::hover());
+        if self.view.picked.is_some() {
+            // 사용자가 고른 카드: 머리 줄에 "고른 카드"와 닫기. 기다리는 일이 있으면 그 수를 옆에 적어 둔다.
+            let dot = r.rect.left_center() + egui::vec2(8.0, 0.0);
+            p.circle_filled(dot, 4.0, ui::DIM());
+            let tr = p.text(r.rect.left_center() + egui::vec2(22.0, 0.0), egui::Align2::LEFT_CENTER, crate::sys::tr("고른 카드", "Picked card"), ui::bold(15.0), ui::TEXT());
+            if asks > 0 {
+                p.text(egui::pos2(tr.right() + 10.0, tr.center().y), egui::Align2::LEFT_CENTER, if crate::sys::english() { format!("{asks} to do") } else { format!("할 일 {asks}건") }, ui::bold(12.5), ui::ORANGE());
+            }
+            let br = Rect::from_min_size(egui::pos2(r.rect.right() - 62.0, r.rect.top() + 2.0), egui::vec2(60.0, 26.0));
+            let b = ui.interact(br, ui.scope_id().with("pick-close"), egui::Sense::click());
+            p.rect_stroke(br, 13.0, egui::Stroke::new(1.0, if b.hovered() { ui::DIM() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
+            p.text(br.center(), egui::Align2::CENTER_CENTER, crate::sys::tr("닫기", "Close"), ui::bold(12.0), if b.hovered() { ui::TEXT() } else { ui::DIM() });
+            if b.on_hover_text(crate::sys::tr("판을 처음 보기로 되돌립니다 (Esc)", "Back to the whole board (Esc)")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                self.unpick();
+            }
+            ui.add_space(8.0);
+            let rest = ui.available_rect_before_wrap();
+            ui.painter().hline(rest.x_range(), rest.bottom() + 6.0, egui::Stroke::new(1.0, PANEL_EDGE()));
+            self.view.task_rect = Some(rest);
+            return;
+        }
         let pulse = ((now * 2.4).sin() * 0.5 + 0.5) as f32;
         let dot = r.rect.left_center() + egui::vec2(8.0, 0.0);
         p.circle_filled(dot, 4.0 + 3.0 * pulse, ui::ORANGE().gamma_multiply(0.25 * (1.0 - pulse)));
@@ -593,12 +615,12 @@ impl App {
             ui.set_width(420.0);
             let has_key = self.cfg.key.is_some();
             let has_jev = crate::jev::key().is_some();
-            ui.label(egui::RichText::new(if !self.cfg.demo() { crate::sys::tr("엔진과 키", "Engine and keys") } else { crate::sys::tr("ALI에 오신 것을 환영합니다", "Welcome to ALI") }).font(ui::bold(21.0)).color(ui::TEXT()));
+            ui.label(egui::RichText::new(if !self.cfg.demo() { crate::sys::tr("엔진과 키", "Engine and keys") } else { crate::sys::tr("KITE에 오신 것을 환영합니다", "Welcome to KITE") }).font(ui::bold(21.0)).color(ui::TEXT()));
             ui.add_space(8.0);
             ui.label(
                 egui::RichText::new(crate::sys::tr(
-                    "ALI는 Claude로 움직입니다. 본인의 Claude API 키를 쓰거나, 이 컴퓨터에 깔린 Claude Code에 맡길 수 있습니다.\n키는 이 프로그램 폴더의 key.txt 에만 저장되고, Anthropic 말고는 어디로도 보내지지 않습니다.",
-                    "ALI runs on Claude. Use your own Claude API key, or the Claude Code installed on this computer.\nThe key is saved only to key.txt in this program's folder and is sent nowhere except Anthropic.",
+                    "KITE는 Claude로 움직입니다. 본인의 Claude API 키를 쓰거나, 이 컴퓨터에 깔린 Claude Code에 맡길 수 있습니다.\n키는 이 프로그램 폴더의 key.txt 에만 저장되고, Anthropic 말고는 어디로도 보내지지 않습니다.",
+                    "KITE runs on Claude. Use your own Claude API key, or the Claude Code installed on this computer.\nThe key is saved only to key.txt in this program's folder and is sent nowhere except Anthropic.",
                 ))
                 .size(12.5)
                 .color(ui::DIM()),
@@ -631,7 +653,7 @@ impl App {
                     p.text(r.rect.left_top() + egui::vec2(14.0, 36.0), egui::Align2::LEFT_CENTER, sub, ui::font(11.0), ui::FAINT());
                     enabled && r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
                 };
-                if choice(ui, !pick_cc, crate::sys::tr("Claude API 키", "Claude API key"), crate::sys::tr("ALI가 직접 호출 · 쓴 만큼 과금", "ALI calls the API · pay per use"), true) {
+                if choice(ui, !pick_cc, crate::sys::tr("Claude API 키", "Claude API key"), crate::sys::tr("KITE가 직접 호출 · 쓴 만큼 과금", "KITE calls the API · pay per use"), true) {
                     self.engine_pick = Some(false);
                 }
                 let sub = match &cc_version {
@@ -648,9 +670,9 @@ impl App {
                 ui.label(
                     egui::RichText::new(crate::sys::tr(
                         "이 컴퓨터의 Claude Code에 맡깁니다. Claude Code의 로그인, CLAUDE.md, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용됩니다. API 키는 필요 없습니다.
-파일·명령·웹 작업은 Claude Code의 도구로 하고, 경로 지도, 기억, 작업자 같은 ALI 기능은 그대로 씁니다.",
-                        "ALI hands each turn to the Claude Code on this computer. Its login, CLAUDE.md, skills, hooks, MCP servers and permission settings all apply. No API key is needed.
-Files, commands and the web go through Claude Code's tools; ALI's own features such as route maps, memory and workers keep working.",
+파일·명령·웹 작업은 Claude Code의 도구로 하고, 경로 지도, 기억, 작업자 같은 KITE 기능은 그대로 씁니다.",
+                        "KITE hands each turn to the Claude Code on this computer. Its login, CLAUDE.md, skills, hooks, MCP servers and permission settings all apply. No API key is needed.
+Files, commands and the web go through Claude Code's tools; KITE's own features such as route maps, memory and workers keep working.",
                     ))
                     .size(12.0)
                     .color(ui::DIM()),
@@ -682,7 +704,7 @@ Files, commands and the web go through Claude Code's tools; ALI's own features s
                 ui.label(
                     egui::RichText::new(match now.as_str() {
                         "acceptEdits" => crate::sys::tr("파일을 만들고 고치는 것은 묻지 않고 합니다. 그 밖의 명령은 Claude Code 설정을 따릅니다.", "Creates and edits files without asking. Other commands follow your Claude Code settings."),
-                        "bypassPermissions" => crate::sys::tr("명령 실행과 파일 수정을 전부 묻지 않고 합니다. API 키 방식의 ALI와 같습니다.", "Runs commands and edits files without asking, as ALI does with an API key."),
+                        "bypassPermissions" => crate::sys::tr("명령 실행과 파일 수정을 전부 묻지 않고 합니다. API 키 방식의 KITE와 같습니다.", "Runs commands and edits files without asking, as KITE does with an API key."),
                         _ => crate::sys::tr("Claude Code에서 허용해 둔 것만 합니다. 나머지는 거절되고, 그렇다고 알려 줍니다.", "Does only what your Claude Code settings allow. The rest is refused, and it tells you so."),
                     })
                     .size(11.5)
@@ -712,8 +734,8 @@ Files, commands and the web go through Claude Code's tools; ALI's own features s
             ui.add_space(6.0);
             ui.label(
                 egui::RichText::new(crate::sys::tr(
-                    "Jev는 글을 쓰지 않고 판단만 하는 작고 빠른 모델입니다. 넣으면 말이 어느 주제에 속하는지 미리 고르고, 중요한 카드를 앞에 놓고, 겹치는 주제를 정리하고, 옛 대화에서 필요한 것만 골라 옵니다. 없어도 ALI는 그대로 동작합니다.",
-                    "Jev is a small, fast model that only makes decisions. With it, ALI picks the topic before answering, puts important cards first, tidies overlapping topics, and recalls only the past conversations that matter. Without it, ALI works the same.",
+                    "Jev는 글을 쓰지 않고 판단만 하는 작고 빠른 모델입니다. 넣으면 말이 어느 주제에 속하는지 미리 고르고, 중요한 카드를 앞에 놓고, 겹치는 주제를 정리하고, 옛 대화에서 필요한 것만 골라 옵니다. 없어도 KITE는 그대로 동작합니다.",
+                    "Jev is a small, fast model that only makes decisions. With it, KITE picks the topic before answering, puts important cards first, tidies overlapping topics, and recalls only the past conversations that matter. Without it, KITE works the same.",
                 ))
                 .size(11.5)
                 .color(ui::FAINT()),

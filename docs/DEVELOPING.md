@@ -9,7 +9,7 @@ Windows:
 ```powershell
 .\run.ps1          # 빌드해서 실행
 .\run.ps1 test     # 테스트
-.\run.ps1 pack     # 들고 다닐 수 있는 폴더 portable\ALI 만들기
+.\run.ps1 pack     # 들고 다닐 수 있는 폴더 portable\KITE 만들기
 ```
 
 Mac (Rust는 [rustup](https://rustup.rs)으로 설치, Xcode 명령줄 도구 필요):
@@ -17,7 +17,7 @@ Mac (Rust는 [rustup](https://rustup.rs)으로 설치, Xcode 명령줄 도구 �
 ```sh
 ./run.sh            # 빌드해서 실행
 ./run.sh test       # 테스트
-./run.sh pack       # portable/ALI/ALI.app 만들기
+./run.sh pack       # portable/KITE/KITE.app 만들기
 ```
 
 Windows 빌드에는 Rust(`stable-x86_64-pc-windows-gnu`)와 MinGW(WinLibs)가 필요하다. 실행 파일 옆에 `WebView2Loader.dll`이 있어야 뜬다(`run.ps1`이 복사한다).

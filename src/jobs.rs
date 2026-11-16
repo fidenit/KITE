@@ -170,8 +170,8 @@ fn start(input: &Value) -> Result<String, String> {
         let top = tools::shell("git rev-parse --show-toplevel", Some(&dir), 20).map_err(|e| format!("worktree 를 쓰려면 git 저장소여야 함: {e}"))?;
         let top = top.trim().replace('/', if cfg!(windows) { "\\" } else { "/" });
         let wt = format!("{}-{id}", top.trim_end_matches(['\\', '/']));
-        tools::shell(&format!("git worktree add -b 'ali/{id}' '{wt}'"), Some(&top), 120).map_err(|e| format!("git worktree 를 만들지 못함: {e}"))?;
-        note_extra = format!("- 원래 저장소: {top}\n- 따로 떼어 낸 작업 폴더 (브랜치 ali/{id}): {wt}\n");
+        tools::shell(&format!("git worktree add -b 'kite/{id}' '{wt}'"), Some(&top), 120).map_err(|e| format!("git worktree 를 만들지 못함: {e}"))?;
+        note_extra = format!("- 원래 저장소: {top}\n- 따로 떼어 낸 작업 폴더 (브랜치 kite/{id}): {wt}\n");
         dir = wt;
     }
     let safe: String = title.chars().map(|c| if "\\/:*?\"<>|#^[]".contains(c) { ' ' } else { c }).take(40).collect();
@@ -179,7 +179,7 @@ fn start(input: &Value) -> Result<String, String> {
     let (date, time) = sys::now_local();
     let _ = vault::write(
         &note,
-        &format!("---\ndescription: 작업 지시서 {id} — {title}\ncreated: {date}\ntags:\n  - ali/작업\n---\n# {title}\n\n- 작업 ID: {id}\n- 맡긴 때: {date} {time}\n- 작업 폴더: {dir}\n{note_extra}\n## 지시\n\n{order}\n"),
+        &format!("---\ndescription: 작업 지시서 {id} — {title}\ncreated: {date}\ntags:\n  - kite/작업\n---\n# {title}\n\n- 작업 ID: {id}\n- 맡긴 때: {date} {time}\n- 작업 폴더: {dir}\n{note_extra}\n## 지시\n\n{order}\n"),
     );
     let stop = Arc::new(AtomicBool::new(false));
     let inbox = Arc::new(Mutex::new(Vec::new()));

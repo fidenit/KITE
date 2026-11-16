@@ -204,7 +204,7 @@ pub fn log_turn(r: &TurnRecord) {
     let (date, time) = sys::now_local();
     let path = root().join("기록").join(format!("{date}.md"));
     let mut text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|_| format!("---\ntype: 기록\ndate: {date}\ntags:\n  - ali/기록\n---\n# {date}\n"));
+        .unwrap_or_else(|_| format!("---\ntype: 기록\ndate: {date}\ntags:\n  - kite/기록\n---\n# {date}\n"));
     text += &format!("\n## {time}\n");
     text += &format!("- **입력** {}\n", r.input.replace('\n', " "));
     if !r.say.is_empty() {

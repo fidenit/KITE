@@ -149,6 +149,32 @@ pub fn definitions(worker: bool) -> Value {
             &["card", "script"],
         ),
         tool(
+            "page_open",
+            "보이지 않는 브라우저(화면에 띄우지 않는 KITE 자체 브라우저)로 주소를 연다. 다 뜰 때까지 기다린 뒤 제목, 주소, 보이는 글을 돌려준다. \
+             사이트에서 무언가를 해야 할 때(예약, 신청, 조회, 로그인이 필요한 확인) 쓴다. 로그인 상태는 남아 있어서, 사용자가 한 번 로그인한 사이트는 다음에도 로그인된 채로 열린다. \
+             사람이 풀어야 하는 확인(캡차)이 뜨면 프로그램이 알아서 사용자에게 보여 주고, 결과에 그렇게 적힌다.",
+            json!({ "url": { "type": "string", "description": "열 주소" } }),
+            &["url"],
+        ),
+        tool("page_read", "보이지 않는 브라우저에 떠 있는 페이지의 제목, 주소, 보이는 글을 다시 읽는다.", json!({}), &[]),
+        tool(
+            "page_run",
+            "보이지 않는 브라우저의 페이지 안에서 자바스크립트를 실행한다. 요소를 누르고(document.querySelector(…).click()), 입력란을 채우고, 값을 읽을 때 쓴다. \
+             마지막 식의 값과, 실행 뒤 페이지가 바뀌었으면 바뀐 페이지의 제목·주소·글 앞부분을 돌려준다. \
+             입력란은 값만 넣으면 사이트가 못 알아챌 수 있으니 값을 넣은 뒤 input·change 이벤트를 보낸다. \
+             예약 확정, 결제, 가입, 보내기, 취소 확정처럼 되돌리기 어려운 마지막 단추는 이것으로 누르지 않는다 (page_show 로 보여 주고 사용자가 누른다).",
+            json!({ "script": { "type": "string" } }),
+            &["script"],
+        ),
+        tool(
+            "page_show",
+            "보이지 않는 브라우저를 판 위에 띄워 사용자에게 보여 준다. 로그인, 본인인증, 캡차처럼 사람이 해야 하는 단계, \
+             그리고 되돌리기 어려운 마지막 단추를 사용자가 직접 누르게 할 때 쓴다. 사용자가 '다 했어요'나 '그만두기'를 누르면 다시 숨겨지고, \
+             다음 턴의 <events> 에 '브라우저:' 로 시작하는 줄이 온다. 부른 뒤에는 이 페이지를 조작하지 말고 이번 턴을 마친다.",
+            json!({ "reason": { "type": "string", "description": "사용자가 할 일. 창 위에 그대로 보인다. 예: '네이버에 로그인해 주세요', '내용을 확인하고 예약하기를 눌러 주세요'" } }),
+            &["reason"],
+        ),
+        tool(
             "job_start",
             "일을 작업자에게 맡긴다. 작업자는 따로 도는 AI 로, order(작업 지시서)만 받고 지금까지의 대화는 모른다. 부르면 바로 돌아오고 작업자는 뒤에서 일한다. 여러 번 부르면 작업자 여럿이 동시에 일한다. 화면에 진행 카드가 자동으로 생기고, 끝나면 보고서가 다음 턴에 <job_done> 으로 온다.",
             json!({
@@ -225,7 +251,7 @@ pub fn definitions(worker: bool) -> Value {
     // 작업자는 화면과 브라우저를 직접 다루지 않고, 일을 다시 남에게 맡기지도 않는다. 메인은 progress 를 쓰지 않는다.
     let keep = |name: &str| {
         if worker {
-            !(name == "screen" || name == "board_read" || name == "route_find" || name.starts_with("browser_") || name.starts_with("job_") || name == "message_send" || name == "phone_call")
+            !(name == "screen" || name == "board_read" || name == "route_find" || name.starts_with("browser_") || name.starts_with("page_") || name.starts_with("job_") || name == "message_send" || name == "phone_call")
         } else {
             name != "progress"
         }
@@ -275,6 +301,10 @@ pub fn describe(name: &str, input: &Value) -> String {
         "note_append" => format!("기억 덧붙이기: {}", short("path")),
         "browser_text" => format!("페이지 읽기: {}", short("card")),
         "browser_eval" => format!("페이지 조작: {}", short("script")),
+        "page_open" => format!("사이트 여는 중: {}", short("url")),
+        "page_read" => "사이트 읽는 중".to_string(),
+        "page_run" => "사이트에서 누르고 채우는 중".to_string(),
+        "page_show" => format!("브라우저 보여 주기: {}", short("reason")),
         "web_search" => format!("웹 검색: {}", short("query")),
         "web_fetch" => format!("웹 페이지 읽기: {}", short("url")),
         "contact_find" => format!("연락처 찾기: {}", short("query")),
@@ -380,7 +410,7 @@ pub fn execute(name: &str, input: &Value) -> (String, bool) {
             let query = arg(input, "query")?;
             let encoded: String = query.bytes().map(|b| if b.is_ascii_alphanumeric() { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
             let url = format!("https://nominatim.openstreetmap.org/search?q={encoded}&format=jsonv2&limit=6&accept-language=ko");
-            let mut resp = crate::agent::http().get(&url).header("user-agent", "ALI-desktop/0.1").call().map_err(|e| format!("연결 실패: {e}"))?;
+            let mut resp = crate::agent::http().get(&url).header("user-agent", "KITE-desktop/0.1").call().map_err(|e| format!("연결 실패: {e}"))?;
             let text = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
             let found: Value = serde_json::from_str(&text).map_err(|_| format!("장소 찾기 응답을 읽지 못함: {}", clip(&text, 200)))?;
             let rows: Vec<String> = found

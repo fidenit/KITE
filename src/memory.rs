@@ -15,7 +15,7 @@ use crate::{sys, vault};
 
 pub const CORE: &str = "기억/핵심.md";
 const ARCHIVE: &str = "기억/지난 핵심 기억.md";
-const CORE_HEAD: &str = "---\ndescription: 늘 기억하고 있는 핵심 사실. 프로그램이 대화에서 자동으로 추려 적는다 (직접 고쳐도 된다)\ntags:\n  - ali/기억\n---\n# 핵심 기억\n";
+const CORE_HEAD: &str = "---\ndescription: 늘 기억하고 있는 핵심 사실. 프로그램이 대화에서 자동으로 추려 적는다 (직접 고쳐도 된다)\ntags:\n  - kite/기억\n---\n# 핵심 기억\n";
 /// 핵심 기억이 이보다 길어지면 간추린다 (글자 수).
 const CORE_MAX: usize = 6000;
 const CORE_TARGET: usize = 3500;
@@ -325,7 +325,7 @@ pub fn keep(key: &str, turn: &Turn, events: &str) -> Option<String> {
                     &if vault::read(ARCHIVE).is_ok() {
                         format!("\n## {} 까지\n{body}", turn.at)
                     } else {
-                        format!("---\ndescription: 핵심 기억에서 간추려져 빠진 옛 사실들 (찾을 때만 본다)\ntags:\n  - ali/기억\n---\n\n## {} 까지\n{body}", turn.at)
+                        format!("---\ndescription: 핵심 기억에서 간추려져 빠진 옛 사실들 (찾을 때만 본다)\ntags:\n  - kite/기억\n---\n\n## {} 까지\n{body}", turn.at)
                     },
                 );
                 let kept: Vec<String> = short.lines().map(str::trim).filter(|l| l.starts_with("- ")).map(str::to_string).collect();

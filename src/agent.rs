@@ -162,6 +162,10 @@ pub fn run_as(cfg: &Config, key: &str, role: &Role, turn_text: &str, images: &[(
                             Ok(out) => (out.clone(), out.starts_with("오류:")),
                             Err(_) => ("오류: 보드를 읽지 못함".into(), true),
                         }
+                    } else if name.starts_with("page_") {
+                        // 보이지 않는 브라우저도 화면 쪽 스레드에 있다.
+                        send(Msg::Activity(crate::tools::describe(name, input)));
+                        crate::page::call(name, input)
                     } else if name == "browser_text" || name == "browser_eval" {
                         // 브라우저 화면도 화면 쪽 스레드에 있다. 스크립트를 넘기고 결과를 기다린다.
                         send(Msg::Activity(crate::tools::describe(name, input)));

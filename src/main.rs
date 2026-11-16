@@ -1,4 +1,4 @@
-﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agent;
 mod cc;
@@ -12,6 +12,7 @@ mod jobs;
 mod lang;
 mod llm;
 mod memory;
+mod page;
 mod phone;
 mod pics;
 mod route;
@@ -29,11 +30,14 @@ use eframe::egui;
 
 use crate::core::{Author, Board};
 
-const TITLE: &str = "ALI";
+const TITLE: &str = "KITE";
 
 /// 창의 이름. 확인용으로 띄운 창은 사용자가 실제 창과 헷갈리지 않게 이름을 다르게 한다.
+/// 확인용 창 크기 바꾸기 순서 (LYBOARD_RESIZE)
+static RESIZE: std::sync::OnceLock<Option<Vec<egui::Vec2>>> = std::sync::OnceLock::new();
+
 fn title() -> &'static str {
-    if std::env::var("LYBOARD_AUTOPLAY").is_ok() { "ALI 시험용 (쓰지 마세요)" } else { TITLE }
+    if std::env::var("LYBOARD_AUTOPLAY").is_ok() { "KITE 시험용 (쓰지 마세요)" } else { TITLE }
 }
 /// 이 크기보다 큰 소리가 들어오면 말하는 중으로 본다.
 const MIC_THRESHOLD: f32 = 0.02;
@@ -191,6 +195,8 @@ struct App {
     /// 이번 턴에 AI 가 한마디(say)를 했는가
     pub turn_said: bool,
     probe: Option<Probe>,
+    /// 보이지 않는 브라우저 (AI 가 화면 없이 사이트를 다루고, 사람이 필요할 때만 판 위에 띄운다)
+    page: page::Page,
     gif: Option<Gif>,
     promo: Option<Promo>,
     /// 초기화를 한 번 눌러 확인을 기다리는 중이면 그 시각
@@ -367,7 +373,7 @@ impl App {
                 paint.image(id, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE.gamma_multiply(mark));
             }
             spaced(c + egui::vec2(0.0, 84.0), "FIDENIT", 26.0, 25.0, ui::TEXT(), fade(t, 3.7, 4.2) * cover);
-            text(c + egui::vec2(0.0, 126.0), "presents  ALI  ·  Adaptive Live Interface", ui::font(15.0), ui::DIM(), fade(t, 4.2, 4.7) * cover);
+            text(c + egui::vec2(0.0, 126.0), "presents  KITE  ·  Kinetic Interactive Task Environment", ui::font(15.0), ui::DIM(), fade(t, 4.2, 4.7) * cover);
         }
 
         if let Some(o) = p.outro {
@@ -378,8 +384,8 @@ impl App {
                 let r = egui::Rect::from_center_size(c - egui::vec2(0.0, 150.0), egui::vec2(h * size[0] / size[1], h));
                 paint.image(id, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE.gamma_multiply(fade(u, 0.3, 0.8)));
             }
-            text(c - egui::vec2(0.0, 44.0), "ALI", ui::bold(88.0 * (0.92 + 0.08 * back(fade(u, 0.5, 1.2)))), ui::TEXT(), fade(u, 0.5, 1.0));
-            text(c + egui::vec2(0.0, 30.0), "Adaptive Live Interface", ui::font(19.0), ui::DIM(), fade(u, 0.8, 1.3));
+            text(c - egui::vec2(0.0, 44.0), "KITE", ui::bold(88.0 * (0.92 + 0.08 * back(fade(u, 0.5, 1.2)))), ui::TEXT(), fade(u, 0.5, 1.0));
+            text(c + egui::vec2(0.0, 30.0), "Kinetic Interactive Task Environment", ui::font(19.0), ui::DIM(), fade(u, 0.8, 1.3));
             text(c + egui::vec2(0.0, 92.0), "Less reading. More done.", ui::bold(25.0), ui::TEXT(), fade(u, 1.2, 1.7));
             spaced(egui::pos2(c.x, screen.bottom() - 64.0), "FIDENIT", 15.0, 15.0, ui::DIM(), fade(u, 1.6, 2.1));
             text(egui::pos2(c.x, screen.bottom() - 38.0), "for the world", ui::font(12.5), ui::FAINT(), fade(u, 1.8, 2.3));
@@ -500,6 +506,7 @@ impl App {
             pics: Vec::new(),
             reset_armed: None,
             probe: None,
+            page: page::Page::default(),
             promo: std::env::var("LYBOARD_PROMO").ok().map(|logo| Promo { logo, began: std::time::Instant::now(), outro: None }),
             gif: std::env::var("LYBOARD_GIF").ok().map(|path| {
                 let now = std::time::Instant::now();
@@ -591,6 +598,31 @@ impl App {
                 jobs::to_ui(llm::Msg::Probe { url, script, needle, reply: tx });
                 let text = rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap_or_else(|_| "응답 없음".into());
                 sys::log("probe.log", &format!("읽은 값: {:?}\n{text}", route::read_summary(&text)));
+            });
+        }
+        // 확인용: LYBOARD_PAGE="open 주소;;run 스크립트;;read;;show 이유;;wait 3" 처럼 주면, AI 대신 보이지 않는 브라우저 도구를
+        // 차례로 불러 결과를 data\page.log 에 남긴다 (실제 엔진이 부르는 것과 같은 길을 탄다).
+        if let Ok(script) = std::env::var("LYBOARD_PAGE") {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                for step in script.split(";;").map(str::trim).filter(|s| !s.is_empty()) {
+                    let (cmd, arg) = step.split_once(' ').unwrap_or((step, ""));
+                    let (name, input) = match cmd {
+                        "open" => ("page_open", serde_json::json!({ "url": arg })),
+                        "run" => ("page_run", serde_json::json!({ "script": arg })),
+                        "read" => ("page_read", serde_json::json!({})),
+                        "show" => ("page_show", serde_json::json!({ "reason": arg })),
+                        "wait" => {
+                            std::thread::sleep(std::time::Duration::from_secs_f32(arg.parse().unwrap_or(1.0)));
+                            continue;
+                        }
+                        _ => continue,
+                    };
+                    let started = std::time::Instant::now();
+                    let (out, err) = page::call(name, &input);
+                    let out: String = out.chars().take(1200).collect();
+                    sys::log("page.log", &format!("{step}  ({:.1}초){}\n{out}\n", started.elapsed().as_secs_f32(), if err { "  [오류]" } else { "" }));
+                }
             });
         }
         // 확인용: 시작하자마자 이 주제 쪽으로 날아간다.
@@ -892,11 +924,21 @@ impl App {
         }
         // 방금 처리한 일과 같은 주제의 일이 남아 있으면 그것부터, 없으면 가장 오래 기다린 것부터.
         let next = asks.iter().find(|a| Some(&a.1) == self.task_topic.as_ref()).or_else(|| asks.first());
-        if let Some((id, topic)) = next {
+        if let Some((id, topic)) = next.cloned() {
+            // 새 일이 오면 사용자가 골라 둔 카드는 닫고 그 일을 앞에 놓는다 (일이 사용자를 찾아온다).
+            if self.view.picked.is_some() {
+                self.unpick();
+            }
             self.view.task = Some(id.clone());
             self.task_topic = Some(topic.clone());
             self.view.dock_topic(topic.clone());
         }
+    }
+
+    /// 골라 둔 카드를 닫는다: 왼쪽 자리는 다시 일(있으면)을 보이고, 판은 처음 보기로 돌아간다.
+    pub fn unpick(&mut self) {
+        self.view.pick(None, None);
+        self.selected = None;
     }
 
     /// 지금 일은 미뤄 두고 다음 일을 앞에 가져온다.
@@ -1466,6 +1508,7 @@ impl App {
                     self.pre = Some(p);
                 }
                 llm::Msg::Job(ev) => self.job_event(ev),
+                llm::Msg::Page { req, reply } => self.page.request(req, reply),
                 llm::Msg::Probe { url, script, needle, reply } => {
                     if self.probe.is_some() {
                         let _ = reply.send("오류: 다른 페이지를 읽는 중".into());
@@ -1786,6 +1829,9 @@ impl App {
     /// 웹 카드마다 브라우저 화면을 하나씩 두고, 카드가 움직이면 따라가게 한다.
     fn sync_webviews(&mut self, frame: &eframe::Frame, slots: Vec<ui::WebSlot>, zoom: f32) {
         self.webviews.retain(|id, _| slots.iter().any(|s| &s.id == id));
+        // 보이지 않는 브라우저를 판 위에 띄워 둔 동안은 카드의 브라우저 화면을 숨긴다 (겹쳐 그려지지 않게).
+        let page_up = self.page.is_shown();
+        let slots: Vec<ui::WebSlot> = slots.into_iter().map(|s| ui::WebSlot { visible: s.visible && !page_up, ..s }).collect();
         let win = self.wake.content_rect().size();
         let resized = win != self.web_win;
         self.web_win = win;
@@ -1851,7 +1897,11 @@ impl App {
         if workers > 0 {
             parts.push(if sys::english() { format!("{workers} workers running") } else { format!("작업자 {workers}명이 일하는 중") });
         }
-        parts.push(if sys::english() { format!("zoom {:.0}% (scroll to zoom, drag empty space to move, double-click to see all)", self.view.zoom * 100.0) } else { format!("확대 {:.0}% (스크롤로 확대·축소, 빈 곳을 끌어 이동, 두 번 눌러 전체 보기)", self.view.zoom * 100.0) });
+        parts.push(if sys::english() {
+            format!("{} · zoom {:.0}% (scroll: one level up/down, drag empty space to move, double-click to go back)", self.view.level_name(), self.view.zoom * 100.0)
+        } else {
+            format!("{} 단계 · 확대 {:.0}% (스크롤 한 번에 한 단계, 빈 곳을 끌어 이동, 두 번 눌러 처음 보기)", self.view.level_name(), self.view.zoom * 100.0)
+        });
         if !self.rejects.is_empty() {
             parts.push(format!("{} {}", sys::tr("거부된 명령", "rejected commands"), self.rejects.len()));
         }
@@ -1907,6 +1957,22 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // 확인용: LYBOARD_RESIZE="1560,920;900,700;1400,900" 처럼 주면 3초 뒤부터 0.8초마다 다음 크기로 창을 천천히 바꾼다
+        // (사람이 창 끝을 끄는 것처럼 매 프레임 조금씩). 창 크기를 바꿀 때의 움직임을 시험한다.
+        if let Some(steps) = RESIZE.get_or_init(|| {
+            std::env::var("LYBOARD_RESIZE").ok().map(|v| {
+                v.split(';').filter_map(|s| s.split_once(',').and_then(|(w, h)| Some(egui::vec2(w.trim().parse().ok()?, h.trim().parse().ok()?)))).collect::<Vec<_>>()
+            })
+        }) {
+            let t = self.shot_from.elapsed().as_secs_f32() - 3.0;
+            if t >= 0.0 && steps.len() >= 2 {
+                let seg = ((t / 0.8) as usize).min(steps.len() - 1);
+                let to = steps[seg.min(steps.len() - 2) + 1];
+                let size = if seg >= steps.len() - 1 { steps[steps.len() - 1] } else { steps[seg] + (to - steps[seg]) * ((t / 0.8).fract()) };
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(size.round()));
+            }
+            ui.ctx().request_repaint();
+        }
         // 확인용: LYBOARD_SHOT=파일.bmp 가 있으면 잠시 뒤 화면을 그 파일로 저장한다 (PC 가 잠겨 있어도 된다).
         if let Some(path) = self.shot.clone() {
             if self.shot_from.elapsed().as_millis() as u64 > self.shot_delay {
@@ -2034,6 +2100,13 @@ impl eframe::App for App {
 
         self.take_pics(&ctx);
         self.pick_task();
+        // 고른 카드가 지워졌으면 닫는다. Esc 로도 닫는다 (글을 쓰고 있지 않을 때).
+        if let Some(id) = self.view.picked.clone() {
+            let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape)) && ctx.memory(|m| m.focused().is_none());
+            if esc || self.board.card(&id).is_none() {
+                self.unpick();
+            }
+        }
         self.chat_panel(ui, &ctx, talking);
 
         egui::CentralPanel::default()
@@ -2044,10 +2117,21 @@ impl eframe::App for App {
                 // 판단 모델이 "이 주제의 이야기"라고 본 구역은 답이 오기 전부터 강조한다.
                 let hot = if self.busy { self.pre.as_ref().and_then(|p| p.topic.clone()) } else { None };
                 let mut webs = Vec::new();
+                let board_area = ui.available_rect_before_wrap();
                 let moving =
                     ui::board(ui, &self.board, &mut self.view, &self.selected, &self.pending, &mut lines, &mut clicked, hot.as_deref(), &mut webs);
                 self.sync_webviews(frame, webs, ctx.zoom_factor());
                 self.run_probe(frame, &ctx);
+                // 보이지 않는 브라우저: 기다리던 일을 진행하고, 사람이 필요하면 판 위에 띄운다.
+                self.page.tick(frame);
+                if let Some(out) = self.page.overlay(&ctx, board_area, ctx.zoom_factor()) {
+                    // 사용자가 "다 했어요"나 "그만두기"를 눌렀다: 사용자의 조작처럼 다음 턴에 알리고 바로 반응한다.
+                    self.events.push(out.event_line(&self.page));
+                    self.react_at = Some(std::time::Instant::now() + std::time::Duration::from_millis(150));
+                }
+                if self.page.active() {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                }
                 for l in lines {
                     // 화면 쪽에만 해당하는 부탁 (보드를 바꾸는 조작이 아니다)
                     if let Some(id) = l.strip_prefix("@show ") {
@@ -2057,7 +2141,11 @@ impl eframe::App for App {
                     self.apply_line(&l, Author::User);
                 }
                 if let Some(id) = clicked {
-                    self.selected = if self.selected.as_deref() == Some(id.as_str()) { None } else { Some(id) };
+                    // 누른 카드를 왼쪽 자리로 가져오고, 판에는 같은 주제의 카드만 남긴다.
+                    // AI 에게도 사용자가 이 카드를 보고 있다고 알린다 (<selected>).
+                    let topic = self.board.card(&id).map(|c| c.topic.clone());
+                    self.view.pick(Some(id.clone()), topic);
+                    self.selected = Some(id);
                 }
                 if moving {
                     ctx.request_repaint();
@@ -2154,14 +2242,14 @@ fn is_wait_word(text: &str) -> bool {
     ["잠깐", "잠시만", "기다려", "기다리", "볼게", "볼께", "보고올게", "체크해볼", "생각좀", "생각해볼", "holdon", "wait", "onesec", "onesecond", "letmecheck", "letmeread", "letmethink", "justasec"].iter().any(|w| t.contains(w))
 }
 
-/// 기다리는 중에 분명히 나를 부르는 말인가 ("알리", "다 봤어", "이제 얘기해").
+/// 기다리는 중에 분명히 나를 부르는 말인가 ("카이트", "다 봤어", "이제 얘기해").
 fn is_wake_word(text: &str) -> bool {
     let t: String = text.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
-    // 영어 이름은 낱말 하나로 들렸을 때만 (quality, Italian 같은 낱말 속의 ali 는 아니다).
-    if text.split(|c: char| !c.is_alphanumeric()).any(|w| w.eq_ignore_ascii_case("ali")) {
+    // 영어 이름은 낱말 하나로 들렸을 때만 (kites, kitten 같은 낱말 속의 kite 는 아니다).
+    if text.split(|c: char| !c.is_alphanumeric()).any(|w| w.eq_ignore_ascii_case("kite")) {
         return true;
     }
-    ["알리", "다봤어", "다했어", "다읽었어", "확인했어", "이제얘기해", "이제말해", "얘기해봐", "말해봐", "됐어이제", "자이제", "돌아왔어", "imback", "imdone", "okaydone", "allright", "goahead", "youthere"].iter().any(|w| t.contains(w))
+    ["카이트", "다봤어", "다했어", "다읽었어", "확인했어", "이제얘기해", "이제말해", "얘기해봐", "말해봐", "됐어이제", "자이제", "돌아왔어", "imback", "imdone", "okaydone", "allright", "goahead", "youthere"].iter().any(|w| t.contains(w))
 }
 
 /// 두 글이 거의 같은가 (두 글자 묶음이 얼마나 겹치는가). AI 자기 목소리를 받아쓴 것을 가려낼 때 쓴다.
@@ -2310,10 +2398,10 @@ mod voice_tests {
         for w in ["잠깐, 이거 찾아봐", "잠깐만 그거 보여줘", "공모전 조사해 줘"] {
             assert!(!is_wait_word(w), "{w}");
         }
-        assert!(is_wake_word("알리, 다 봤어"));
+        assert!(is_wake_word("카이트, 다 봤어"));
         assert!(!is_wake_word("여기 마감이 언제지"));
-        assert!(is_wake_word("Ali, I'm back"));
-        assert!(!is_wake_word("the quality is bad"));
+        assert!(is_wake_word("Kite, I'm back"));
+        assert!(!is_wake_word("the kitten is asleep"));
         assert!(is_wait_word("Hold on."));
         assert!(!is_wait_word("wait, find the deadline"));
     }

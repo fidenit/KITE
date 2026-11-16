@@ -30,7 +30,7 @@ fn osascript(script: &str, args: &[&str]) -> Result<String, String> {
     } else {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         if err.contains("-1743") || err.contains("not allowed") || err.contains("권한") {
-            Err(format!("Mac 이 접근을 막음. 시스템 설정 → 개인정보 보호 및 보안 → 자동화(또는 연락처)에서 ALI 를 허용해야 함 ({err})"))
+            Err(format!("Mac 이 접근을 막음. 시스템 설정 → 개인정보 보호 및 보안 → 자동화(또는 연락처)에서 KITE 를 허용해야 함 ({err})"))
         } else {
             Err(err)
         }
@@ -260,7 +260,7 @@ pub fn read(who: &str, limit: usize) -> Result<String, String> {
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         return Err(format!(
-            "문자 기록을 열지 못함. 시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한에서 ALI 를 켜야 함 ({})",
+            "문자 기록을 열지 못함. 시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한에서 KITE 를 켜야 함 ({})",
             err.trim()
         ));
     }

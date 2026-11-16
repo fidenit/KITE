@@ -1,9 +1,9 @@
 [package]
-name = "ali"
+name = "kite"
 version = "0.2.1"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/fidenit/ALI"
+repository = "https://github.com/fidenit/KITE"
 
 [dependencies]
 cpal = "0.18.2"

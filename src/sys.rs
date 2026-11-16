@@ -9,7 +9,7 @@ pub fn base_dir() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_default();
     let dir = exe.parent().map(PathBuf::from).unwrap_or_default();
     let name = |p: &PathBuf| p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-    // Mac 의 .app 묶음: 실행 파일은 ALI.app/Contents/MacOS 안에 있다. 키와 data, vault 는 ALI.app 옆에 둔다.
+    // Mac 의 .app 묶음: 실행 파일은 KITE.app/Contents/MacOS 안에 있다. 키와 data, vault 는 KITE.app 옆에 둔다.
     if name(&dir) == "MacOS" {
         if let Some(app) = dir.parent().and_then(|c| c.parent()) {
             if app.extension().map(|e| e == "app").unwrap_or(false) {
