@@ -77,3 +77,44 @@ card k2 decision ws 3x2 장소 결정
 set k2 text 어디로 할까요?
 add k2 o1 강릉 | 멀지만 시설이 좋음
 ```
+
+## 안드로이드 앱 (`android/`)
+
+폰에서 쓰는 KITE. 코드 하나에서 앱 두 개가 나온다 (`android/app/build.gradle.kts`의 `productFlavors`).
+
+| 갈래 | 앱 | 엔진 |
+|---|---|---|
+| `free` | KITE (`com.fidenit.kite`) | 사용자가 넣은 Claude API 키로 폰이 Claude API 를 직접 부른다. 고급 선택으로 내 서버의 Claude Code(SSH)도 쓸 수 있다 |
+| `pro` | KITE Pro (`com.fidenit.kite.pro`) | 아무것도 넣지 않는다. 같은 요청을 중계 서버로 보내고, 키와 사용량은 서버가 맡는다 |
+
+```sh
+cd android
+./gradlew assembleFreeDebug                                   # app/build/outputs/apk/free/debug/app-free-debug.apk
+./gradlew -PkiteRelayUrl=https://<중계 서버> assembleProDebug # 주소를 안 주면 에뮬레이터에서 이 PC 의 http://10.0.2.2:8787
+./gradlew testFreeDebugUnitTest                               # 보드·수정 언어·API 엔진(가짜 서버로 한 턴)·서버 명령 줄
+```
+
+JDK 17 이상(Android Studio 의 jbr)과 안드로이드 SDK 가 필요하다. `ANDROID_HOME` 이나 `android/local.properties` 의 `sdk.dir=`로 SDK 자리를 알려 준다.
+
+| 파일 (`app/src/main/java/com/fidenit/kite/`) | 역할 |
+|---|---|
+| `core/Board.kt`, `core/Lang.kt` | 보드와 화면 수정 언어. `src/core.rs`, `src/lang.rs` 를 옮긴 것 |
+| `engine/Api.kt` | Claude API 엔진 (공식 Java SDK). 스트리밍, 도구 반복, 1시간 지시문 캐시, 요청마다 사용량과 어림 비용을 더한다. 흐름은 `src/agent.rs` 와 같다 |
+| `engine/PhoneTools.kt` | 폰에서 도는 도구: `screen`, 기억 보관함(`note_*`, 앱 저장소의 `vault/`). 웹 검색·읽기는 Anthropic 서버 쪽 도구 |
+| `engine/Ssh.kt`, `engine/ClaudeCode.kt` | 내 서버의 Claude Code 엔진 (SSH, `claude -p`) |
+| `voice/` | 마이크·스피커, ElevenLabs 받아쓰기와 말하기, 멈춤·기다림 낱말 |
+| `KiteViewModel.kt` | 한 턴의 흐름, 소리와 카드의 순서, 말로 대화하기, 엔진 고르기 |
+| `ui/` | 화면: 주제, 카드, 설정 |
+
+- 지시문은 데스크톱과 같은 `src/prompt.md` 를 빌드할 때 복사해 쓰고, 폰에 맞는 덧붙임(`PHONE_NOTE`, `NOTE`)을 뒤에 붙인다. 부품 표는 `core/Board.kt` 의 `PARTS` 에서 만든다: `src/core.rs` 의 `PARTS` 를 고치면 여기도 같이 고친다 (`partsMatchDesktop` 시험이 어긋남을 잡는다).
+- API 엔진의 핵심 기억은 `vault/기억/핵심.md` 이고, 데스크톱처럼 따로 정리해 주는 모델이 없어서 모델이 `note_append` 로 직접 적는다.
+- 개발용 빌드만 `10.0.2.2`·`localhost` 로의 암호화 없는 연결을 허용한다 (`src/debug/res/xml/network_security_config.xml`).
+- 아직 없는 것: 판단 모델(Jev) 연동, 경로 찾기, 작업자, 브라우저 도구, 문자·전화, 옛 대화 찾기(`<recall>`), 붙인 사진, Pro 의 Play 구독 연결.
+
+## 중계 서버
+
+KITE Pro 가 붙는 서버(키 보관, 이용자별 사용량 계량·한도, 구독 확인)는 이 공개 저장소에 두지 않고 별도 비공개 저장소에서 관리한다. 앱 쪽에서 알아야 할 약속만 적는다.
+
+- Anthropic Java SDK 의 `baseUrl` 을 중계 서버 주소로, `apiKey` 를 구독자 토큰으로 둔다. 주소는 빌드할 때 `-PkiteRelayUrl=https://…` 로 넣는다 (저장소에는 적지 않는다).
+- 이번 달 한도를 넘으면 HTTP 402. 앱은 "이번 달 사용량을 모두 썼습니다"로 보여 준다.
+- `GET /v1/usage` (헤더 `x-api-key: <토큰>`) 로 이번 달 사용량(`used_usd`, `budget_usd`, `plan`)을 묻는다.

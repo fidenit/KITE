@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 정식 빌드: 암호화된 연결(HTTPS)만 쓴다. 개발용 빌드는 src/debug 의 같은 파일이 이것을 대신한다. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
