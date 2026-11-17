@@ -28,8 +28,18 @@ pub enum Item {
     Line(String),
     /// 적용하지 않고 돌려보낼 이유
     Reject(String),
-    /// 지원하지 않는 프로토콜 버전을 선언했다. 연결을 닫는다.
+    /// 더 받지 않고 연결을 닫는다: 지원하지 않는 프로토콜 버전을 선언했거나, HTTP 요청이 왔다.
     Close(String),
+}
+
+/// HTTP 요청의 첫 줄(`POST / HTTP/1.1`)처럼 생겼는가. 브라우저 안의 아무 웹페이지나 127.0.0.1 로 요청을 보낼 수 있고,
+/// 그대로 두면 요청 본문의 줄이 프로토콜 줄로 읽혀 보드에 적힌다. 프로토콜 명령은 모두 소문자라 헷갈리지 않는다.
+fn looks_like_http(line: &str) -> bool {
+    let mut parts = line.split_whitespace();
+    let (Some(method), Some(_target), Some(version), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    method.bytes().all(|b| b.is_ascii_uppercase()) && version.starts_with("HTTP/")
 }
 
 /// 바이트 조각을 줄로 끊는 부분. 소켓과 시계를 모르므로 그대로 시험할 수 있다.
@@ -78,6 +88,9 @@ impl LineFeeder {
         let line = text.trim();
         if let Some(v) = crate::lang::declared_version(line) {
             return if crate::lang::can_read(v) { None } else { Some(Item::Close(format!("프로토콜 {v} 은 읽을 수 없음 (이 프로그램은 {})", crate::lang::VERSION))) };
+        }
+        if looks_like_http(line) {
+            return Some(Item::Close("HTTP 요청은 받지 않음 (웹페이지가 보낸 요청일 수 있음)".into()));
         }
         if line.is_empty() || line.starts_with('#') || line.starts_with("```") {
             return None;
@@ -270,6 +283,21 @@ mod tests {
         assert!(matches!(&out[0], Item::Close(m) if m.contains("1.0")));
     }
 
+    #[test]
+    fn http_request_line_closes() {
+        let t = Instant::now();
+        let mut f = LineFeeder::new(t);
+        let out = f.push(b"POST / HTTP/1.1\r\nsay pwned\n", t);
+        assert!(matches!(&out[0], Item::Close(m) if m.contains("HTTP")));
+        for req in ["GET /x?y=1 HTTP/1.1", "PUT / HTTP/1.0", "PRI * HTTP/2.0", "OPTIONS * HTTP/1.1"] {
+            assert!(looks_like_http(req), "{req}");
+        }
+        // 프로토콜 줄은 HTTP 요청으로 오인하지 않는다
+        for op in ["say GET / HTTP/1.1", "topic http HTTP/1", "set k1 text HTTP/1.1", "GET / HTTP"] {
+            assert!(!looks_like_http(op), "{op}");
+        }
+    }
+
     struct Fake(Mutex<Vec<String>>);
     impl Sink for Fake {
         fn line(&self, _peer: &str, line: &str) -> String {
@@ -322,5 +350,17 @@ mod tests {
         assert!(got[0].starts_with("err ") && got[0].contains("2.0"));
         assert!(sink.0.lock().unwrap().is_empty());
         assert!(start(port, None, sink).is_err());
+    }
+
+    #[test]
+    fn tcp_browser_request_writes_nothing() {
+        // 웹페이지의 fetch(..., {mode: "no-cors", body}) 가 보내는 모양: 요청 줄, 머리글, 빈 줄, 본문
+        let sink = Arc::new(Fake(Mutex::new(Vec::new())));
+        let port = free_port();
+        start(port, None, sink.clone()).unwrap();
+        let req = b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: text/plain\r\nOrigin: https://evil.example\r\n\r\nsay pwned\ncard w1 metric a 2x2 X\n";
+        let got = talk(port, req, 1);
+        assert!(got[0].starts_with("err ") && got[0].contains("HTTP"), "{got:?}");
+        assert!(sink.0.lock().unwrap().is_empty());
     }
 }
