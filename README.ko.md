@@ -18,6 +18,13 @@ KITE가 그 한곳이다. 필요한 것을 말하면 AI가 화면을 직접 짠�
 
 세상에 없던 도구라서 새로 만들었다. 이것으로 모두가 덜 지치고 더 많은 것을 해내기를 바란다.
 
+**이 저장소에는 두 가지가 있다.**
+
+| | 무엇인가 | 어디에 |
+|---|---|---|
+| **KITE Protocol** | AI가 화면을 만들고 고칠 때 쓰는 공개 언어. 한 줄에 조작 하나, 카드 14종, 사용자의 답도 같은 언어로 돌아온다. 어떤 모델이나 에이전트든 쓸 수 있고 어떤 앱이든 그릴 수 있다 | [protocol/](protocol) (영어) |
+| **KITE**, **KITE Pro** | 이 규격으로 만든 첫 제품. 아래에서 설명하는 Windows·macOS 앱과 안드로이드 앱 | 이 문서, [android/](android) |
+
 ![FIDENIT의 KITE: 글자의 벽이 걷히고 살아 있는 판이 나타난다. 요청 한 번으로 워크숍의 경로, 일정, 예산, 준비 목록이 놓이고, 컨펌이 필요한 한 가지는 왼쪽에 늘 보여 준다.](docs/images/hero.gif)
 
 **2분 영상으로 보기.** 요청 하나가 처음부터 끝까지 흘러가는 모습을 본 뒤, 하나씩 가까이 본다. 내용에 맞게 만들어지는 카드, 긴 프로젝트에서 다음 결정을 하나씩 늘 보여 주는 모습, 판을 자유롭게 다루는 모습이다. (영상은 영어 화면이다.)
@@ -78,27 +85,41 @@ KITE가 그 한곳이다. 필요한 것을 말하면 AI가 화면을 직접 짠�
 | macOS | rustup으로 Rust, Xcode 명령줄 도구 | `./run.sh` |
 | Linux | 아직 지원하지 않는다(아래 참고) | |
 
-`run.ps1`과 `run.sh`는 빌드해서 바로 실행한다. 뒤에 `test`를 붙이면 테스트, `pack`을 붙이면 들고 다닐 폴더(`portable/KITE`)를 만든다. 자세한 순서와 코드 구조는 [docs/DEVELOPING.md](docs/DEVELOPING.md)에 있다.
+`run.ps1`과 `run.sh`는 빌드해서 바로 실행한다. 뒤에 `test`를 붙이면 테스트, `pack`을 붙이면 들고 다닐 폴더(`portable/KITE`)를 만든다. 자세한 순서와 코드 구조는 [docs/DEVELOPING.md](docs/DEVELOPING.md)(영어)에 있다.
 
 Linux: GTK와 WebKit 라이브러리(`glib-sys`)가 없는 컴퓨터에서는 빌드가 거기서 멈춘다. 말하기, 기억 폴더 열기, 전화 도구도 macOS와 Windows 기준으로 짜여 있다. Linux 지원은 열려 있는 숙제다.
 
 ### 엔진 고르기
 
-| 엔진 | 필요한 것 | 방법 |
-|---|---|---|
-| 데모 | 없음 | 키 없이 시작한다 |
-| Claude API | [Claude API 키](https://console.anthropic.com/settings/keys). 요금은 본인 계정에 청구된다 | 왼쪽 아래 **키**에 넣거나, 환경 변수 `ANTHROPIC_API_KEY`, 또는 프로그램 옆 `key.txt`에 적는다 |
-| Claude Code | [Claude Code](https://claude.com/claude-code)가 깔려 있고 로그인된 상태. API 키는 필요 없다 | 같은 창에서 고르거나, 프로그램 옆 `engine.txt`에 `claude-code`라고 적는다 |
+엔진은 "누가 답하는가"다. 왼쪽 아래 **키**에서 고른다.
 
-**Claude Code를 엔진으로 쓰기.** KITE는 API를 직접 부르는 대신 턴마다 Claude Code에 맡긴다. Claude Code의 로그인, `CLAUDE.md`, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용된다. 파일·명령·웹 작업은 Claude Code의 도구로 한다. KITE 자체 도구(경로 지도, 기억 노트, 판 읽기, 작업자)는 KITE 안의 작은 로컬 MCP 서버로 내주고, 작업자와 기억 정리도 Claude Code를 거쳐 돈다. Claude Code가 자기 지시문을 함께 보내기 때문에 API 키 방식보다 턴당 토큰이 더 든다. 기본은 Claude Code에서 허용해 둔 일만 하고, 같은 창에서 파일 수정이나 전부를 허용할 수 있다. `--model sonnet` 같은 Claude Code 옵션은 프로그램 폴더의 `claude-args.txt`에 적는다.
+| 엔진 | 필요한 것 | 되는 것 |
+|---|---|---|
+| 데모 | 없음 | 준비된 장면만. 키 없이 시작한다 |
+| Claude API | [Claude API 키](https://console.anthropic.com/settings/keys). 요금은 본인 계정에 청구된다 | KITE의 기능 전부. **키**에 넣거나, 환경 변수 `ANTHROPIC_API_KEY`, 또는 프로그램 옆 `key.txt`에 적는다 |
+| Claude Code | [Claude Code](https://claude.com/claude-code)가 깔려 있고 로그인된 상태. API 키는 필요 없다 | 전부. Claude Code의 로그인, `CLAUDE.md`, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용된다 |
+| 다른 모델 | OpenAI 호환 주소: OpenAI, Ollama·LM Studio의 로컬 모델, OpenRouter | KITE 자체 엔진을 그 모델로 돌린다. 웹 검색은 Claude에서만 된다 |
+| 내 에이전트 | MCP 또는 AG-UI를 쓰는 에이전트 | 보드를 그 에이전트의 화면으로 쓴다. KITE 안의 모델은 돌지 않는다 |
+
+**Claude Code를 엔진으로 쓰기.** KITE는 API를 직접 부르는 대신 턴마다 Claude Code에 맡긴다. 파일·명령·웹 작업은 Claude Code의 도구로 한다. KITE 자체 도구(경로 지도, 기억 노트, 판 읽기, 작업자)는 KITE 안의 작은 로컬 MCP 서버로 내주고, 작업자와 기억 정리도 Claude Code를 거쳐 돈다. Claude Code가 자기 지시문을 함께 보내기 때문에 API 키 방식보다 턴당 토큰이 더 든다. 기본은 Claude Code에서 허용해 둔 일만 하고, 같은 창에서 파일 수정이나 전부를 허용할 수 있다. `--model sonnet` 같은 Claude Code 옵션은 프로그램 폴더의 `claude-args.txt`에 적는다.
 
 **두 번째 키는 선택이다.** [TypeSafe AI](https://typesafe.ai)의 Jev 키(**키** 창, 또는 `TYPESAFE_API_KEY`). Jev는 글을 쓰지 않고 판단만 하는 작고 빠른 모델이다. 넣으면 말이 어느 주제에 속하는지 미리 고르고, 중요한 카드를 앞에 놓고, 겹치는 주제를 정리하고, 옛 대화에서 필요한 것만 골라 온다. 없어도 KITE는 그대로 동작한다.
 
 키, 판, 기억 보관함은 모두 프로그램 폴더 안에 있다. 폴더를 옮기면 전부 따라간다.
 
-### 엔진으로 쓰기: 프로토콜로 판 채우기
+### 내 에이전트로 쓰기
 
-KITE의 화면은 한 줄에 조작 하나인 글줄로 고친다. 이 줄을 쓸 수 있는 것이면 무엇이든 판을 채울 수 있다. 이 언어는 [docs/PROTOCOL.md](docs/PROTOCOL.md)에 적어 두었고(영어), [JSON 스키마](docs/protocol.schema.json)와 바로 불러올 수 있는 [examples/](examples) 판이 있다.
+KITE는 [KITE Protocol](protocol)을 쓰는 것이면 무엇이든 그린다. 에이전트가 Claude일 필요도, 에이전트를 고칠 필요도 없다.
+
+**MCP를 쓰는 에이전트** (Claude Code, Cursor, 직접 만든 것):
+
+1. KITE에서 **키** → **내 에이전트** → **저장**.
+2. 다시 **키** → **Claude Code 명령 복사**를 눌러 터미널에서 실행한다 (다른 클라이언트는 **설정(JSON) 복사**).
+3. 에이전트에게 보드에 답하라고 한다. 도구는 넷이다: `guide`, `board_read`, `screen`, `events`.
+
+**AG-UI 프레임워크로 만든 에이전트** (LangGraph, CrewAI, Pydantic AI 등): **키** → **내 에이전트** → **AG-UI**에 에이전트 주소를 적는다.
+
+**스크립트:** `KITE_PROTOCOL_PORT=7878`로 KITE를 띄우고 그 포트에 줄을 쓴다.
 
 ```
 topic ws 팀 워크숍
@@ -108,26 +129,25 @@ add k2 o1 강릉 | 멀지만 시설이 좋음
 add k2 o2 가평 | 가깝고 저렴함
 ```
 
-데모에서 예제 판을 불러오는 법(macOS·Linux 셸. PowerShell에서는 먼저 `$env:이름 = "값"`으로 두 변수를 정한다):
+사용자가 가평을 누르면 에이전트는 `user set k2 chosen o2`를 받는다.
 
-```sh
-LYBOARD_DEMO=1 LYBOARD_DEMO_SEED=examples/my-turn.ops ./run.sh
-```
-
-KITE 0.3.0에는 켜져 있는 동안 줄을 받는 통로가 아직 없다. 그래서 창이 뜨기 전에 불러오거나, 기록 파일 `data/ops.log`로 넣는다. 지금 되는 것과 안 되는 것은 [PROTOCOL.md 11절](docs/PROTOCOL.md)에 있다.
+방법과 설정은 [docs/DRIVING.md](docs/DRIVING.md)(영어), 언어 자체는 [protocol/SPEC.md](protocol/SPEC.md), 모델에게 줄 안내서는 [protocol/GUIDE.md](protocol/GUIDE.md)에 있다.
 
 ## 실행하기 전에 알아 둘 것
 
 - **AI는 묻지 않고 행동한다.** 사용자의 컴퓨터에서 명령을 실행하고 파일을 고친다. 그렇게 쓰도록 만든 프로그램이다. 그래도 괜찮은 컴퓨터에서, 이 점을 알고 쓴다.
 - **쓰는 만큼 돈이 든다.** 기본으로 가장 뛰어난 Claude 모델을 쓴다.
-- **아직 초기다.** 한 사람이 매일 쓰고 있다. 한국어와 영어를 지원하고, 화면 구석에서 바꾼다. [다음에 할 일](docs/NEXT.md)을 본다.
+- **아직 초기다.** 한 사람이 매일 쓰고 있다. 처음에는 영어로 뜨고, 화면 구석에서 한국어로 바꾼다. [바뀐 것](CHANGELOG.md)(영어)과 [다음에 할 일](docs/NEXT.md)을 본다.
+- **다른 모델과 바깥 에이전트는 새 기능이다.** 매일 쓰는 것은 Claude 엔진이다. 다른 모델용 엔진과 바깥 에이전트용 연결은 시험 서버로 확인했고, 아직 실사용으로 검증하지 않았다.
 - 경로 카드의 거리와 시간은 카카오맵에서 읽어 온다. 그래서 경로는 한국 안에서 동작한다.
 
 ## 개발자에게
 
-Rust와 [egui](https://github.com/emilk/egui)로 만들었고, Claude API를 HTTP로 직접 부른다. 웹 화면은 없다. 모델은 판을 고치는 작은 줄 단위 언어를 내고, 줄이 도착하는 대로 반영된다. 그 판을 같은 언어로 다시 적은 것이 다음 턴에 모델이 보는 전부다.
+**규격**은 [protocol/](protocol)에 있다(영어): [규격 문서](protocol/SPEC.md), [에이전트용 안내서](protocol/GUIDE.md), JSON 스키마, 예제, [적합성 시험 사례](protocol/conformance), 의존성 없는 Rust 참조 구현. 적합성 사례는 데스크톱 앱이 쓰는 참조 구현과, 안드로이드 앱의 Kotlin 구현이 각각 돌린다.
 
-이 언어는 [docs/PROTOCOL.md](docs/PROTOCOL.md)(KITE Board Protocol v0.1, 영어)에 적어 두었고, [protocol.schema.json](docs/protocol.schema.json)과 [예제](examples)가 있다. 빌드 방법, 코드의 구조, 새 카드 종류를 더하는 법은 [docs/DEVELOPING.md](docs/DEVELOPING.md)에 있다.
+**데스크톱 앱**은 Rust와 [egui](https://github.com/emilk/egui)로 만들었고 웹 화면은 없다. Claude 엔진에서는 모델의 출력이 곧 조작 줄이고, 줄이 도착하는 대로 반영된다. 그 판을 같은 언어로 다시 적은 것이 다음 턴에 모델이 보는 전부다. 빌드 방법, 코드의 구조, 새 카드 종류를 더하는 법은 [docs/DEVELOPING.md](docs/DEVELOPING.md)(영어)에 있다.
+
+**안드로이드 앱**(내 키로 쓰는 KITE, 아무것도 넣지 않는 KITE Pro)은 [android/](android)에 있고 코드는 하나다.
 
 코드의 대부분은 AI(Claude)와 함께 썼다. 구상과 설계의 결정은 사람이 했다.
 

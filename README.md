@@ -18,6 +18,13 @@ The name says it twice. KITE is a **Kinetic Interactive Task Environment**: a wo
 
 Nothing like it existed, so we built it. We hope it makes working with AI less tiring and more productive for everyone.
 
+**Two things live in this repository.**
+
+| | What it is | Where |
+|---|---|---|
+| **KITE Protocol** | The open language an AI writes to build and edit a screen: one op per line, 14 kinds of cards, answers from the user coming back the same way. Any model or agent can write it; any app can render it | [protocol/](protocol) |
+| **KITE** and **KITE Pro** | The first products built on it: the desktop app for Windows and macOS described below, and the Android apps | this page, [android/](android) |
+
 ![KITE by FIDENIT: a wall of text gives way to a live board. One request plans a workshop; the route, schedule, budget and checklist appear, and the one decision that needs your confirmation is always shown at the left.](docs/images/hero.gif)
 
 **See it in two minutes.** One request from start to finish, then each part up close: cards shaped to the content, a long project that always shows what to do next and what needs your confirmation, and moving freely around the board.
@@ -64,7 +71,7 @@ Tap any card and it comes to the same slot, with only the cards on the same topi
 
 ### Windows: download and run
 
-1. Download `KITE-0.3.0-windows-x64.zip` from [Releases](https://github.com/fidenit/KITE/releases).
+1. Download the latest `KITE-…-windows-x64.zip` from [Releases](https://github.com/fidenit/KITE/releases).
 2. Unpack it anywhere.
 3. Run `kite.exe`.
 
@@ -78,27 +85,41 @@ There is no installer. On first start a window asks for a key. Skip it to stay i
 | macOS | Rust via rustup, Xcode command line tools | `./run.sh` |
 | Linux | not supported yet (see below) | |
 
-`run.ps1` and `run.sh` build and start the program. Add `test` to run the tests, or `pack` to make a folder you can carry (`portable/KITE`). Steps and code layout: [docs/DEVELOPING.md](docs/DEVELOPING.md) (Korean).
+`run.ps1` and `run.sh` build and start the program. Add `test` to run the tests, or `pack` to make a folder you can carry (`portable/KITE`). Steps and code layout: [docs/DEVELOPING.md](docs/DEVELOPING.md).
 
 Linux: the build stops at the GTK and WebKit libraries (`glib-sys`) on a machine without them, and speech, opening the memory folder and the phone tools are written for macOS and Windows. A Linux port is open.
 
 ### Pick an engine
 
-| Engine | You need | How |
-|---|---|---|
-| Demo | nothing | Start with no key |
-| Claude API | a [Claude API key](https://console.anthropic.com/settings/keys); usage is billed to your account | Enter it under **Keys** at the bottom left, or set `ANTHROPIC_API_KEY`, or put it in `key.txt` next to the program |
-| Claude Code | [Claude Code](https://claude.com/claude-code) installed and logged in; no API key | Choose it in the same window, or write `claude-code` in `engine.txt` next to the program |
+The engine is who answers. Choose it under **Keys** at the bottom left.
 
-**Claude Code as the engine.** KITE hands each turn to it instead of calling the API. Your Claude Code login, `CLAUDE.md`, skills, hooks, MCP servers and permission settings all apply. Files, commands and the web go through Claude Code's tools. KITE's own tools (route maps, memory notes, reading the board, workers) are offered to it through a small local MCP server inside KITE, and workers and memory keeping also run through Claude Code. A turn costs more tokens than with the API key, because Claude Code brings its own instructions. By default it does only what your Claude Code settings allow; the same window lets you allow file edits, or everything. Extra options for Claude Code, such as `--model sonnet`, go in `claude-args.txt` in the program folder.
+| Engine | You need | What you get |
+|---|---|---|
+| Demo | nothing | Prepared scenes. Start with no key |
+| Claude API | a [Claude API key](https://console.anthropic.com/settings/keys); usage is billed to your account | Everything KITE does. Enter the key under **Keys**, or set `ANTHROPIC_API_KEY`, or put it in `key.txt` next to the program |
+| Claude Code | [Claude Code](https://claude.com/claude-code) installed and logged in; no API key | Everything, through your Claude Code: its login, `CLAUDE.md`, skills, hooks, MCP servers and permissions apply |
+| Another model | an OpenAI-compatible endpoint: OpenAI, a local model behind Ollama or LM Studio, OpenRouter | KITE's own loop with that model. Web search is with Claude only |
+| Your own agent | an agent that speaks MCP or AG-UI | The board as your agent's screen. KITE runs no model |
+
+**Claude Code as the engine.** KITE hands each turn to it instead of calling the API. Files, commands and the web go through Claude Code's tools. KITE's own tools (route maps, memory notes, reading the board, workers) are offered to it through a small local MCP server inside KITE, and workers and memory keeping also run through Claude Code. A turn costs more tokens than with the API key, because Claude Code brings its own instructions. By default it does only what your Claude Code settings allow; the same window lets you allow file edits, or everything. Extra options for Claude Code, such as `--model sonnet`, go in `claude-args.txt` in the program folder.
 
 **Optional second key.** A [TypeSafe AI](https://typesafe.ai) Jev key (**Keys**, or `TYPESAFE_API_KEY`). Jev is a small, fast model that only makes decisions. With it, KITE picks the topic before answering, puts important cards first, tidies overlapping topics, and recalls only the past conversations that matter. Without it, KITE works the same.
 
 Keys, the board and the memory vault live in the program's own folder. Move the folder and everything moves with it.
 
-### Use it as an engine: drive the board with the protocol
+### Use it with your own agent
 
-KITE's screen is edited with plain text lines, one op per line. Anything that can write those lines can fill a board. The language is written down in [docs/PROTOCOL.md](docs/PROTOCOL.md) with a [JSON schema](docs/protocol.schema.json), and [examples/](examples) holds boards you can load.
+KITE draws whatever writes the [KITE Protocol](protocol). Your agent does not have to be Claude, and you do not have to change it.
+
+**An agent that speaks MCP** (Claude Code, Cursor, one of your own):
+
+1. In KITE: **Keys** → **Your own agent** → **Save**.
+2. **Keys** again → **Copy the Claude Code command**, and run it in a terminal (other clients: **Copy the config (JSON)**).
+3. Ask your agent to answer on the board. It has four tools: `guide`, `board_read`, `screen`, `events`.
+
+**An agent built with an AG-UI framework** (LangGraph, CrewAI, Pydantic AI, ...): give KITE the agent's address under **Keys** → **Your own agent** → **AG-UI**.
+
+**A script:** start KITE with `KITE_PROTOCOL_PORT=7878` and write lines to that port.
 
 ```
 topic ws Team Workshop
@@ -108,26 +129,25 @@ add k2 o1 Gangneung | Far, but better facilities
 add k2 o2 Gapyeong | Close and cheaper
 ```
 
-Load an example board in the demo (macOS and Linux shell; in PowerShell set the two variables with `$env:NAME = "value"` first):
+When the user taps Gapyeong, the agent hears `user set k2 chosen o2`.
 
-```sh
-LYBOARD_DEMO=1 LYBOARD_DEMO_SEED=examples/my-turn.ops ./run.sh
-```
-
-KITE 0.3.0 has no live input port yet, so this works before the window opens, or through the log file `data/ops.log`. [PROTOCOL.md section 11](docs/PROTOCOL.md) lists what works today and what does not.
+How each of these works, with the settings: [docs/DRIVING.md](docs/DRIVING.md). The language itself: [protocol/SPEC.md](protocol/SPEC.md), and the [guide to give your model](protocol/GUIDE.md).
 
 ## Know before you run
 
 - **The AI acts without asking.** It runs commands and changes files on your computer on its own. KITE was built to be used that way. Run it knowing this, on a machine where that is acceptable.
 - **It costs money as you use it.** By default it uses the most capable Claude model.
-- **It is early.** One person uses it daily. Korean and English, switched in the corner. See [what is next](docs/NEXT.md).
+- **It is early.** One person uses it daily. English and Korean, switched in the corner. The instructions KITE gives Claude are still written in Korean; cards and answers follow the language you choose. See [what changed](CHANGELOG.md) and [what is next](docs/NEXT.md) (Korean).
+- **Other models and agents are new.** The Claude engines are the ones used every day. The engines for other models and for outside agents were tested against test servers, not yet in daily use.
 - Distances and times on route cards are read from Kakao Map, so routes work in South Korea.
 
 ## For developers
 
-Rust, [egui](https://github.com/emilk/egui), and the Claude API called directly over HTTP. No web front end. The model's output is a small line-based language for editing the board, applied as each line arrives; the board, written back in the same language, is what the model sees on the next turn.
+**The protocol** is in [protocol/](protocol): the [specification](protocol/SPEC.md), the [guide for agents](protocol/GUIDE.md), a JSON schema, examples, [conformance cases](protocol/conformance), and a reference implementation in Rust with no dependencies. The conformance cases are run by the reference implementation, which the desktop app uses, and by the Android app's own implementation in Kotlin.
 
-The language is specified in [docs/PROTOCOL.md](docs/PROTOCOL.md) (KITE Board Protocol v0.1, with [protocol.schema.json](docs/protocol.schema.json) and [examples](examples)). Build steps, the layout of the code and how to add a new kind of card are in [docs/DEVELOPING.md](docs/DEVELOPING.md) (Korean).
+**The desktop app** is Rust and [egui](https://github.com/emilk/egui), with no web front end. With a Claude engine, the model's output is the op stream, applied as each line arrives; the board, written back in the same language, is what the model sees on the next turn. Build steps, the layout of the code and how to add a new kind of card: [docs/DEVELOPING.md](docs/DEVELOPING.md).
+
+**The Android apps** (KITE with your own key, KITE Pro with nothing to set up) are in [android/](android), one codebase.
 
 Most of the code was written together with AI (Claude). The idea and the design decisions are human.
 
