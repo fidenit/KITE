@@ -44,7 +44,7 @@ pub fn forget() {
 }
 
 fn get(url: &str) -> Result<Value, String> {
-    let mut resp = crate::agent::http().get(url).header("user-agent", "KITE-desktop/0.1").call().map_err(|e| format!("연결 실패: {e}"))?;
+    let mut resp = crate::agent::http().get(url).header("user-agent", "APERIT-desktop/0.1").call().map_err(|e| format!("연결 실패: {e}"))?;
     let text = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
     serde_json::from_str(&text).map_err(|_| format!("응답을 읽지 못함: {}", text.chars().take(160).collect::<String>()))
 }

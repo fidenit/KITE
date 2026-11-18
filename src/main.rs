@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 // The protocol (board, parser, serializer) lives in its own crate: protocol/rust.
-use kite_protocol::{core, lang};
+use patet::{core, lang};
 
 mod agent;
 mod agui;
@@ -37,16 +37,16 @@ use eframe::egui;
 
 use crate::core::{Author, Board};
 
-const TITLE: &str = "KITE";
+const TITLE: &str = "APERIT";
 /// The topic that holds questions about work a tool wants to do.
 const APPROVALS: &str = "kite-asks";
 
 /// 창의 이름. 확인용으로 띄운 창은 사용자가 실제 창과 헷갈리지 않게 이름을 다르게 한다.
-/// 확인용 창 크기 바꾸기 순서 (KITE_RESIZE)
+/// 확인용 창 크기 바꾸기 순서 (APERIT_RESIZE)
 static RESIZE: std::sync::OnceLock<Option<Vec<egui::Vec2>>> = std::sync::OnceLock::new();
 
 fn title() -> &'static str {
-    if crate::sys::var("AUTOPLAY").is_ok() { "KITE 시험용 (쓰지 마세요)" } else { TITLE }
+    if crate::sys::var("AUTOPLAY").is_ok() { "APERIT 시험용 (쓰지 마세요)" } else { TITLE }
 }
 /// 이 크기보다 큰 소리가 들어오면 말하는 중으로 본다.
 const MIC_THRESHOLD: f32 = 0.02;
@@ -66,7 +66,7 @@ fn days_of(date: &str) -> i64 {
 }
 
 fn recent_count() -> usize {
-    // 확인용: KITE_RECENT=2 처럼 줄이면 오래된 대화를 찾아오는 동작을 짧은 대화로도 시험할 수 있다.
+    // 확인용: APERIT_RECENT=2 처럼 줄이면 오래된 대화를 찾아오는 동작을 짧은 대화로도 시험할 수 있다.
     crate::sys::var("RECENT").ok().and_then(|v| v.parse().ok()).unwrap_or(RECENT)
 }
 
@@ -110,9 +110,9 @@ struct App {
     pending: std::collections::HashSet<String>,
     /// Questions on the board about work a tool wants to do: the card, with who is waiting for the answer.
     approvals: std::collections::HashMap<String, (u64, Sender<String>)>,
-    /// What is chosen in the keys window for KITE's own engines, not saved yet: ask, edits or all.
+    /// What is chosen in the keys window for APERIT's own engines, not saved yet: ask, edits or all.
     level_pick: Option<String>,
-    /// The keys window, not saved yet: may an agent outside KITE create web, image and doc cards?
+    /// The keys window, not saved yet: may an agent outside APERIT create web, image and doc cards?
     media_pick: Option<bool>,
     /// 최근 (사용자 입력, AI 의 한마디)
     recent: Vec<(String, String)>,
@@ -125,7 +125,7 @@ struct App {
     error: Option<String>,
     log: Option<std::fs::File>,
     focus_input: bool,
-    /// 확인용 자동 입력 (환경 변수 KITE_AUTOPLAY="입력1|입력2"). 키보드를 건드리지 않고 장면을 재생한다.
+    /// 확인용 자동 입력 (환경 변수 APERIT_AUTOPLAY="입력1|입력2"). 키보드를 건드리지 않고 장면을 재생한다.
     autoplay: std::collections::VecDeque<String>,
     idle_since: std::time::Instant,
     /// 음성 켬/끔. 꺼져 있으면 지금까지처럼 글로만 동작한다.
@@ -205,7 +205,7 @@ struct App {
     replay_date: Option<String>,
     /// 이번 턴에 쓸 옛 대화 후보
     recall_cands: Vec<(f32, usize, String)>,
-    /// 확인용 입력 대본: 프레임마다 넣을 마우스 사건 (KITE_INPUT). 실제 마우스를 건드리지 않고 끌기와 휠을 시험한다.
+    /// 확인용 입력 대본: 프레임마다 넣을 마우스 사건 (APERIT_INPUT). 실제 마우스를 건드리지 않고 끌기와 휠을 시험한다.
     fake_input: std::collections::VecDeque<Vec<egui::Event>>,
     fake_marks: std::collections::VecDeque<(usize, String)>,
     fake_frame: usize,
@@ -258,7 +258,7 @@ struct Probe {
     best: String,
 }
 
-/// 확인·소개용 녹화: 화면을 일정 간격으로 찍어 GIF 로 만든다 (KITE_GIF=파일.gif).
+/// 확인·소개용 녹화: 화면을 일정 간격으로 찍어 GIF 로 만든다 (APERIT_GIF=파일.gif).
 /// 찍은 그림은 바로 뒤쪽 스레드로 보내 한 장씩 GIF 에 적는다 (메모리에 쌓아 두지 않는다).
 struct Gif {
     tx: Option<Sender<(f64, usize, usize, Vec<u8>)>>,
@@ -310,7 +310,7 @@ fn gif_writer(path: String, width: u32) -> Sender<(f64, usize, usize, Vec<u8>)> 
     tx
 }
 
-/// 소개 영상 녹화 (KITE_VIDEO=파일.mp4). 프레임마다 화면을 찍어 ffmpeg 에 넘기고,
+/// 소개 영상 녹화 (APERIT_VIDEO=파일.mp4). 프레임마다 화면을 찍어 ffmpeg 에 넘기고,
 /// "파일.mp4.jsonl" 에 프레임마다 카드 자리와 마우스 자리를 적는다 (편집할 때 어디를 확대할지 정하는 데 쓴다).
 struct Video {
     tx: Option<std::sync::mpsc::SyncSender<(f64, usize, usize, Vec<u8>)>>,
@@ -370,9 +370,9 @@ fn video_writer(path: String, fps: f64) -> std::sync::mpsc::SyncSender<(f64, usi
     tx
 }
 
-/// 소개 영상용 장면 (KITE_PROMO=로고 그림 파일). 실제 화면 위에 여는 장면과 닫는 장면을 덧그린다.
+/// 소개 영상용 장면 (APERIT_PROMO=로고 그림 파일). 실제 화면 위에 여는 장면과 닫는 장면을 덧그린다.
 /// 여는 장면: 글자의 벽 → 한 문장 → 로고. 그 뒤 실제 화면이 드러나 시연이 돈다. 시연이 끝나면 닫는 장면.
-/// KITE_PROMO_MODE=intro 면 여는 장면만, outro 면 닫는 장면만 그린다 (영상을 여러 토막으로 찍을 때).
+/// APERIT_PROMO_MODE=intro 면 여는 장면만, outro 면 닫는 장면만 그린다 (영상을 여러 토막으로 찍을 때).
 struct Promo {
     logo: String,
     began: std::time::Instant,
@@ -466,7 +466,7 @@ impl App {
                 paint.image(id, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), ink.gamma_multiply(mark));
             }
             spaced(c + egui::vec2(0.0, 84.0), "FIDENIT", 26.0, 25.0, ui::TEXT(), fade(t, 3.7, 4.2) * cover);
-            text(c + egui::vec2(0.0, 126.0), "presents  KITE  ·  Kinetic Interactive Task Environment", ui::font(15.0), ui::DIM(), fade(t, 4.2, 4.7) * cover);
+            text(c + egui::vec2(0.0, 126.0), "presents  APERIT  ·  it opens, it shows", ui::font(15.0), ui::DIM(), fade(t, 4.2, 4.7) * cover);
         }
 
         if let Some(o) = p.outro {
@@ -477,8 +477,8 @@ impl App {
                 let r = egui::Rect::from_center_size(c - egui::vec2(0.0, 150.0), egui::vec2(h * size[0] / size[1], h));
                 paint.image(id, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), ink.gamma_multiply(fade(u, 0.3, 0.8)));
             }
-            text(c - egui::vec2(0.0, 44.0), "KITE", ui::bold(88.0 * (0.92 + 0.08 * back(fade(u, 0.5, 1.2)))), ui::TEXT(), fade(u, 0.5, 1.0));
-            text(c + egui::vec2(0.0, 30.0), "Kinetic Interactive Task Environment", ui::font(19.0), ui::DIM(), fade(u, 0.8, 1.3));
+            text(c - egui::vec2(0.0, 44.0), "APERIT", ui::bold(88.0 * (0.92 + 0.08 * back(fade(u, 0.5, 1.2)))), ui::TEXT(), fade(u, 0.5, 1.0));
+            text(c + egui::vec2(0.0, 30.0), "it opens, it shows", ui::font(19.0), ui::DIM(), fade(u, 0.8, 1.3));
             text(c + egui::vec2(0.0, 92.0), "Keep Information To Essentials.", ui::bold(25.0), ui::TEXT(), fade(u, 1.2, 1.7));
             spaced(egui::pos2(c.x, screen.bottom() - 64.0), "FIDENIT", 15.0, 15.0, ui::DIM(), fade(u, 1.6, 2.1));
             text(egui::pos2(c.x, screen.bottom() - 38.0), "for the world", ui::font(12.5), ui::FAINT(), fade(u, 1.8, 2.3));
@@ -644,7 +644,7 @@ impl App {
             jobs::init(app.tx.clone(), move || wake.request_repaint());
         }
         start_feed(&app.tx, ctx);
-        // The MCP door for agents outside KITE: open when a port is set, and always with the outside-agent engine.
+        // The MCP door for agents outside APERIT: open when a port is set, and always with the outside-agent engine.
         if let Some(port) = mcp::outside_port_setting().or(app.cfg.external.then_some(mcp::DEFAULT_PORT)) {
             if let Err(e) = mcp::start_outside(port) {
                 sys::log("mcp.log", &format!("not started: {e}"));
@@ -674,12 +674,12 @@ impl App {
         }
         // 시연 모드는 매번 빈 보드에서 시작한다. 실제 모드는 조작 기록을 재생해 보드를 되살린다.
         app.key_popup = app.cfg.demo() && crate::sys::var("DEMO").is_err() && crate::sys::var("NO_KEY_WINDOW").is_err();
-        // For checking: open the keys window on a given engine (KITE_KEY_WINDOW=api|claude-code|openai|agent).
+        // For checking: open the keys window on a given engine (APERIT_KEY_WINDOW=api|claude-code|openai|agent).
         if let Ok(engine) = crate::sys::var("KEY_WINDOW") {
             app.key_popup = true;
             app.engine_pick = Some(engine).filter(|e| !e.is_empty());
         }
-        // 소개 영상용: 시연 모드에서도 KITE_DEMO_SEED 의 조작 기록으로 보드를 채워 두고 시작한다 (이미 몇 주째 진행 중인 프로젝트 등).
+        // 소개 영상용: 시연 모드에서도 APERIT_DEMO_SEED 의 조작 기록으로 보드를 채워 두고 시작한다 (이미 몇 주째 진행 중인 프로젝트 등).
         if let Some(text) = crate::sys::var("DEMO_SEED").ok().filter(|_| app.cfg.demo()).and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in text.lines() {
                 let Some((who, line)) = l.split_once('\t') else { continue };
@@ -720,7 +720,7 @@ impl App {
                 sys::log("jev.log", &format!("구성 시험 결과: {hints:?}"));
             });
         }
-        // 확인용: KITE_INPUT="drag 700 400 -900 0;wheel 700 400 -600;drag …" 처럼 주면 그 마우스 동작을 프로그램 안에서 흉내 낸다.
+        // 확인용: APERIT_INPUT="drag 700 400 -900 0;wheel 700 400 -600;drag …" 처럼 주면 그 마우스 동작을 프로그램 안에서 흉내 낸다.
         // 동작 하나가 끝나고 화면이 가라앉을 때마다 보는 범위를 data\view.log 에 남긴다.
         if let Ok(script) = crate::sys::var("INPUT") {
             let idle = |q: &mut std::collections::VecDeque<Vec<egui::Event>>, n: usize| (0..n).for_each(|_| q.push_back(Vec::new()));
@@ -731,7 +731,7 @@ impl App {
                 app.fake_marks.push_back((app.fake_input.len(), format!("{step} (손 뗀 뒤)")));
             }
         }
-        // 확인용: KITE_PROBE=주소 로 주면 그 페이지를 보이지 않는 창으로 읽어 data\probe.log 에 남긴다.
+        // 확인용: APERIT_PROBE=주소 로 주면 그 페이지를 보이지 않는 창으로 읽어 data\probe.log 에 남긴다.
         if let Ok(url) = crate::sys::var("PROBE") {
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(2));
@@ -743,7 +743,7 @@ impl App {
                 sys::log("probe.log", &format!("읽은 값: {:?}\n{text}", route::read_summary(&text)));
             });
         }
-        // 확인용: KITE_PAGE="open 주소;;run 스크립트;;read;;show 이유;;wait 3" 처럼 주면, AI 대신 보이지 않는 브라우저 도구를
+        // 확인용: APERIT_PAGE="open 주소;;run 스크립트;;read;;show 이유;;wait 3" 처럼 주면, AI 대신 보이지 않는 브라우저 도구를
         // 차례로 불러 결과를 data\page.log 에 남긴다 (실제 엔진이 부르는 것과 같은 길을 탄다).
         if let Ok(script) = crate::sys::var("PAGE") {
             std::thread::spawn(move || {
@@ -781,7 +781,7 @@ impl App {
         self.board = Board::default();
         if let Ok(text) = std::fs::read_to_string(log_path()) {
             for l in text.lines() {
-                // 첫 줄 머리글(`# kite-protocol 0.1`)은 주석이다. 모르는 주 버전이면 알리고 그래도 재생한다 (실패하는 줄은 건너뛴다).
+                // 첫 줄 머리글(`# patet 0.4`)은 주석이다. 모르는 주 버전이면 알리고 그래도 재생한다 (실패하는 줄은 건너뛴다).
                 if let Some(v) = lang::declared_version(l).filter(|v| !lang::can_read(v)) {
                     sys::log("feed.log", &format!("ops.log declares protocol {v} (this program speaks {})", lang::VERSION));
                 }
@@ -842,9 +842,9 @@ impl App {
 
     /// Check one line and apply it. `origin` says who wrote it (`user`, `model`, or the address of an outside
     /// program) for those who follow the board from outside. A rejected line changes nothing.
-    fn apply_op_line(&mut self, line: &str, by: Author, origin: &str) -> Result<(), kite_protocol::Reject> {
+    fn apply_op_line(&mut self, line: &str, by: Author, origin: &str) -> Result<(), patet::Reject> {
         let Some(op) = lang::parse(line)? else { return Ok(()) };
-        // A writer outside KITE may not make the board load or open things, unless the user turned that on.
+        // A writer outside APERIT may not make the board load or open things, unless the user turned that on.
         let outside = !matches!(origin, "user" | "model") || (origin == "model" && self.cfg.agui.is_some());
         if outside && !mcp::outside_media() {
             let loads = |kind: &str| mcp::MEDIA_KINDS.contains(&kind);
@@ -854,7 +854,7 @@ impl App {
                 _ => false,
             };
             if refused {
-                return Err(kite_protocol::Reject::new("not-allowed", "this board does not let outside agents create web, image or doc cards; the user can allow it under Keys"));
+                return Err(patet::Reject::new("not-allowed", "this board does not let outside agents create web, image or doc cards; the user can allow it under Keys"));
             }
         }
         self.board.apply(op, by)?;
@@ -1131,13 +1131,13 @@ impl App {
         for path in dropped {
             self.add_pic(ctx, pics::from_file(&path.display().to_string()));
         }
-        // 확인용: KITE_PIC=파일 경로 로 주면 시작할 때 그 그림을 붙인 것으로 친다.
+        // 확인용: APERIT_PIC=파일 경로 로 주면 시작할 때 그 그림을 붙인 것으로 친다.
         if let Ok(path) = crate::sys::var("PIC") {
             if self.turn_no == 0 && self.pics.is_empty() && !self.busy {
                 self.add_pic(ctx, pics::from_file(&path));
                 // SAFETY: 확인용으로 한 번만 쓰고 지운다. 다른 스레드가 이 변수를 읽지 않는다.
                 unsafe {
-                    std::env::remove_var("KITE_PIC");
+                    std::env::remove_var("APERIT_PIC");
                     std::env::remove_var("LYBOARD_PIC");
                 }
             }
@@ -1361,7 +1361,7 @@ impl App {
     /// 한 턴을 시작한다. `input` 이 비어 있으면 화면 조작만으로 시작된 턴이다.
     fn start_turn(&mut self, ctx: &egui::Context, input: String) {
         if self.cfg.external {
-            // An agent outside KITE drives this board. What the user typed goes out to it as an event;
+            // An agent outside APERIT drives this board. What the user typed goes out to it as an event;
             // gestures on the board went out when they happened. Nothing is run here.
             if !input.is_empty() {
                 hub::hub().publish("input", "user", &input);
@@ -1379,7 +1379,7 @@ impl App {
         self.flush_speech(); // 말하는 중에 새로 말을 걸면 하던 말을 멈춘다
         self.hush = false;
         self.turn_events = self.events.join(" / ");
-        // For an AG-UI agent the turn goes out in the protocol's own shape (SPEC.md 10.5), not KITE's own envelope.
+        // For an AG-UI agent the turn goes out in the protocol's own shape (SPEC.md 10.5), not APERIT's own envelope.
         let outside = self.cfg.agui.is_some().then(|| {
             let mut rejected = self.rejects.clone();
             rejected.extend(self.board.notes.iter().cloned());
@@ -1875,7 +1875,7 @@ impl App {
                         format!("card {card} decision {APPROVALS} 4x3 {title}"),
                         format!("set {card} text {detail}"),
                         format!("add {card} yes {}", sys::tr("이번만 허용 | 이 한 번만 실행합니다", "Allow once | Just this one")),
-                        format!("add {card} all {}", sys::tr("이번 실행 동안 모두 허용 | 같은 종류는 더 묻지 않습니다", "Allow all like this | No more questions of this kind until KITE is closed")),
+                        format!("add {card} all {}", sys::tr("이번 실행 동안 모두 허용 | 같은 종류는 더 묻지 않습니다", "Allow all like this | No more questions of this kind until APERIT is closed")),
                         format!("add {card} no {}", sys::tr("하지 않기 | 이 일은 건너뜁니다", "Don't | Skip this")),
                         format!("focus {card}"),
                     ] {
@@ -2275,8 +2275,8 @@ fn ask_board(tx: &Sender<llm::Msg>, wake: &egui::Context, topic: &str) -> Result
     got.recv_timeout(std::time::Duration::from_secs(10)).unwrap_or_else(|_| Err("unavailable the screen did not answer".into()))
 }
 
-/// With KITE_PROTOCOL_PORT set, start taking lines on 127.0.0.1 (off by default).
-/// With KITE_PROTOCOL_TOKEN set, the first line of a connection must be `auth <token>`.
+/// With APERIT_PROTOCOL_PORT set, start taking lines on 127.0.0.1 (off by default).
+/// With APERIT_PROTOCOL_TOKEN set, the first line of a connection must be `auth <token>`.
 fn start_feed(tx: &Sender<llm::Msg>, ctx: &egui::Context) {
     let Ok(v) = crate::sys::var("PROTOCOL_PORT") else { return };
     let token = crate::sys::var("PROTOCOL_TOKEN").ok().filter(|t| !t.trim().is_empty());
@@ -2287,7 +2287,7 @@ fn start_feed(tx: &Sender<llm::Msg>, ctx: &egui::Context) {
                 sys::log("feed.log", &format!("not started: {e}"));
             }
         }
-        _ => sys::log("feed.log", &format!("KITE_PROTOCOL_PORT '{v}' must be a number from 1024 to 65535; the socket stays off")),
+        _ => sys::log("feed.log", &format!("APERIT_PROTOCOL_PORT '{v}' must be a number from 1024 to 65535; the socket stays off")),
     }
 }
 
@@ -2345,7 +2345,7 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        // 확인용: KITE_RESIZE="1560,920;900,700;1400,900" 처럼 주면 3초 뒤부터 0.8초마다 다음 크기로 창을 천천히 바꾼다
+        // 확인용: APERIT_RESIZE="1560,920;900,700;1400,900" 처럼 주면 3초 뒤부터 0.8초마다 다음 크기로 창을 천천히 바꾼다
         // (사람이 창 끝을 끄는 것처럼 매 프레임 조금씩). 창 크기를 바꿀 때의 움직임을 시험한다.
         if let Some(steps) = RESIZE.get_or_init(|| {
             crate::sys::var("RESIZE").ok().map(|v| {
@@ -2361,7 +2361,7 @@ impl eframe::App for App {
             }
             ui.ctx().request_repaint();
         }
-        // 확인용: KITE_SHOT=파일.bmp 가 있으면 잠시 뒤 화면을 그 파일로 저장한다 (PC 가 잠겨 있어도 된다).
+        // 확인용: APERIT_SHOT=파일.bmp 가 있으면 잠시 뒤 화면을 그 파일로 저장한다 (PC 가 잠겨 있어도 된다).
         if let Some(path) = self.shot.clone() {
             if self.shot_from.elapsed().as_millis() as u64 > self.shot_delay {
                 self.shot = None;
@@ -2703,10 +2703,10 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(title())
-            // 확인용: 창의 크기 (KITE_SIZE="가로,세로")
+            // 확인용: 창의 크기 (APERIT_SIZE="가로,세로")
             .with_inner_size(crate::sys::var("SIZE").ok().and_then(|v| v.split_once(',').and_then(|(w, h)| Some([w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?]))).unwrap_or([1560.0, 920.0]))
             .with_active(!quiet)
-            // 확인용: 창을 띄울 위치 (KITE_POS="x,y")
+            // 확인용: 창을 띄울 위치 (APERIT_POS="x,y")
             .with_position(crate::sys::var("POS").ok().and_then(|v| v.split_once(',').and_then(|(x, y)| Some([x.trim().parse::<f32>().ok()?, y.trim().parse::<f32>().ok()?]))).unwrap_or([80.0, 60.0])),
         ..Default::default()
     };
@@ -2728,7 +2728,7 @@ fn main() -> eframe::Result {
                 _ => cc.egui_ctx.system_theme() == Some(egui::Theme::Light),
             };
             set_theme(&cc.egui_ctx, light, false);
-            // 확인·소개용: 화면 배율 (KITE_SCALE=1.35 면 같은 배치를 1.35배 촘촘한 화소로 그린다. 영상을 선명하게 찍는 데 쓴다).
+            // 확인·소개용: 화면 배율 (APERIT_SCALE=1.35 면 같은 배치를 1.35배 촘촘한 화소로 그린다. 영상을 선명하게 찍는 데 쓴다).
             if let Some(z) = crate::sys::var("SCALE").ok().and_then(|v| v.parse::<f32>().ok()) {
                 cc.egui_ctx.set_zoom_factor(z);
             }
@@ -2763,10 +2763,10 @@ fn is_wait_word(text: &str) -> bool {
 fn is_wake_word(text: &str) -> bool {
     let t: String = text.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
     // 영어 이름은 낱말 하나로 들렸을 때만 (kites, kitten 같은 낱말 속의 kite 는 아니다).
-    if text.split(|c: char| !c.is_alphanumeric()).any(|w| w.eq_ignore_ascii_case("kite")) {
+    if text.split(|c: char| !c.is_alphanumeric()).any(|w| w.eq_ignore_ascii_case("aperit") || w.eq_ignore_ascii_case("kite")) {
         return true;
     }
-    ["카이트", "다봤어", "다했어", "다읽었어", "확인했어", "이제얘기해", "이제말해", "얘기해봐", "말해봐", "됐어이제", "자이제", "돌아왔어", "imback", "imdone", "okaydone", "allright", "goahead", "youthere"].iter().any(|w| t.contains(w))
+    ["아페리트", "카이트", "다봤어", "다했어", "다읽었어", "확인했어", "이제얘기해", "이제말해", "얘기해봐", "말해봐", "됐어이제", "자이제", "돌아왔어", "imback", "imdone", "okaydone", "allright", "goahead", "youthere"].iter().any(|w| t.contains(w))
 }
 
 /// 두 글이 거의 같은가 (두 글자 묶음이 얼마나 겹치는가). AI 자기 목소리를 받아쓴 것을 가려낼 때 쓴다.

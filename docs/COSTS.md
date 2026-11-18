@@ -5,7 +5,7 @@ Measured on 2026-11-18. Numbers are tokens. The methods are at the end, so they 
 ## In short
 
 - **A board answer is not longer than a chat answer.** For the same four requests, the ops a model wrote were 3,641 characters in total and the chat answers 5,048: about 28% less visible output. Output is the small side of the bill either way.
-- **The cost of a turn is its input**, and most of that is the same on every turn: instructions and tool definitions. With KITE's Claude API engine a turn sends about 36,500 tokens, of which about 90% is read from the cache in a session of consecutive turns.
+- **The cost of a turn is its input**, and most of that is the same on every turn: instructions and tool definitions. With APERIT's Claude API engine a turn sends about 36,500 tokens, of which about 90% is read from the cache in a session of consecutive turns.
 - **That is the same size as a Claude Code turn.** On the same machine, one empty Claude Code turn (`claude -p`, with its own instructions, tools, skills and MCP servers) sent 38,175 tokens.
 - **Two things were wasteful, and both are fixed.** A cache that lasted five minutes, so a turn after a pause paid for everything again (now one hour). Instructions written in Korean, which cost about half again as many tokens as the same text in English (now English: a request went from about 32,800 tokens to about 26,300 on an empty board).
 
@@ -34,13 +34,13 @@ Prices relative to one ordinary input token (Anthropic's published multipliers; 
 | Nothing cached, five-minute cache written (x1.25) | about 45,600 |
 | Nothing cached, one-hour cache written for instructions and tools (x2 on 25,000) | about 64,000, once an hour |
 
-A turn that misses the cache costs about nine times a turn that hits it. A chat session has turns seconds apart; a board is something you come back to. With the five-minute cache, every return after a pause was a miss. The instructions and tools are now cached for an hour (`"ttl": "1h"`); if the API refuses that, KITE falls back to the default by itself. It pays off when at least one more turn follows within the hour.
+A turn that misses the cache costs about nine times a turn that hits it. A chat session has turns seconds apart; a board is something you come back to. With the five-minute cache, every return after a pause was a miss. The instructions and tools are now cached for an hour (`"ttl": "1h"`); if the API refuses that, APERIT falls back to the default by itself. It pays off when at least one more turn follows within the hour.
 
 ## Korean and English instructions
 
 The same four principles from the instructions, in Korean and in a faithful English translation: 371 tokens against 248. English is 67% of Korean.
 
-The instructions and the tool descriptions were then translated (`src/prompt.md`; the Korean ones remain as `src/prompt.ko.md`, chosen with `KITE_PROMPT=ko` or `prompt-lang.txt`). The same Korean request on an empty board, real turns with Haiku:
+The instructions and the tool descriptions were then translated (`src/prompt.md`; the Korean ones remain as `src/prompt.ko.md`, chosen with `APERIT_PROMPT=ko` or `prompt-lang.txt`). The same Korean request on an empty board, real turns with Haiku:
 
 | Instructions | Input tokens per request | Board |
 |---|---|---|
@@ -49,13 +49,13 @@ The instructions and the tool descriptions were then translated (`src/prompt.md`
 
 About 6,400 fewer tokens on every request, 20%. With Opus and the English instructions a Korean request gave a Korean board of four cards with nothing rejected, for 25,870 input tokens. The instructions are in English; the model writes in the language the user chose (`<lang>`).
 
-For comparison, the protocol's own guide for agents ([protocol/GUIDE.md](../protocol/GUIDE.md), English) is 5,042 tokens: what an outside agent needs to write boards. The rest of KITE's instructions is about working on the computer, memory, workers and voice.
+For comparison, the protocol's own guide for agents ([protocol/GUIDE.md](../protocol/GUIDE.md), English) is 5,042 tokens: what an outside agent needs to write boards. The rest of APERIT's instructions is about working on the computer, memory, workers and voice.
 
 ## The Claude Code engine and outside agents
 
-- **Claude Code engine:** each KITE turn is one Claude Code run, so it carries Claude Code's own instructions and tools as well as KITE's. KITE limits the tools it asks for; an earlier measurement put a simple turn at about 40,000 tokens. Claude Code caches on its own terms.
-- **An agent of your own over MCP:** KITE adds four small tool definitions to your agent, and the guide (about 5,000 tokens) once, when the agent calls `guide`. Reading the board costs what the board weighs.
-- **AG-UI:** KITE sends the guide as `context` with every run. Whether that is cached is up to your agent.
+- **Claude Code engine:** each APERIT turn is one Claude Code run, so it carries Claude Code's own instructions and tools as well as APERIT's. APERIT limits the tools it asks for; an earlier measurement put a simple turn at about 40,000 tokens. Claude Code caches on its own terms.
+- **An agent of your own over MCP:** APERIT adds four small tool definitions to your agent, and the guide (about 5,000 tokens) once, when the agent calls `guide`. Reading the board costs what the board weighs.
+- **AG-UI:** APERIT sends the guide as `context` with every run. Whether that is cached is up to your agent.
 
 ## Output: board ops and chat answers
 
@@ -75,7 +75,7 @@ Output tokens as billed, which include the model's thinking: 7,988 for the board
 
 ## A newcomer's app, for scale
 
-An agent that knew nothing of KITE was given only the `protocol/` folder and built a web app from it: `<kite-board>`, a small server, and Haiku through the Claude Code CLI as the model, with the guide as the system prompt. Twelve model calls: 103 lines applied, 2 rejected, no prose. Each call read about 5,400 tokens from the cache and wrote 2,500 to 3,000 new ones; the whole run cost about one cent. The guide plus the renderer's description was 15 KB, about 5,000 tokens: that is what the protocol itself costs a developer per turn before caching, against about 20,000 for KITE's own instructions.
+An agent that knew nothing of APERIT was given only the `protocol/` folder and built a web app from it: `<patet-board>`, a small server, and Haiku through the Claude Code CLI as the model, with the guide as the system prompt. Twelve model calls: 103 lines applied, 2 rejected, no prose. Each call read about 5,400 tokens from the cache and wrote 2,500 to 3,000 new ones; the whole run cost about one cent. The guide plus the renderer's description was 15 KB, about 5,000 tokens: that is what the protocol itself costs a developer per turn before caching, against about 20,000 for APERIT's own instructions.
 
 What that run got wrong went into the protocol the same day: a model that answered its own questions (now rejected with `user-only`), and turns started by a gesture that lost track of the request (the turn layout in SPEC.md 10.1 now carries the earlier requests). Rerun with the corrected guide as it is: 22 lines, none rejected, and wrong values in a form were asked for again and not guessed.
 

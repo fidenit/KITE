@@ -122,7 +122,7 @@ impl Job {
     }
 }
 
-/// 확인용 기록 (KITE_PAGE 로 시험할 때만)
+/// 확인용 기록 (APERIT_PAGE 로 시험할 때만)
 fn trace(msg: &str) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *ON.get_or_init(|| crate::sys::var("PAGE").is_ok()) {

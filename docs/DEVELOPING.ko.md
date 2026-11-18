@@ -1,6 +1,6 @@
 # 개발자용 안내
 
-> 이 문서는 0.3.0 기준의 옛 판이다. 지금 맞는 것은 영어판 [DEVELOPING.md](DEVELOPING.md)다. 0.4.0에서 `src/core.rs`·`src/lang.rs`는 `protocol/rust/src/`로 옮겨졌고, 환경 변수 이름은 `KITE_...`로 바뀌었다(옛 `LYBOARD_...`도 읽는다).
+> 이 문서는 0.3.0 기준의 옛 판이다. 지금 맞는 것은 영어판 [DEVELOPING.md](DEVELOPING.md)다. 0.4.0에서 `src/core.rs`·`src/lang.rs`는 `protocol/rust/src/`로 옮겨졌고, 환경 변수 이름은 `APERIT_...`로 바뀌었다(옛 `LYBOARD_...`도 읽는다).
 
 빌드, 키, 부품을 더하는 법, 코드의 구조. 프로그램이 무엇인지는 [README](../README.ko.md)에 있다.
 
@@ -11,7 +11,7 @@ Windows:
 ```powershell
 .\run.ps1          # 빌드해서 실행
 .\run.ps1 test     # 테스트
-.\run.ps1 pack     # 들고 다닐 수 있는 폴더 portable\KITE 만들기
+.\run.ps1 pack     # 들고 다닐 수 있는 폴더 portable\APERIT 만들기
 ```
 
 Mac (Rust는 [rustup](https://rustup.rs)으로 설치, Xcode 명령줄 도구 필요):
@@ -19,7 +19,7 @@ Mac (Rust는 [rustup](https://rustup.rs)으로 설치, Xcode 명령줄 도구 �
 ```sh
 ./run.sh            # 빌드해서 실행
 ./run.sh test       # 테스트
-./run.sh pack       # portable/KITE/KITE.app 만들기
+./run.sh pack       # portable/APERIT/APERIT.app 만들기
 ```
 
 Windows 빌드에는 Rust(`stable-x86_64-pc-windows-gnu`)와 MinGW(WinLibs)가 필요하다. 실행 파일 옆에 `WebView2Loader.dll`이 있어야 뜬다(`run.ps1`이 복사한다).
@@ -82,12 +82,12 @@ add k2 o1 강릉 | 멀지만 시설이 좋음
 
 ## 안드로이드 앱 (`android/`)
 
-폰에서 쓰는 KITE. 코드 하나에서 앱 두 개가 나온다 (`android/app/build.gradle.kts`의 `productFlavors`).
+폰에서 쓰는 APERIT. 코드 하나에서 앱 두 개가 나온다 (`android/app/build.gradle.kts`의 `productFlavors`).
 
 | 갈래 | 앱 | 엔진 |
 |---|---|---|
-| `free` | KITE (`com.fidenit.kite`) | 사용자가 넣은 Claude API 키로 폰이 Claude API 를 직접 부른다. 고급 선택으로 내 서버의 Claude Code(SSH)도 쓸 수 있다 |
-| `pro` | KITE Pro (`com.fidenit.kite.pro`) | 아무것도 넣지 않는다. 같은 요청을 중계 서버로 보내고, 키와 사용량은 서버가 맡는다 |
+| `free` | APERIT (`com.fidenit.kite`) | 사용자가 넣은 Claude API 키로 폰이 Claude API 를 직접 부른다. 고급 선택으로 내 서버의 Claude Code(SSH)도 쓸 수 있다 |
+| `pro` | APERIT Pro (`com.fidenit.kite.pro`) | 아무것도 넣지 않는다. 같은 요청을 중계 서버로 보내고, 키와 사용량은 서버가 맡는다 |
 
 ```sh
 cd android
@@ -115,7 +115,7 @@ JDK 17 이상(Android Studio 의 jbr)과 안드로이드 SDK 가 필요하다. `
 
 ## 중계 서버
 
-KITE Pro 가 붙는 서버(키 보관, 이용자별 사용량 계량·한도, 구독 확인)는 이 공개 저장소에 두지 않고 별도 비공개 저장소에서 관리한다. 앱 쪽에서 알아야 할 약속만 적는다.
+APERIT Pro 가 붙는 서버(키 보관, 이용자별 사용량 계량·한도, 구독 확인)는 이 공개 저장소에 두지 않고 별도 비공개 저장소에서 관리한다. 앱 쪽에서 알아야 할 약속만 적는다.
 
 - Anthropic Java SDK 의 `baseUrl` 을 중계 서버 주소로, `apiKey` 를 구독자 토큰으로 둔다. 주소는 빌드할 때 `-PkiteRelayUrl=https://…` 로 넣는다 (저장소에는 적지 않는다).
 - 이번 달 한도를 넘으면 HTTP 402. 앱은 "이번 달 사용량을 모두 썼습니다"로 보여 준다.

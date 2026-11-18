@@ -1,8 +1,8 @@
-//! What KITE's own engines may do on this computer without asking.
+//! What APERIT's own engines may do on this computer without asking.
 //!
-//! KITE is an interface; what happens behind it belongs to the engine. With Claude Code the user's Claude Code
-//! settings decide, and with an agent outside KITE that agent decides. This file is for the engines that run
-//! KITE's own loop (the Claude API, another model): before a tool that changes something runs, the user is
+//! APERIT is an interface; what happens behind it belongs to the engine. With Claude Code the user's Claude Code
+//! settings decide, and with an agent outside APERIT that agent decides. This file is for the engines that run
+//! APERIT's own loop (the Claude API, another model): before a tool that changes something runs, the user is
 //! asked on the board with a decision card, unless they allowed that kind of work.
 
 use std::collections::HashSet;
@@ -43,7 +43,7 @@ impl Level {
     }
 }
 
-/// The saved level: KITE_PERMISSION, or `permission.txt` next to the program. Without either, ask.
+/// The saved level: APERIT_PERMISSION, or `permission.txt` next to the program. Without either, ask.
 pub fn level() -> Level {
     crate::sys::var("PERMISSION").ok().or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("permission.txt")).ok()).and_then(|s| Level::parse(&s)).unwrap_or(Level::Ask)
 }
@@ -135,7 +135,7 @@ mod tests {
         assert_eq!(kind_of("shell"), Some(Kind::Command));
         assert_eq!(kind_of("edit_file"), Some(Kind::Edit));
         assert_eq!(kind_of("read_file"), None);
-        assert_eq!(kind_of("note_write"), None); // KITE's own memory is not the user's files
+        assert_eq!(kind_of("note_write"), None); // APERIT's own memory is not the user's files
         assert!(needs_asking(Level::Ask, Kind::Command) && needs_asking(Level::Ask, Kind::Edit));
         assert!(needs_asking(Level::Edits, Kind::Command) && !needs_asking(Level::Edits, Kind::Edit));
         assert!(!needs_asking(Level::All, Kind::Command) && !needs_asking(Level::All, Kind::Edit));

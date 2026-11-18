@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "KITE"
+rootProject.name = "APERIT"
 include(":app")

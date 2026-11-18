@@ -66,12 +66,12 @@ pub struct Config {
     pub effort: String,
     /// Claude Code 엔진을 쓰는가 (API 를 직접 부르지 않고 이 컴퓨터의 Claude Code 에 맡긴다)
     pub cc: bool,
-    /// No model inside KITE: an agent outside drives the board (MCP or the protocol socket),
+    /// No model inside APERIT: an agent outside drives the board (MCP or the protocol socket),
     /// and what the user types or does goes out to it as events.
     pub external: bool,
     /// The agent is an AG-UI server at this address (`agui.rs`).
     pub agui: Option<crate::agui::Settings>,
-    /// KITE's own loop, with a model behind an OpenAI-compatible API (`openai.rs`).
+    /// APERIT's own loop, with a model behind an OpenAI-compatible API (`openai.rs`).
     pub openai: Option<crate::openai::Provider>,
 }
 
@@ -81,7 +81,7 @@ impl Config {
         let key = std::env::var("ANTHROPIC_API_KEY").ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).or_else(|| {
             std::fs::read_to_string(crate::sys::base_dir().join("key.txt")).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
         });
-        // KITE_DEMO 가 있으면 키가 있어도 시연 대본으로 돈다 (화면 확인용, API 비용 없음).
+        // APERIT_DEMO 가 있으면 키가 있어도 시연 대본으로 돈다 (화면 확인용, API 비용 없음).
         let key = if env("DEMO").is_some() { None } else { key };
         // 엔진: 프로그램 폴더의 engine.txt 에 claude-code 라고 적혀 있으면 Claude Code 에 맡긴다.
         let engine = env("ENGINE").or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("engine.txt")).ok().map(|s| s.trim().to_string()));
@@ -357,7 +357,7 @@ focus n3
 
 fn demo(turn_no: usize, send: &dyn Fn(Msg)) -> Result<Stats, String> {
     let started = Instant::now();
-    // 확인·소개용: KITE_DEMO_FILE 이 있으면 그 파일의 장면들(=== 줄로 나눔)을 쓴다.
+    // 확인·소개용: APERIT_DEMO_FILE 이 있으면 그 파일의 장면들(=== 줄로 나눔)을 쓴다.
     let custom: Vec<String> = crate::sys::var("DEMO_FILE")
         .ok()
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -368,7 +368,7 @@ fn demo(turn_no: usize, send: &dyn Fn(Msg)) -> Result<Stats, String> {
     std::thread::sleep(Duration::from_millis(500));
     let first_ms = started.elapsed().as_millis() as u64;
     let chars: Vec<char> = script.chars().collect();
-    // 소개 영상용: KITE_DEMO_LINE_MS 를 주면 줄마다 그만큼 쉬어서, 카드가 한 줄씩 채워지는 모습이 보이게 한다.
+    // 소개 영상용: APERIT_DEMO_LINE_MS 를 주면 줄마다 그만큼 쉬어서, 카드가 한 줄씩 채워지는 모습이 보이게 한다.
     let line_ms: u64 = crate::sys::var("DEMO_LINE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     for piece in chars.chunks(3) {
         send(Msg::Delta(piece.iter().collect()));

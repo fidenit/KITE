@@ -1,9 +1,9 @@
-//! The AG-UI engine: KITE is an AG-UI client and the agent is an AG-UI server (https://docs.ag-ui.com).
-//! This is the AG-UI binding of the KITE Protocol (protocol/SPEC.md 10.5).
+//! The AG-UI engine: APERIT is an AG-UI client and the agent is an AG-UI server (https://docs.ag-ui.com).
+//! This is the AG-UI binding of PATET (protocol/SPEC.md 10.5).
 //!
-//! For every turn KITE POSTs a `RunAgentInput` with the board, what the user did and said, the guide for
+//! For every turn APERIT POSTs a `RunAgentInput` with the board, what the user did and said, the guide for
 //! agents and one frontend tool (`screen`), then reads the agent's events as they stream in. Ops reach the
-//! board from the agent's text, from `screen` tool calls, or from `CUSTOM` events named `kite.ops`.
+//! board from the agent's text, from `screen` tool calls, or from `CUSTOM` events named `patet.ops`.
 
 use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
@@ -24,7 +24,7 @@ pub struct Settings {
     pub headers: Vec<(String, String)>,
 }
 
-/// KITE_AGUI_URL, or `agui.txt` next to the program: the address on the first line, then optional
+/// APERIT_AGUI_URL, or `agui.txt` next to the program: the address on the first line, then optional
 /// `Header-Name: value` lines (an Authorization header, for example).
 pub fn settings() -> Option<Settings> {
     if let Some(url) = crate::sys::var("AGUI_URL").ok().map(|u| u.trim().to_string()).filter(|u| !u.is_empty()) {
@@ -100,11 +100,11 @@ pub fn reset() {
     *SESSION.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
-/// The frontend tool KITE offers to the agent.
+/// The frontend tool APERIT offers to the agent.
 fn screen_tool() -> Value {
     json!({
         "name": "screen",
-        "description": "Edit the user's KITE board. `ops` holds board ops, one per line, applied in order. The result is `applied`, or the lines that were rejected or clipped with a reason each. The board is the answer to the user: there is no chat. The syntax and the card types are in the context entry \"KITE Protocol guide\".",
+        "description": "Edit the user's APERIT board. `ops` holds board ops, one per line, applied in order. The result is `applied`, or the lines that were rejected or clipped with a reason each. The board is the answer to the user: there is no chat. The syntax and the card types are in the context entry \"PATET guide\".",
         "parameters": { "type": "object", "properties": { "ops": { "type": "string", "description": "Ops, one per line." } }, "required": ["ops"] }
     })
 }
@@ -171,7 +171,7 @@ fn patch(state: &mut Value, ops: &Value) {
 }
 
 /// Text that is not an op, when the agent answered in prose: show it as the caption and a note, so that an
-/// agent that knows nothing of KITE still says something on the board.
+/// agent that knows nothing of APERIT still says something on the board.
 fn prose_as_ops(prose: &[String]) -> String {
     let text = prose.join(" ").split_whitespace().collect::<Vec<_>>().join(" ").replace('|', "/");
     let short: String = text.chars().take(78).collect();
@@ -200,7 +200,7 @@ pub fn run(set: &Settings, turn: &Turn, send: &dyn Fn(Msg)) -> Result<Stats, Str
     let mut all_prose: Vec<String> = Vec::new();
 
     for _ in 0..MAX_ROUNDS {
-        state["kite"] = json!({ "version": crate::lang::VERSION, "board": turn.board, "events": events_for_state, "renderer": crate::mcp::description() });
+        state["patet"] = json!({ "version": crate::lang::VERSION, "board": turn.board, "events": events_for_state, "renderer": crate::mcp::description() });
         events_for_state.clear(); // told once
         let body = json!({
             "threadId": thread,
@@ -208,7 +208,7 @@ pub fn run(set: &Settings, turn: &Turn, send: &dyn Fn(Msg)) -> Result<Stats, Str
             "state": state,
             "messages": messages,
             "tools": [screen_tool()],
-            "context": [{ "description": "KITE Protocol guide: how to write the user's board. Your whole answer is board ops, one per line; do not write prose.", "value": crate::mcp::GUIDE }],
+            "context": [{ "description": "PATET guide: how to write the user's board. Your whole answer is board ops, one per line; do not write prose.", "value": crate::mcp::GUIDE }],
             "forwardedProps": {},
         });
         let mut req = agent.post(&set.url).header("content-type", "application/json").header("accept", "text/event-stream");
@@ -312,7 +312,8 @@ pub fn run(set: &Settings, turn: &Turn, send: &dyn Fn(Msg)) -> Result<Stats, Str
                     answered.push(s("toolCallId"));
                     send(Msg::Activity(String::new()));
                 }
-                "CUSTOM" if v["name"] == "kite.ops" => {
+                // `kite.ops` is the name from before the protocol was called PATET.
+                "CUSTOM" if v["name"] == "patet.ops" || v["name"] == "kite.ops" => {
                     let ops = match &v["value"] {
                         Value::String(t) => t.clone(),
                         Value::Array(a) => a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"),
@@ -384,6 +385,7 @@ pub fn run(set: &Settings, turn: &Turn, send: &dyn Fn(Msg)) -> Result<Stats, Str
         m["content"] = turn.remembered().into();
     }
     if let Some(obj) = state.as_object_mut() {
+        obj.remove("patet");
         obj.remove("kite");
     }
     if let Some(s) = SESSION.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
@@ -461,7 +463,7 @@ mod tests {
                 json!({ "type": "TEXT_MESSAGE_END", "messageId": "m1" }),
                 json!({ "type": "STATE_SNAPSHOT", "snapshot": { "plan": { "step": 1 } } }),
                 json!({ "type": "STATE_DELTA", "delta": [{ "op": "replace", "path": "/plan/step", "value": 2 }, { "op": "add", "path": "/done", "value": [] }, { "op": "add", "path": "/done/-", "value": "a" }] }),
-                json!({ "type": "CUSTOM", "name": "kite.ops", "value": ["card k1 note ws One", "set k1 text hi"] }),
+                json!({ "type": "CUSTOM", "name": "patet.ops", "value": ["card k1 note ws One", "set k1 text hi"] }),
                 json!({ "type": "TOOL_CALL_START", "toolCallId": "c1", "toolCallName": "search" }),
                 json!({ "type": "TOOL_CALL_END", "toolCallId": "c1" }),
                 json!({ "type": "TOOL_CALL_RESULT", "messageId": "m2", "toolCallId": "c1", "content": "found" }),
@@ -485,8 +487,8 @@ mod tests {
         let first = &got[0];
         let text = first["messages"][0]["content"].as_str().unwrap();
         assert!(text.contains("<board>\ntopic old Old\n</board>") && text.contains("<events>\nuser set k9 chosen o1\n</events>") && text.ends_with("<input>compare the venues</input>"), "{text}");
-        assert_eq!(first["state"]["kite"]["board"], "topic old Old\n");
-        assert_eq!(first["state"]["kite"]["events"][0], "user set k9 chosen o1");
+        assert_eq!(first["state"]["patet"]["board"], "topic old Old\n");
+        assert_eq!(first["state"]["patet"]["events"][0], "user set k9 chosen o1");
         assert_eq!(first["tools"][0]["name"], "screen");
         assert!(first["context"][0]["value"].as_str().unwrap().contains("card <id> <kind> <topic>"));
         assert!(first["threadId"].as_str().unwrap().starts_with("kite-") && first["runId"] != got[1]["runId"]);
@@ -500,7 +502,7 @@ mod tests {
         assert_eq!((m[2]["role"].as_str(), m[2]["toolCallId"].as_str(), m[2]["content"].as_str()), (Some("tool"), Some("c2"), Some("applied")));
         assert_eq!(second["state"]["plan"]["step"], 2);
         assert_eq!(second["state"]["done"][0], "a");
-        assert!(second["state"]["kite"]["events"].as_array().unwrap().is_empty(), "events are told once");
+        assert!(second["state"]["patet"]["events"].as_array().unwrap().is_empty(), "events are told once");
         assert_eq!(second["threadId"], first["threadId"]);
     }
 
@@ -527,7 +529,7 @@ mod tests {
         let _g = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
         reset();
         let says = |t: &str| vec![json!({ "type": "TEXT_MESSAGE_CONTENT", "messageId": "m", "delta": t }), json!({ "type": "RUN_FINISHED" })];
-        // An agent that knows nothing of KITE answers in sentences.
+        // An agent that knows nothing of APERIT answers in sentences.
         let (url, _) = agent(vec![says("Sure! Here is a plan.\nIt has | two steps.")]);
         let (out, send) = collect("applied");
         run(&Settings { url, headers: vec![] }, &Turn::default(), &send).unwrap();

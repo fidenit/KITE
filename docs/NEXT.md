@@ -1,5 +1,13 @@
 # 다음 작업
 
+## 2026-11-19: 이름을 바꿈 — 앱은 APERIT, 규격은 PATET
+
+- 규격: **PATET** 0.4, 독립 저장소 https://github.com/fidenit/patet (로컬 `C:\Users\LYS\patet`). 이 저장소의 `protocol/`은 그 사본이다(`tools/vendor_patet.py`로 다시 복사, 여기서 고치지 말 것).
+- 앱: **APERIT** (저장소 fidenit/aperit). 실행 파일 `aperit.exe`, 설정 `APERIT_*`(옛 `KITE_*`도 읽음), 옛 머리글 `# kite-protocol`로 저장된 보드도 읽음, MCP 서버 이름 `aperit`.
+- 그대로 둔 것(바꾸면 기존 데이터·설치가 끊김): 안드로이드 패키지 `com.fidenit.kite`와 설정 저장소 이름, 기억 보관함의 태그 `kite/…`, 작업 브랜치 접두어 `kite/`, 소개 영상 파일 이름, 비공개 서버 저장소 kite-cloud.
+- 실사용 설치본은 아직 `portable\KITE`에 있다. `.\run.ps1 pack`을 한 번 돌리면 `portable\APERIT`으로 통째로 옮겨진다(돌리기 전에는 옛 실행 파일 그대로).
+- 아래의 옛 기록은 당시 이름(KITE)으로 남긴다.
+
 ## 2026-11-18: 규격과 제품을 나눔 (0.4.0 준비, 아직 릴리스 전)
 
 방향: **KITE Protocol**(AI가 화면을 바로 만드는 공개 규격)과 **KITE / KITE Pro**(그 규격으로 만든 첫 제품)를 따로 본다. 릴리스와 기본 글자는 영어, 앱에서 언어를 고른다.

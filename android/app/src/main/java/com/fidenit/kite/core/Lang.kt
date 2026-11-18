@@ -1,4 +1,4 @@
-// The line language: one line is one op, applied the moment the line ends. The KITE Protocol (protocol/SPEC.md)
+// The line language: one line is one op, applied the moment the line ends. PATET (protocol/SPEC.md)
 // in Kotlin, ported from the reference implementation protocol/rust/src/lang.rs.
 package com.fidenit.kite.core
 

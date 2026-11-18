@@ -4,7 +4,7 @@
 //! 키가 없으면 말하기는 OS 의 기본 음성으로 돌아가고, 받아쓰기(마이크 입력)는 쓸 수 없다.
 //!
 //!   voice.txt       (선택) 쓸 목소리의 voice_id
-//!   말하기 모델      환경 변수 KITE_TTS_MODEL (기본 eleven_v4_turbo: 실시간 대화용, 한국어 지원)
+//!   말하기 모델      환경 변수 APERIT_TTS_MODEL (기본 eleven_v4_turbo: 실시간 대화용, 한국어 지원)
 //!   받아쓰기 모델    scribe_v3 (안 되면 scribe_v2)
 
 use std::io::Read;

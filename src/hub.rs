@@ -1,4 +1,4 @@
-//! What happened on the board, for programs outside KITE that want to follow it
+//! What happened on the board, for programs outside APERIT that want to follow it
 //! (the protocol socket's `watch`, the MCP tool `events`). See protocol/SPEC.md, "Events".
 //!
 //! Every accepted op and every line the user types is published here with a running number.

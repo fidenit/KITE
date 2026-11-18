@@ -106,7 +106,7 @@ pub enum ToolOut {
 }
 
 /// Run one tool the model asked for. Tools that live on the screen side (the board, browser cards, the unseen
-/// browser) are asked of the screen thread through `send`. Shared by every engine that runs KITE's own loop.
+/// browser) are asked of the screen thread through `send`. Shared by every engine that runs APERIT's own loop.
 pub fn use_tool(role: &Role, name: &str, input: &Value, send: &dyn Fn(Msg)) -> ToolOut {
     let text = |t: (String, bool)| ToolOut::Text(t.0, t.1);
     if let Some(raw) = input["__invalid_json"].as_str() {

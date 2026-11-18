@@ -1,4 +1,4 @@
-# KITE 소개 영상 편집: 녹화한 토막(a, b, e, d)을 이어 붙이고, 카메라 확대·커서·자막·챕터 제목을 입혀 1080p MP4 로 만든다.
+# APERIT 소개 영상 편집: 녹화한 토막(a, b, e, d)을 이어 붙이고, 카메라 확대·커서·자막·챕터 제목을 입혀 1080p MP4 로 만든다.
 # 녹화 때 남긴 .jsonl(프레임마다 카드 자리, 마우스 자리, 지금 일)을 읽어 어디를 확대할지와 자막 시각을 정한다.
 #   python edit.py 출력.mp4 [--preview] [--dark]      (--dark: 어두운 화면으로 녹화한 토막일 때)
 import bisect
@@ -348,7 +348,7 @@ def build():
 
     seg_a = Seg(A, 0.0, a_end, cam_a, [
         (a_ask + 0.2, a_busy - 0.1, "Just say what you need.", "Type it, or say it out loud."),
-        (a_busy + 0.2, a_task - 0.2, "KITE lays it out on the screen.", "No wall of text. A board you can act on."),
+        (a_busy + 0.2, a_task - 0.2, "APERIT lays it out on the screen.", "No wall of text. A board you can act on."),
         (a_task + 0.1, a_answer + 0.2, "What needs you comes to your side.", None),
         (a_after + 0.1, a_end - 0.4, "One tap, and the board catches up.", None),
     ], speed=[(a_ask + 0.3, a_busy - 0.2, 1.4)], w=3.6)

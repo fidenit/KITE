@@ -22,7 +22,7 @@ android {
             dimension = "track"
             buildConfigField("boolean", "PRO", "false")
             buildConfigField("String", "RELAY_URL", "\"\"")
-            resValue("string", "app_name", "KITE")
+            resValue("string", "app_name", "APERIT")
         }
         create("pro") {
             dimension = "track"
@@ -31,7 +31,7 @@ android {
             // 중계 서버 주소는 빌드할 때 정한다: ./gradlew -PkiteRelayUrl=https://... assembleProDebug
             val relay = (project.findProperty("kiteRelayUrl") as String?) ?: "http://10.0.2.2:8787"
             buildConfigField("String", "RELAY_URL", "\"$relay\"")
-            resValue("string", "app_name", "KITE Pro")
+            resValue("string", "app_name", "APERIT Pro")
         }
     }
     buildTypes {

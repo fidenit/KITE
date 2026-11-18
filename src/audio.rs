@@ -75,7 +75,7 @@ impl Player {
 
     /// 16비트 한 채널 소리를 줄 끝에 붙인다.
     pub fn push(&self, pcm: &[i16], rate: u32) {
-        // KITE_MUTE: 확인용. 소리는 내지 않되 재생 시간은 그대로 흐르게 한다.
+        // APERIT_MUTE: 확인용. 소리는 내지 않되 재생 시간은 그대로 흐르게 한다.
         let gain = if crate::sys::var("MUTE").is_ok() { 0.0 } else { 1.0 };
         let mono: Vec<f32> = pcm.iter().map(|s| *s as f32 / 32768.0 * gain).collect();
         let out = resample(&mono, rate, self.rate);

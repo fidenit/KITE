@@ -1,4 +1,4 @@
-// The board and its ops: the KITE Protocol (protocol/SPEC.md) in Kotlin, ported from the reference
+// The board and its ops: PATET (protocol/SPEC.md) in Kotlin, ported from the reference
 // implementation protocol/rust/src/core.rs. The card types (PARTS), the checks, the codes and the messages
 // must stay the same as there; the tests run the protocol's conformance cases against this file.
 package com.fidenit.kite.core

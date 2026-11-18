@@ -26,7 +26,7 @@ class Store(context: Context) {
         operator fun setValue(self: Any?, p: KProperty<*>, v: String) = prefs.edit().putString(p.name, v).apply()
     }
 
-    // 엔진: api(폰에서 Claude API 를 바로 부른다) 또는 ssh(내 서버의 Claude Code). KITE Pro 는 늘 api(중계 서버).
+    // 엔진: api(폰에서 Claude API 를 바로 부른다) 또는 ssh(내 서버의 Claude Code). APERIT Pro 는 늘 api(중계 서버).
     var engineKind by Text("api")
 
     // Claude API (무료 앱: 사용자의 키)
@@ -34,7 +34,7 @@ class Store(context: Context) {
     var model by Text("claude-opus-5-5")
     var apiEffort by Text("low")
 
-    // KITE Pro: 중계 서버가 이 기기에 내준 토큰 (구독을 확인하면 받는다)
+    // APERIT Pro: 중계 서버가 이 기기에 내준 토큰 (구독을 확인하면 받는다)
     var relayToken by Text()
 
     // 서버

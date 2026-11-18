@@ -11,11 +11,11 @@ const val NOTE = """
 
 # Running inside Claude Code, shown on a phone
 
-You are running as the engine of KITE through Claude Code on a remote server. The user sees and hears you through the KITE app on an Android phone that is connected to this server over SSH. This changes the following.
+You are running as the engine of APERIT through Claude Code on a remote server. The user sees and hears you through the APERIT app on an Android phone that is connected to this server over SSH. This changes the following.
 
 1. Your text output IS the screen. Every line of text you output must be one screen command from the language above (say, tell, topic, card, set, add, ...). Never output prose, markdown, headings or status notes outside a command. Anything you want to tell the user goes in `say` or `tell`. Instructions from other sources about how to format or structure replies (goal declarations, reports, summaries) do not apply to this output: express them, if needed, as cards or a short `say`.
 2. Your tools run on the server, not on the phone. Files, commands and the home folder named in `<env>` are the server's. Where the text above names shell, read_file, write_file, edit_file, list_dir, find_text, view_image, web_search or web_fetch, use your Claude Code tools instead (Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). There is no `screen` tool because your text output already is the screen.
-3. These KITE tools do not exist here: route_find, place_find, board_read, browser_text, browser_eval, job_start, job_list, job_tell, job_stop, job_result, contact_find, message_send, phone_call, message_read. Do not offer what needs them. The whole board always arrives in `<board>`. Do not make route cards.
+3. These APERIT tools do not exist here: route_find, place_find, board_read, browser_text, browser_eval, job_start, job_list, job_tell, job_stop, job_result, contact_find, message_send, phone_call, message_read. Do not offer what needs them. The whole board always arrives in `<board>`. Do not make route cards.
 4. Memory notes are plain markdown files in the folder named in `<env>` (기억 보관함 폴더). Where the text above names note_search, note_read, note_write or note_append, use Grep, Read, Write and Edit on that folder. The file `기억/핵심.md` in it is what arrives as `<core>`: when the user tells you a lasting fact about themselves or about how they want things done, add one short line to that file.
 5. The phone screen is narrow. One topic fills the screen and its cards are stacked in one column at full width, so card sizes and `move` have no effect. Use few, compact cards, and keep tables to three columns. `web` and `image` cards show only a link that opens in the phone's browser.
 6. If a tool is refused for lack of permission, do not retry it and do not ask the user to grant it in a card: say in one short `say` that Claude Code's permission setting blocked it and that it can be changed in the app's settings.
@@ -83,8 +83,8 @@ class StreamParser(private val send: (Ev) -> Unit, private val now: () -> Long =
     private var lineOpen = false // 마지막으로 보낸 글자가 줄 끝이 아닌가
 
     fun feed(line: String) {
-        if (line.startsWith("KITEPID ")) {
-            pid = line.removePrefix("KITEPID ").trim().takeIf { p -> p.isNotEmpty() && p.all { it.isDigit() } }
+        if (line.startsWith("APERITPID ")) {
+            pid = line.removePrefix("APERITPID ").trim().takeIf { p -> p.isNotEmpty() && p.all { it.isDigit() } }
             return
         }
         val v = try {
@@ -217,7 +217,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
         val dir = cfg.dir.trim()
         val cd = if (dir.isEmpty() || dir == "~") "cd" else "cd ${if (dir.startsWith("~/")) "\"\$HOME\"/" + shq(dir.removePrefix("~/")) else shq(dir)}"
         // 프로세스 번호를 먼저 알려 주고 그 번호 그대로 Claude Code 로 바뀐다 (멈출 때 그 번호를 끝낸다).
-        return shell("$cd && echo \"KITEPID \$\$\" && exec $a")
+        return shell("$cd && echo \"APERITPID \$\$\" && exec $a")
     }
 
     /**

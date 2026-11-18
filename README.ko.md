@@ -1,8 +1,8 @@
-# KITE
+# APERIT
 
-**Kinetic Interactive Task Environment** · [English](README.md)
+*aperit* (라틴어): 열어 보인다 · [English](README.md)
 
-> **KITE는 APERIT으로 이름이 바뀝니다** (라틴어 *aperit*: 열어 보인다). 저장소 이름은 이미 바뀌었고, 프로그램·파일·설정의 이름은 다음 릴리스까지 KITE로 남습니다. 바탕이 되는 규격은 [PATET](https://github.com/fidenit/patet)입니다.
+> **APERIT은 0.3까지 KITE라는 이름이었습니다.** 옛 이름으로 만든 설정·키·보드는 그대로 동작합니다. 바탕이 되는 규격은 [PATET](https://github.com/fidenit/patet)입니다.
 
 > 글자로 가득 찬 화면은 AI를 쓰는 가장 나쁜 방법이다.
 
@@ -14,9 +14,9 @@ AI의 답은 매번 긴 글로 쏟아진다. 대부분은 읽히지 않는다. �
 
 사람들에게 필요한 것은 한곳이다. 모든 대화와 모든 주제가 거기에 있고, 텍스트의 쓰나미 대신 실제로 필요한 정보가 보기 좋게 다듬어져서, 말하는 대로 바뀌는 실시간 적응형 인터페이스.
 
-KITE가 그 한곳이다. 필요한 것을 말하면 AI가 화면을 직접 짠다. 일정은 시간표로, 여행은 경로로, 선택은 눌러서 고르는 카드로 보여 준다.
+APERIT가 그 한곳이다. 필요한 것을 말하면 AI가 화면을 직접 짠다. 일정은 시간표로, 여행은 경로로, 선택은 눌러서 고르는 카드로 보여 준다.
 
-이름에는 뜻이 두 겹이다. KITE는 **Kinetic Interactive Task Environment**, 말하는 대로 움직이는 작업 공간이다. 다시 읽으면 화면이 지키는 원칙이기도 하다. **Keep Information To Essentials**, 정보를 꼭 필요한 것만 남긴다.
+이름이 곧 하는 일이다. *Aperit*은 라틴어로 "열어 보인다"는 뜻이다. 답을 문단 속에 묻지 않고 눈앞에 펼쳐 보인다. AI가 그 화면을 적는 언어는 [PATET](https://github.com/fidenit/patet), "훤히 드러나 있다"이다. 꼭 필요한 것만 앞에 남긴다.
 
 세상에 없던 도구라서 새로 만들었다. 이것으로 모두가 덜 지치고 더 많은 것을 해내기를 바란다.
 
@@ -25,13 +25,13 @@ KITE가 그 한곳이다. 필요한 것을 말하면 AI가 화면을 직접 짠�
 | | 무엇인가 | 어디에 |
 |---|---|---|
 | **PATET** | AI가 화면을 만들고 고칠 때 쓰는 공개 언어. 한 줄에 조작 하나, 카드 14종, 사용자의 답도 같은 언어로 돌아온다. 어떤 모델이나 에이전트든 쓸 수 있고 어떤 앱이든 그릴 수 있다 | [protocol/](https://github.com/fidenit/patet) (영어) |
-| **KITE**, **KITE Pro** | 이 규격으로 만든 첫 제품. 아래에서 설명하는 Windows·macOS 앱과 안드로이드 앱 | 이 문서, [android/](android) |
+| **APERIT**, **APERIT Pro** | 이 규격으로 만든 첫 제품. 아래에서 설명하는 Windows·macOS 앱과 안드로이드 앱 | 이 문서, [android/](android) |
 
-![FIDENIT의 KITE: 글자의 벽이 걷히고 살아 있는 판이 나타난다. 요청 한 번으로 워크숍의 경로, 일정, 예산, 준비 목록이 놓이고, 컨펌이 필요한 한 가지는 왼쪽에 늘 보여 준다.](docs/images/hero.gif)
+![FIDENIT의 APERIT: 글자의 벽이 걷히고 살아 있는 판이 나타난다. 요청 한 번으로 워크숍의 경로, 일정, 예산, 준비 목록이 놓이고, 컨펌이 필요한 한 가지는 왼쪽에 늘 보여 준다.](docs/images/hero.gif)
 
 **2분 영상으로 보기.** 요청 하나가 처음부터 끝까지 흘러가는 모습을 본 뒤, 하나씩 가까이 본다. 내용에 맞게 만들어지는 카드, 긴 프로젝트에서 다음 결정을 하나씩 늘 보여 주는 모습, 판을 자유롭게 다루는 모습이다. (영상은 영어 화면이다.)
 
-[![2분 영상 보기. 영상의 한 장면: 몇 주째 이어지는 프로젝트에서 다음 결정이 왼쪽에 기다리고, 판은 그 결정이 속한 부분으로 옮겨 가 있다.](docs/images/promo.jpg)](https://github.com/fidenit/KITE/releases/download/v0.3.0/KITE-promo.mp4)
+[![2분 영상 보기. 영상의 한 장면: 몇 주째 이어지는 프로젝트에서 다음 결정이 왼쪽에 기다리고, 판은 그 결정이 속한 부분으로 옮겨 가 있다.](docs/images/promo.jpg)](https://github.com/fidenit/aperit/releases/download/v0.3.0/KITE-promo.mp4)
 
 ## 무엇이 다른가
 
@@ -73,9 +73,9 @@ KITE가 그 한곳이다. 필요한 것을 말하면 AI가 화면을 직접 짠�
 
 ### Windows: 받아서 실행
 
-1. [Releases](https://github.com/fidenit/KITE/releases)에서 `KITE-0.3.0-windows-x64.zip`을 받는다.
+1. [Releases](https://github.com/fidenit/aperit/releases)에서 `APERIT-0.3.0-windows-x64.zip`을 받는다.
 2. 아무 곳에나 푼다.
-3. `kite.exe`를 실행한다.
+3. `aperit.exe`를 실행한다.
 
 설치는 없다. 처음 켜면 키를 묻는 창이 뜬다. 건너뛰면 데모로 남는다.
 
@@ -87,7 +87,7 @@ KITE가 그 한곳이다. 필요한 것을 말하면 AI가 화면을 직접 짠�
 | macOS | rustup으로 Rust, Xcode 명령줄 도구 | `./run.sh` |
 | Linux | 아직 지원하지 않는다(아래 참고) | |
 
-`run.ps1`과 `run.sh`는 빌드해서 바로 실행한다. 뒤에 `test`를 붙이면 테스트, `pack`을 붙이면 들고 다닐 폴더(`portable/KITE`)를 만든다. 자세한 순서와 코드 구조는 [docs/DEVELOPING.md](docs/DEVELOPING.md)(영어)에 있다.
+`run.ps1`과 `run.sh`는 빌드해서 바로 실행한다. 뒤에 `test`를 붙이면 테스트, `pack`을 붙이면 들고 다닐 폴더(`portable/APERIT`)를 만든다. 자세한 순서와 코드 구조는 [docs/DEVELOPING.md](docs/DEVELOPING.md)(영어)에 있다.
 
 Linux: GTK와 WebKit 라이브러리(`glib-sys`)가 없는 컴퓨터에서는 빌드가 거기서 멈춘다. 말하기, 기억 폴더 열기, 전화 도구도 macOS와 Windows 기준으로 짜여 있다. Linux 지원은 열려 있는 숙제다.
 
@@ -98,30 +98,30 @@ Linux: GTK와 WebKit 라이브러리(`glib-sys`)가 없는 컴퓨터에서는 �
 | 엔진 | 필요한 것 | 되는 것 |
 |---|---|---|
 | 데모 | 없음 | 준비된 장면만. 키 없이 시작한다 |
-| Claude API | [Claude API 키](https://console.anthropic.com/settings/keys). 요금은 본인 계정에 청구된다 | KITE의 기능 전부. **키**에 넣거나, 환경 변수 `ANTHROPIC_API_KEY`, 또는 프로그램 옆 `key.txt`에 적는다 |
+| Claude API | [Claude API 키](https://console.anthropic.com/settings/keys). 요금은 본인 계정에 청구된다 | APERIT의 기능 전부. **키**에 넣거나, 환경 변수 `ANTHROPIC_API_KEY`, 또는 프로그램 옆 `key.txt`에 적는다 |
 | Claude Code | [Claude Code](https://claude.com/claude-code)가 깔려 있고 로그인된 상태. API 키는 필요 없다 | 전부. Claude Code의 로그인, `CLAUDE.md`, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용된다 |
-| 다른 모델 | OpenAI 호환 주소: OpenAI, Ollama·LM Studio의 로컬 모델, OpenRouter | KITE 자체 엔진을 그 모델로 돌린다. 웹 검색은 Claude에서만 된다 |
-| 내 에이전트 | MCP 또는 AG-UI를 쓰는 에이전트 | 보드를 그 에이전트의 화면으로 쓴다. KITE 안의 모델은 돌지 않는다 |
+| 다른 모델 | OpenAI 호환 주소: OpenAI, Ollama·LM Studio의 로컬 모델, OpenRouter | APERIT 자체 엔진을 그 모델로 돌린다. 웹 검색은 Claude에서만 된다 |
+| 내 에이전트 | MCP 또는 AG-UI를 쓰는 에이전트 | 보드를 그 에이전트의 화면으로 쓴다. APERIT 안의 모델은 돌지 않는다 |
 
-**Claude Code를 엔진으로 쓰기.** KITE는 API를 직접 부르는 대신 턴마다 Claude Code에 맡긴다. 파일·명령·웹 작업은 Claude Code의 도구로 한다. KITE 자체 도구(경로 지도, 기억 노트, 판 읽기, 작업자)는 KITE 안의 작은 로컬 MCP 서버로 내주고, 작업자와 기억 정리도 Claude Code를 거쳐 돈다. Claude Code가 자기 지시문을 함께 보내기 때문에 API 키 방식보다 턴당 토큰이 더 든다. 기본은 Claude Code에서 허용해 둔 일만 하고, 같은 창에서 파일 수정이나 전부를 허용할 수 있다. `--model sonnet` 같은 Claude Code 옵션은 프로그램 폴더의 `claude-args.txt`에 적는다.
+**Claude Code를 엔진으로 쓰기.** APERIT는 API를 직접 부르는 대신 턴마다 Claude Code에 맡긴다. 파일·명령·웹 작업은 Claude Code의 도구로 한다. APERIT 자체 도구(경로 지도, 기억 노트, 판 읽기, 작업자)는 APERIT 안의 작은 로컬 MCP 서버로 내주고, 작업자와 기억 정리도 Claude Code를 거쳐 돈다. Claude Code가 자기 지시문을 함께 보내기 때문에 API 키 방식보다 턴당 토큰이 더 든다. 기본은 Claude Code에서 허용해 둔 일만 하고, 같은 창에서 파일 수정이나 전부를 허용할 수 있다. `--model sonnet` 같은 Claude Code 옵션은 프로그램 폴더의 `claude-args.txt`에 적는다.
 
-**두 번째 키는 선택이다.** [TypeSafe AI](https://typesafe.ai)의 Jev 키(**키** 창, 또는 `TYPESAFE_API_KEY`). Jev는 글을 쓰지 않고 판단만 하는 작고 빠른 모델이다. 넣으면 말이 어느 주제에 속하는지 미리 고르고, 중요한 카드를 앞에 놓고, 겹치는 주제를 정리하고, 옛 대화에서 필요한 것만 골라 온다. 없어도 KITE는 그대로 동작한다.
+**두 번째 키는 선택이다.** [TypeSafe AI](https://typesafe.ai)의 Jev 키(**키** 창, 또는 `TYPESAFE_API_KEY`). Jev는 글을 쓰지 않고 판단만 하는 작고 빠른 모델이다. 넣으면 말이 어느 주제에 속하는지 미리 고르고, 중요한 카드를 앞에 놓고, 겹치는 주제를 정리하고, 옛 대화에서 필요한 것만 골라 온다. 없어도 APERIT는 그대로 동작한다.
 
 키, 판, 기억 보관함은 모두 프로그램 폴더 안에 있다. 폴더를 옮기면 전부 따라간다.
 
 ### 내 에이전트로 쓰기
 
-KITE는 [PATET](https://github.com/fidenit/patet)을 쓰는 것이면 무엇이든 그린다. 에이전트가 Claude일 필요도, 에이전트를 고칠 필요도 없다.
+APERIT는 [PATET](https://github.com/fidenit/patet)을 쓰는 것이면 무엇이든 그린다. 에이전트가 Claude일 필요도, 에이전트를 고칠 필요도 없다.
 
 **MCP를 쓰는 에이전트** (Claude Code, Cursor, 직접 만든 것):
 
-1. KITE에서 **키** → **내 에이전트** → **저장**.
+1. APERIT에서 **키** → **내 에이전트** → **저장**.
 2. 다시 **키** → **Claude Code 명령 복사**를 눌러 터미널에서 실행한다 (다른 클라이언트는 **설정(JSON) 복사**).
 3. 에이전트에게 보드에 답하라고 한다. 도구는 넷이다: `guide`, `board_read`, `screen`, `events`.
 
 **AG-UI 프레임워크로 만든 에이전트** (LangGraph, CrewAI, Pydantic AI 등): **키** → **내 에이전트** → **AG-UI**에 에이전트 주소를 적는다.
 
-**스크립트:** `KITE_PROTOCOL_PORT=7878`로 KITE를 띄우고 그 포트에 줄을 쓴다.
+**스크립트:** `APERIT_PROTOCOL_PORT=7878`로 APERIT를 띄우고 그 포트에 줄을 쓴다.
 
 ```
 topic ws 팀 워크숍
@@ -137,13 +137,13 @@ add k2 o2 가평 | 가깝고 저렴함
 
 ## 실행하기 전에 알아 둘 것
 
-- **KITE는 인터페이스이고, 컴퓨터에서 무슨 일이 일어나는지는 엔진이 정한다.** 묻지 않고 해도 되는 일은 **키** 창에서 엔진마다 정한다.
+- **APERIT는 인터페이스이고, 컴퓨터에서 무슨 일이 일어나는지는 엔진이 정한다.** 묻지 않고 해도 되는 일은 **키** 창에서 엔진마다 정한다.
 
   | 엔진 | 명령 실행과 파일 수정 |
   |---|---|
   | Claude API, 다른 모델 | 먼저 묻는다. "내 차례"에 카드가 온다 (이번만 허용 / 이번 실행 동안 모두 허용 / 하지 않기). 파일 수정만, 또는 전부를 허용해 둘 수 있다 |
   | Claude Code | Claude Code의 권한 설정을 따른다. 파일 수정만, 또는 전부를 허용해 둘 수 있다 |
-  | 내 에이전트 | 그 에이전트가 하는 대로다. KITE는 보드만 그린다 |
+  | 내 에이전트 | 그 에이전트가 하는 대로다. APERIT는 보드만 그린다 |
 
   파일 읽기와 웹 검색은 묻지 않는다.
 - **쓰는 만큼 돈이 든다.** 기본으로 가장 뛰어난 Claude 모델을 쓴다. 한 턴에 보내는 양은 Claude Code의 한 턴과 비슷하다. 실측한 내용은 [docs/COSTS.md](docs/COSTS.md)(영어)에 있다.
@@ -159,13 +159,13 @@ add k2 o2 가평 | 가깝고 저렴함
 
 **데스크톱 앱**은 Rust와 [egui](https://github.com/emilk/egui)로 만들었고 웹 화면은 없다. Claude 엔진에서는 모델의 출력이 곧 조작 줄이고, 줄이 도착하는 대로 반영된다. 그 판을 같은 언어로 다시 적은 것이 다음 턴에 모델이 보는 전부다. 빌드 방법, 코드의 구조, 새 카드 종류를 더하는 법은 [docs/DEVELOPING.md](docs/DEVELOPING.md)(영어)에 있다.
 
-**안드로이드 앱**(내 키로 쓰는 KITE, 아무것도 넣지 않는 KITE Pro)은 [android/](android)에 있고 코드는 하나다.
+**안드로이드 앱**(내 키로 쓰는 APERIT, 아무것도 넣지 않는 APERIT Pro)은 [android/](android)에 있고 코드는 하나다.
 
 코드의 대부분은 AI(Claude)와 함께 썼다. 구상과 설계의 결정은 사람이 했다.
 
 ## 라이선스
 
-[Apache License 2.0](LICENSE). 다시 배포할 때는 [NOTICE](NOTICE) 파일을 함께 둔다. "KITE"라는 이름은 파생 제품의 이름으로 쓸 수 없다.
+[Apache License 2.0](LICENSE). 다시 배포할 때는 [NOTICE](NOTICE) 파일을 함께 둔다. "APERIT"라는 이름은 파생 제품의 이름으로 쓸 수 없다.
 
 ---
 

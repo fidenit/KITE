@@ -100,7 +100,7 @@ fun SettingsScreen(vm: KiteViewModel, onBack: () -> Unit) {
 
         if (BuildConfig.PRO) {
             Section("구독")
-            Hint("KITE Pro 는 키를 넣지 않아도 바로 씁니다. AI 사용량은 매달 구독에 들어 있습니다.")
+            Hint("APERIT Pro 는 키를 넣지 않아도 바로 씁니다. AI 사용량은 매달 구독에 들어 있습니다.")
             Pill("이번 달 사용량 보기") { scope.launch { usage = vm.usage() } }
             if (usage.isNotEmpty()) Text(usage, color = if (usage.startsWith("실패")) C.red else C.green, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
             // 결제 연결 전 시험용: 개발용 빌드에서만 보인다.
@@ -179,7 +179,7 @@ private fun ServerSettings(vm: KiteViewModel) {
     var keyVersion by remember { mutableStateOf(0) }
     Column {
         Section("서버")
-        Hint("KITE 는 이 서버에 SSH 로 붙어서 그 서버의 Claude Code 를 엔진으로 씁니다. 서버의 Claude Code 로그인, CLAUDE.md, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용됩니다.")
+        Hint("APERIT 는 이 서버에 SSH 로 붙어서 그 서버의 Claude Code 를 엔진으로 씁니다. 서버의 Claude Code 로그인, CLAUDE.md, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용됩니다.")
         Field("주소 (IP 또는 도메인)", s.host) { s.host = it.trim() }
         Field("포트", s.port, number = true) { s.port = it.trim() }
         Field("계정", s.user) { s.user = it.trim() }

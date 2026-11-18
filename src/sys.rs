@@ -9,7 +9,7 @@ pub fn base_dir() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_default();
     let dir = exe.parent().map(PathBuf::from).unwrap_or_default();
     let name = |p: &PathBuf| p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-    // Mac 의 .app 묶음: 실행 파일은 KITE.app/Contents/MacOS 안에 있다. 키와 data, vault 는 KITE.app 옆에 둔다.
+    // Mac 의 .app 묶음: 실행 파일은 APERIT.app/Contents/MacOS 안에 있다. 키와 data, vault 는 APERIT.app 옆에 둔다.
     if name(&dir) == "MacOS" {
         if let Some(app) = dir.parent().and_then(|c| c.parent()) {
             if app.extension().map(|e| e == "app").unwrap_or(false) {
@@ -31,16 +31,17 @@ pub fn base_dir() -> PathBuf {
     dir
 }
 
-/// A setting given through the environment: `KITE_<name>`. The names from before the rename
-/// (`KITE_<name>`) are still read, so old scripts keep working.
+/// A setting given through the environment: `APERIT_<name>`. The names from before the rename
+/// (`APERIT_<name>`) are still read, so old scripts keep working.
 pub fn var(name: &str) -> Result<String, std::env::VarError> {
-    std::env::var(format!("KITE_{name}")).or_else(|_| std::env::var(format!("KITE_{name}")))
+    // Settings made when the app was called KITE keep working.
+    std::env::var(format!("APERIT_{name}")).or_else(|_| std::env::var(format!("KITE_{name}")))
 }
 
 /// Is the language English? English is the default; a choice made in the app is kept in data/lang.txt.
 static ENGLISH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
-/// Are the instructions for the model the Korean ones? They are English unless KITE_PROMPT is `ko` or
+/// Are the instructions for the model the Korean ones? They are English unless APERIT_PROMPT is `ko` or
 /// `prompt-lang.txt` next to the program says `ko`. (This is the language of the instructions, not of the answers:
 /// the model writes in the language the user chose.) English costs about a third fewer tokens.
 pub fn korean_prompt() -> bool {
@@ -64,7 +65,7 @@ pub fn set_english(on: bool, save: bool) {
     }
 }
 
-/// Read the saved language. Without a saved choice: KITE_LANG (`en` or `ko`) if set, else English.
+/// Read the saved language. Without a saved choice: APERIT_LANG (`en` or `ko`) if set, else English.
 pub fn load_language() {
     let saved = std::fs::read_to_string(data_dir().join("lang.txt")).ok().or_else(|| var("LANG").ok());
     set_english(saved.map(|s| s.trim() != "ko").unwrap_or(true), false);

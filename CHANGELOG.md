@@ -1,10 +1,21 @@
-# KITE changes
+# APERIT changes
 
-The apps. Changes to the protocol itself are in [protocol/CHANGELOG.md](protocol/CHANGELOG.md).
+APERIT was called KITE up to version 0.3; the entries below 0.4.0 use the name of their time.
+
+The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://github.com/fidenit/patet/blob/main/CHANGELOG.md).
 
 ## 0.4.0 (not released yet)
 
-**KITE now works with agents and models other than Claude, and the language it speaks is a specification of its own.**
+**The app has a new name, APERIT, works with agents and models other than Claude, and the language it speaks is a specification of its own, PATET.**
+
+### New names
+
+- The app is **APERIT** (Latin: it opens, it shows). The program is `aperit.exe` / `APERIT.app`; settings are read as `APERIT_<NAME>`.
+- Nothing you have is lost: settings given as `KITE_<NAME>` still work, boards saved under the old header are read, and `run.ps1 pack` / `run.sh pack` move an existing `portable\KITE` folder to `portable\APERIT` whole (key, board, memory, browser logins).
+- The protocol is **[PATET](https://github.com/fidenit/patet)** (Latin: it lies open), version 0.4, in a repository of its own. `protocol/` here is a copy of it. On the wire the names are `patet 0.4`, `<patet-board>`, `patet.ops`; the old ones (`kite-protocol`, `kite.ops`) are still understood.
+- The MCP server an outside agent adds is named `aperit` (it was `kite`): run the copied command again.
+- On Android the app is shown as APERIT and APERIT Pro. Its package name is unchanged, so it updates in place.
+- Say "Aperit" (or, as before, "Kite") to call it back while it waits.
 
 ### The protocol stands apart
 
@@ -12,7 +23,7 @@ The apps. Changes to the protocol itself are in [protocol/CHANGELOG.md](protocol
 - **`<kite-board>`**, a renderer for the web as one custom element, for developers who want a board in their own product ([protocol/web](protocol/web)).
 - Rejections carry a stable code and an English message (`err unknown-verb unknown verb 'foo'`). Before, they were Korean sentences.
 - The desktop app uses the reference implementation. The Android app's Kotlin implementation was brought to 0.3 and runs the same conformance cases.
-- New in the language with 0.3: a renderer says what it supports; a `record` card with fields the agent names; `doc` cards that point at long content; kinds a renderer adds (`x-...`); decisions with several answers or marked as not undoable; required boxes, time and choice in forms. See [protocol/CHANGELOG.md](protocol/CHANGELOG.md).
+- New in the language with 0.3: a renderer says what it supports; a `record` card with fields the agent names; `doc` cards that point at long content; kinds a renderer adds (`x-...`); decisions with several answers or marked as not undoable; required boxes, time and choice in forms. See [PATET's CHANGELOG](https://github.com/fidenit/patet/blob/main/CHANGELOG.md).
 
 ### Use your own agent
 

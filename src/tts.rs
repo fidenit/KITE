@@ -94,7 +94,7 @@ fn speak_blocking(child: &Arc<Mutex<Option<Child>>>, text: &str) {
         $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
         try { $v = $s.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Culture.Name -eq 'ko-KR' } | Select-Object -First 1; \
               if ($v) { $s.SelectVoice($v.VoiceInfo.Name) } } catch {}; \
-        $s.Rate = 3; if ($env:KITE_MUTE) { $s.Volume = 0 }; \
+        $s.Rate = 3; if ($env:APERIT_MUTE) { $s.Volume = 0 }; \
         while (($l = [Console]::In.ReadLine()) -ne $null) { \
           try { $s.Speak([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($l))) } catch {}; \
           [Console]::Out.WriteLine('ok') }";

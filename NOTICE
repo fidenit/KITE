@@ -1,11 +1,10 @@
-KITE (Kinetic Interactive Task Environment)
+APERIT (called KITE until version 0.3)
 Copyright 2026 fidenit
 
-This product was created by fidenit (https://github.com/fidenit/KITE).
+This product was created by fidenit (https://github.com/fidenit/aperit).
 
 If you redistribute this software or a work based on it, keep this notice
 so that people can find where it came from.
 
-"KITE" and "Kinetic Interactive Task Environment" as the name of this project are not
-licensed for use as the name of a derived product (Apache License 2.0,
-section 6).
+"APERIT" as the name of this project is not licensed for use as the name of a
+derived product (Apache License 2.0, section 6).

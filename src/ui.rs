@@ -233,7 +233,7 @@ pub struct View {
     /// 카드별로 이 창 크기에서 잰 가장 큰 내용 높이 (카드 rev, 높이). 몇 장을 접을지 정할 때만 쓴다:
     /// 접는 수가 바뀌면 카드 폭이 바뀌고, 폭이 바뀌면 높이가 바뀌어서, 지금 높이로만 정하면 접었다 폈다를 되풀이할 수 있다.
     tall: HashMap<String, (u64, f32)>,
-    /// 소개 영상용 (KITE_VIDEO 일 때만 채운다): 이번 프레임에 판 위에 그린 카드의 화면 위치
+    /// 소개 영상용 (APERIT_VIDEO 일 때만 채운다): 이번 프레임에 판 위에 그린 카드의 화면 위치
     pub shown: Vec<(String, Rect)>,
 }
 
@@ -812,7 +812,7 @@ pub fn board(
             scene = home;
             // 처음 보기: 분류가 있는 판은 전체를 멀리서(분류 단계), 없는 판은 카드부터.
             view.level = if can_groups { 2 } else { 0 };
-            // 확인용: KITE_ZOOM=0.3 처럼 주면 그 비율로 왼쪽 위부터 보여 준다.
+            // 확인용: APERIT_ZOOM=0.3 처럼 주면 그 비율로 왼쪽 위부터 보여 준다.
             if let Some(z) = crate::sys::var("ZOOM").ok().and_then(|v| v.parse::<f32>().ok()) {
                 scene = Rect::from_min_size(bounds.min - vec2(20.0, 20.0), area.size() / z.clamp(0.05, 1.0));
             }
@@ -1510,7 +1510,7 @@ pub fn board(
                 .map(|(id, v)| (id.clone(), Rect::from_min_size(area.min + (v.pos.at(now) - drawn.min.to_vec2()) * z, v.size.at(now) * z)))
                 .collect();
         }
-        // 확인용: KITE_TRACE 가 있으면 프레임마다 판 크기, 확대 비율, 카드의 화면 위치를 data\trace.log 에 남긴다.
+        // 확인용: APERIT_TRACE 가 있으면 프레임마다 판 크기, 확대 비율, 카드의 화면 위치를 data\trace.log 에 남긴다.
         static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *TRACE.get_or_init(|| crate::sys::var("TRACE").is_ok()) {
             let mut ids: Vec<&String> = view.cards.iter().filter(|(_, v)| v.dying.is_none() && !v.sticky).map(|(id, _)| id).collect();

@@ -140,7 +140,7 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
                             .padding(horizontal = 6.dp, vertical = 6.dp),
                     )
                 }
-                if (board.topics.isEmpty()) Text(if (com.fidenit.kite.BuildConfig.PRO) "KITE Pro" else "KITE", color = C.text, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(6.dp))
+                if (board.topics.isEmpty()) Text(if (com.fidenit.kite.BuildConfig.PRO) "APERIT Pro" else "APERIT", color = C.text, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(6.dp))
             }
             Spacer(Modifier.width(8.dp))
             Pill(if (english) "Talk log" else "대화", onClick = onLog)
@@ -195,7 +195,7 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
         val status = when {
             vm.activity.isNotEmpty() -> vm.activity
             vm.transcribing -> if (english) "Writing down what you said…" else "받아쓰는 중…"
-            vm.standby -> if (english) "Waiting. Say \"Kite\" to continue." else "기다리는 중. \"카이트\"라고 부르면 이어 갑니다."
+            vm.standby -> if (english) "Waiting. Say \"Aperit\" to continue." else "기다리는 중. \"아페리트\"라고 부르면 이어 갑니다."
             vm.speaking -> if (english) "Speaking. Talk over me to interrupt." else "말하는 중. 말을 걸면 멈추고 듣습니다."
             vm.busy -> if (english) "Working…" else "일하는 중…"
             vm.converse && vm.heard -> if (english) "Listening…" else "듣는 중…"

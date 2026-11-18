@@ -150,7 +150,7 @@ pub fn definitions(worker: bool) -> Value {
         ),
         tool(
             "page_open",
-            "Open an address in the unseen browser (KITE's own browser, not shown on the screen). Waits until it has loaded and returns the title, the address and the visible text. \
+            "Open an address in the unseen browser (APERIT's own browser, not shown on the screen). Waits until it has loaded and returns the title, the address and the visible text. \
              Use it when something has to be done on a site (booking, applying, looking something up, a check that needs a login). Logins persist: a site the user logged in to once opens logged in the next time. \
              When a check a person must solve (a captcha) comes up, the program shows it to the user by itself and says so in the result.",
             json!({ "url": { "type": "string", "description": "The address to open" } }),
@@ -410,7 +410,7 @@ pub fn execute(name: &str, input: &Value) -> (String, bool) {
             let query = arg(input, "query")?;
             let encoded: String = query.bytes().map(|b| if b.is_ascii_alphanumeric() { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
             let url = format!("https://nominatim.openstreetmap.org/search?q={encoded}&format=jsonv2&limit=6&accept-language=ko");
-            let mut resp = crate::agent::http().get(&url).header("user-agent", "KITE-desktop/0.1").call().map_err(|e| format!("연결 실패: {e}"))?;
+            let mut resp = crate::agent::http().get(&url).header("user-agent", "APERIT-desktop/0.1").call().map_err(|e| format!("연결 실패: {e}"))?;
             let text = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
             let found: Value = serde_json::from_str(&text).map_err(|_| format!("장소 찾기 응답을 읽지 못함: {}", clip(&text, 200)))?;
             let rows: Vec<String> = found

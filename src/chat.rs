@@ -622,7 +622,7 @@ impl App {
             ui.set_width(420.0);
             let has_key = self.cfg.key.is_some();
             let has_jev = crate::jev::key().is_some();
-            ui.label(egui::RichText::new(if !self.cfg.demo() { crate::sys::tr("엔진과 키", "Engine and keys") } else { crate::sys::tr("KITE에 오신 것을 환영합니다", "Welcome to KITE") }).font(ui::bold(21.0)).color(ui::TEXT()));
+            ui.label(egui::RichText::new(if !self.cfg.demo() { crate::sys::tr("엔진과 키", "Engine and keys") } else { crate::sys::tr("APERIT에 오신 것을 환영합니다", "Welcome to APERIT") }).font(ui::bold(21.0)).color(ui::TEXT()));
             ui.add_space(8.0);
             ui.label(
                 egui::RichText::new(crate::sys::tr(
@@ -648,7 +648,7 @@ impl App {
             };
             let field = |ui: &mut egui::Ui, value: &mut String, hint: &str| field_as(ui, value, hint, true);
             // The engine: who answers. Claude through the API or through Claude Code, another model behind an
-            // OpenAI-compatible API, or an agent outside KITE that uses this board as its screen.
+            // OpenAI-compatible API, or an agent outside APERIT that uses this board as its screen.
             let cc_version = crate::cc::version();
             let current = if self.cfg.cc {
                 "claude-code"
@@ -663,7 +663,7 @@ impl App {
                 // Show what is saved, so that opening the window and saving changes nothing.
                 self.engine_pick = Some(current.to_string());
                 if let Some(p) = crate::openai::settings() {
-                    // A service KITE set up by itself from a key needs no unfolding; an address typed by hand does.
+                    // A service APERIT set up by itself from a key needs no unfolding; an address typed by hand does.
                     self.more_open = crate::openai::known_by_url(&p.url).is_none();
                     self.openai_input = [p.url, p.model, String::new()];
                 }
@@ -717,8 +717,8 @@ impl App {
             ui.add_space(5.0);
             let (note, good) = match known {
                 Some(k) if k.is_claude() => (crate::sys::tr("Claude 키입니다.", "A Claude key.").to_string(), true),
-                Some(k) => (format!("{} {}", k.name, crate::sys::tr("키입니다. 모델은 알아서 고릅니다.", "key. KITE picks the model.")), true),
-                None if typed.len() > 8 => (crate::sys::tr("처음 보는 키입니다. 아래 '다른 방법'에서 주소를 적어 주세요.", "A key KITE does not know. Give its address under \"More options\".").to_string(), false),
+                Some(k) => (format!("{} {}", k.name, crate::sys::tr("키입니다. 모델은 알아서 고릅니다.", "key. APERIT picks the model.")), true),
+                None if typed.len() > 8 => (crate::sys::tr("처음 보는 키입니다. 아래 '다른 방법'에서 주소를 적어 주세요.", "A key APERIT does not know. Give its address under \"More options\".").to_string(), false),
                 None => match current {
                     "api" if has_key => (crate::sys::tr("Claude 키가 저장되어 있습니다. 비워 두면 그대로 씁니다.", "A Claude key is saved. Leave this empty to keep it.").to_string(), true),
                     "openai" => (self.cfg.openai.as_ref().map(|p| format!("{} · {} {}", crate::openai::known_by_url(&p.url).map(|k| k.name).unwrap_or(p.url.as_str()), p.model, crate::sys::tr("저장됨", "saved"))).unwrap_or_default(), true),
@@ -771,9 +771,9 @@ impl App {
                 ui.label(
                     egui::RichText::new(crate::sys::tr(
                         "이 컴퓨터의 Claude Code에 맡깁니다. Claude Code의 로그인, CLAUDE.md, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용됩니다. API 키는 필요 없습니다.
-파일·명령·웹 작업은 Claude Code의 도구로 하고, 경로 지도, 기억, 작업자 같은 KITE 기능은 그대로 씁니다.",
-                        "KITE hands each turn to the Claude Code on this computer. Its login, CLAUDE.md, skills, hooks, MCP servers and permission settings all apply. No API key is needed.
-Files, commands and the web go through Claude Code's tools; KITE's own features such as route maps, memory and workers keep working.",
+파일·명령·웹 작업은 Claude Code의 도구로 하고, 경로 지도, 기억, 작업자 같은 APERIT 기능은 그대로 씁니다.",
+                        "APERIT hands each turn to the Claude Code on this computer. Its login, CLAUDE.md, skills, hooks, MCP servers and permission settings all apply. No API key is needed.
+Files, commands and the web go through Claude Code's tools; APERIT's own features such as route maps, memory and workers keep working.",
                     ))
                     .size(12.0)
                     .color(ui::DIM()),
@@ -805,7 +805,7 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                 ui.label(
                     egui::RichText::new(match now.as_str() {
                         "acceptEdits" => crate::sys::tr("파일을 만들고 고치는 것은 묻지 않고 합니다. 그 밖의 명령은 Claude Code 설정을 따릅니다.", "Creates and edits files without asking. Other commands follow your Claude Code settings."),
-                        "bypassPermissions" => crate::sys::tr("명령 실행과 파일 수정을 전부 묻지 않고 합니다. API 키 방식의 KITE와 같습니다.", "Runs commands and edits files without asking, as KITE does with an API key."),
+                        "bypassPermissions" => crate::sys::tr("명령 실행과 파일 수정을 전부 묻지 않고 합니다. API 키 방식의 APERIT와 같습니다.", "Runs commands and edits files without asking, as APERIT does with an API key."),
                         _ => crate::sys::tr("Claude Code에서 허용해 둔 것만 합니다. 나머지는 거절되고, 그렇다고 알려 줍니다.", "Does only what your Claude Code settings allow. The rest is refused, and it tells you so."),
                     })
                     .size(11.5)
@@ -821,7 +821,7 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                 ui.add_space(4.0);
             };
             if pick == "api" || pick_openai {
-                // What KITE's own engine may do on this computer without asking first.
+                // What APERIT's own engine may do on this computer without asking first.
                 ui.label(egui::RichText::new(crate::sys::tr("묻지 않고 해도 되는 일", "What it may do without asking")).font(ui::bold(12.5)).color(ui::TEXT()));
                 ui.add_space(4.0);
                 let now = self.level_pick.get_or_insert_with(|| crate::permit::level().name().to_string()).clone();
@@ -854,8 +854,8 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
             if pick_openai && more_open {
                 ui.label(
                     egui::RichText::new(crate::sys::tr(
-                        "KITE의 기억, 작업자, 도구는 그대로 쓰고 모델만 바꿉니다. OpenAI, Ollama·LM Studio의 로컬 모델, OpenRouter처럼 chat/completions 형식을 받는 곳이면 됩니다. 웹 검색 도구는 Claude에서만 됩니다.",
-                        "Keeps KITE's memory, workers and tools and changes only the model. Anything that takes the chat/completions format works: OpenAI, a local model behind Ollama or LM Studio, OpenRouter. Web search is available with Claude only.",
+                        "APERIT의 기억, 작업자, 도구는 그대로 쓰고 모델만 바꿉니다. OpenAI, Ollama·LM Studio의 로컬 모델, OpenRouter처럼 chat/completions 형식을 받는 곳이면 됩니다. 웹 검색 도구는 Claude에서만 됩니다.",
+                        "Keeps APERIT's memory, workers and tools and changes only the model. Anything that takes the chat/completions format works: OpenAI, a local model behind Ollama or LM Studio, OpenRouter. Web search is available with Claude only.",
                     ))
                     .size(12.0)
                     .color(ui::DIM()),
@@ -875,14 +875,14 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
             if pick_agent && more_open {
                 ui.label(
                     egui::RichText::new(crate::sys::tr(
-                        "KITE 안의 모델은 쉬고, 바깥의 에이전트가 이 보드를 화면으로 씁니다. 여기에 치는 말과 누르는 선택은 그 에이전트에게 전해집니다.",
-                        "No model runs inside KITE; an agent outside uses this board as its screen. What you type and pick here goes to that agent.",
+                        "APERIT 안의 모델은 쉬고, 바깥의 에이전트가 이 보드를 화면으로 씁니다. 여기에 치는 말과 누르는 선택은 그 에이전트에게 전해집니다.",
+                        "No model runs inside APERIT; an agent outside uses this board as its screen. What you type and pick here goes to that agent.",
                     ))
                     .size(12.0)
                     .color(ui::DIM()),
                 );
                 ui.add_space(10.0);
-                // MCP: the agent comes to KITE.
+                // MCP: the agent comes to APERIT.
                 let open = crate::mcp::outside();
                 caption(ui, "MCP", &match &open { Some((port, _)) => format!("http://127.0.0.1:{port}/mcp"), None => crate::sys::tr("저장하면 열립니다", "opens when you save").to_string() }, open.is_some());
                 ui.label(egui::RichText::new(crate::sys::tr("Claude Code, Cursor처럼 MCP를 쓰는 에이전트는 이 주소로 붙습니다. 도구는 screen, board_read, events, guide 입니다.", "Agents that speak MCP (Claude Code, Cursor) connect to this address. The tools are screen, board_read, events and guide.")).size(11.5).color(ui::FAINT()));
@@ -918,11 +918,11 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                 });
                 ui.label(egui::RichText::new(crate::sys::tr("이 카드들은 에이전트가 고른 주소나 이 컴퓨터의 파일을 불러옵니다. 믿는 에이전트에게만 켭니다.", "These cards load an address or a file on this computer that the agent chose. Turn it on only for an agent you trust.")).size(11.5).color(ui::FAINT()));
                 ui.add_space(12.0);
-                // AG-UI: KITE goes to the agent.
+                // AG-UI: APERIT goes to the agent.
                 caption(ui, "AG-UI", crate::sys::tr("선택", "optional"), false);
                 field_as(ui, &mut self.agui_input, "http://localhost:8000/agent", false);
                 ui.add_space(5.0);
-                ui.label(egui::RichText::new(crate::sys::tr("LangGraph, CrewAI, Pydantic AI처럼 AG-UI를 쓰는 에이전트의 주소를 적으면 KITE가 턴마다 그 주소를 부릅니다. 비워 두면 MCP로 오는 에이전트를 기다립니다.", "Give the address of an agent that speaks AG-UI (LangGraph, CrewAI, Pydantic AI) and KITE calls it on every turn. Leave it empty to wait for an agent over MCP.")).size(11.5).color(ui::FAINT()));
+                ui.label(egui::RichText::new(crate::sys::tr("LangGraph, CrewAI, Pydantic AI처럼 AG-UI를 쓰는 에이전트의 주소를 적으면 APERIT가 턴마다 그 주소를 부릅니다. 비워 두면 MCP로 오는 에이전트를 기다립니다.", "Give the address of an agent that speaks AG-UI (LangGraph, CrewAI, Pydantic AI) and APERIT calls it on every turn. Leave it empty to wait for an agent over MCP.")).size(11.5).color(ui::FAINT()));
                 ui.add_space(14.0);
             }
             if !pick_agent && more_open {
@@ -933,8 +933,8 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
             ui.add_space(6.0);
             ui.label(
                 egui::RichText::new(crate::sys::tr(
-                    "Jev는 글을 쓰지 않고 판단만 하는 작고 빠른 모델입니다. 넣으면 말이 어느 주제에 속하는지 미리 고르고, 중요한 카드를 앞에 놓고, 겹치는 주제를 정리하고, 옛 대화에서 필요한 것만 골라 옵니다. 없어도 KITE는 그대로 동작합니다.",
-                    "Jev is a small, fast model that only makes decisions. With it, KITE picks the topic before answering, puts important cards first, tidies overlapping topics, and recalls only the past conversations that matter. Without it, KITE works the same.",
+                    "Jev는 글을 쓰지 않고 판단만 하는 작고 빠른 모델입니다. 넣으면 말이 어느 주제에 속하는지 미리 고르고, 중요한 카드를 앞에 놓고, 겹치는 주제를 정리하고, 옛 대화에서 필요한 것만 골라 옵니다. 없어도 APERIT는 그대로 동작합니다.",
+                    "Jev is a small, fast model that only makes decisions. With it, APERIT picks the topic before answering, puts important cards first, tidies overlapping topics, and recalls only the past conversations that matter. Without it, APERIT works the same.",
                 ))
                 .size(11.5)
                 .color(ui::FAINT()),
@@ -987,7 +987,7 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                     let old_key = std::fs::read_to_string(base.join("openai.txt")).ok().and_then(|t| t.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).nth(2).map(str::to_string));
                     let key = if key.trim().is_empty() { old_key.unwrap_or_default() } else { key.trim().to_string() };
                     let url = url.trim().trim_end_matches('/');
-                    // A service KITE knows: it picks the model from the service's own list.
+                    // A service APERIT knows: it picks the model from the service's own list.
                     let model = match crate::openai::known_by_url(url) {
                         Some(k) if model.trim().is_empty() => k.model(&key),
                         _ => model.trim().to_string(),

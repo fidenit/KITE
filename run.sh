@@ -1,12 +1,12 @@
 #!/bin/sh
-# KITE 빌드·실행 스크립트 (Mac)
+# APERIT 빌드·실행 스크립트 (Mac)
 #   ./run.sh            빌드해서 실행 (개발용. 데이터는 이 폴더의 data, vault 를 쓴다)
 #   ./run.sh build      빌드만
 #   ./run.sh test       테스트
-#   ./run.sh pack       들고 다닐 수 있는 폴더 portable/KITE 를 만들거나 갱신
+#   ./run.sh pack       들고 다닐 수 있는 폴더 portable/APERIT 를 만들거나 갱신
 #
-# portable/KITE 폴더는 그 자체로 완결이다. 통째로 어디에 복사해도 그대로 동작한다.
-#   KITE.app         프로그램 (설치 불필요)
+# portable/APERIT 폴더는 그 자체로 완결이다. 통째로 어디에 복사해도 그대로 동작한다.
+#   APERIT.app         프로그램 (설치 불필요)
 #   key.txt         Claude API 키
 #   jev.txt         (선택) TypeSafe Jev 키
 #   eleven.txt      (선택) ElevenLabs 키
@@ -21,30 +21,30 @@ case "$1" in
   test)  cargo test --workspace; command -v node >/dev/null && node protocol/js/test.mjs ;;
   pack)
     cargo build --release
-    out="portable/KITE"
-    app="$out/KITE.app"
-    # 옛 이름(ALI)으로 만든 폴더가 있으면 그대로 옮겨 쓴다: 키, 보드(data), 기억(vault)이 이어진다.
-    if [ ! -d "$out" ] && [ -d "portable/ALI" ]; then
-      pkill -f "portable/ALI/ALI.app/Contents/MacOS/ali" 2>/dev/null || true
-      mv "portable/ALI" "$out"
-      rm -rf "$out/ALI.app"
-      echo "옛 폴더를 옮겼습니다: portable/ALI → $out"
+    out="portable/APERIT"
+    app="$out/APERIT.app"
+    # 옛 이름(KITE)으로 만든 폴더가 있으면 그대로 옮겨 쓴다: 키, 보드(data), 기억(vault)이 이어진다.
+    if [ ! -d "$out" ] && [ -d "portable/KITE" ]; then
+      pkill -f "portable/KITE/KITE.app/Contents/MacOS/kite" 2>/dev/null || true
+      mv "portable/KITE" "$out"
+      rm -rf "$out/KITE.app"
+      echo "옛 폴더를 옮겼습니다: portable/KITE → $out"
     fi
     first=0
     [ -d "$out" ] || first=1
-    pkill -f "$app/Contents/MacOS/kite" 2>/dev/null || true
+    pkill -f "$app/Contents/MacOS/aperit" 2>/dev/null || true
     mkdir -p "$app/Contents/MacOS"
-    cp target/release/kite "$app/Contents/MacOS/kite"
+    cp target/release/aperit "$app/Contents/MacOS/aperit"
     version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
     cat > "$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>KITE</string>
-  <key>CFBundleDisplayName</key><string>KITE</string>
+  <key>CFBundleName</key><string>APERIT</string>
+  <key>CFBundleDisplayName</key><string>APERIT</string>
   <key>CFBundleIdentifier</key><string>com.fidenit.kite</string>
-  <key>CFBundleExecutable</key><string>kite</string>
+  <key>CFBundleExecutable</key><string>aperit</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>$version</string>
   <key>CFBundleShortVersionString</key><string>$version</string>

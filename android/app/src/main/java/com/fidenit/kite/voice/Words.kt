@@ -23,9 +23,9 @@ object Words {
     /** 기다리는 중에 분명히 나를 부르는 말인가 ("카이트", "다 봤어", "이제 얘기해"). */
     fun isWake(text: String): Boolean {
         // 영어 이름은 낱말 하나로 들렸을 때만 (낱말 속의 kite(kites 같은)는 아니다).
-        if (text.split(Regex("[^\\p{L}\\p{N}]+")).any { it.equals("kite", ignoreCase = true) }) return true
+        if (text.split(Regex("[^\\p{L}\\p{N}]+")).any { it.equals("aperit", ignoreCase = true) || it.equals("kite", ignoreCase = true) }) return true
         val t = squash(text)
-        return listOf("카이트", "다봤어", "다했어", "다읽었어", "확인했어", "이제얘기해", "이제말해", "얘기해봐", "말해봐", "됐어이제", "자이제", "돌아왔어", "imback", "imdone", "okaydone", "allright", "goahead", "youthere").any { t.contains(it) }
+        return listOf("아페리트", "카이트", "다봤어", "다했어", "다읽었어", "확인했어", "이제얘기해", "이제말해", "얘기해봐", "말해봐", "됐어이제", "자이제", "돌아왔어", "imback", "imdone", "okaydone", "allright", "goahead", "youthere").any { t.contains(it) }
     }
 
     /** 두 글이 거의 같은가 (두 글자 묶음이 얼마나 겹치는가). AI 자기 목소리를 받아쓴 것을 가려낼 때 쓴다. */

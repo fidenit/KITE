@@ -1,11 +1,11 @@
 //! Claude Code 엔진: 이 컴퓨터에 깔린 Claude Code(`claude`)를 화면 없이 돌려서 한 턴을 맡긴다.
 //!
-//! KITE 가 Claude API 를 직접 부르는 대신 Claude Code 가 모델을 부르고 도구도 Claude Code 가 실행한다.
+//! APERIT 가 Claude API 를 직접 부르는 대신 Claude Code 가 모델을 부르고 도구도 Claude Code 가 실행한다.
 //! 그래서 사용자의 Claude Code 로그인, CLAUDE.md, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용된다.
-//! KITE 는 화면 편집 언어를 지시문으로 덧붙이고, 흘러나오는 글자를 받아 화면을 그린다.
+//! APERIT 는 화면 편집 언어를 지시문으로 덧붙이고, 흘러나오는 글자를 받아 화면을 그린다.
 //!
-//! 한 턴은 그 자체로 완결이다 (판의 상태와 최근 대화를 KITE 가 매번 함께 보낸다). 그래서 세션을 이어 가지 않는다.
-//! 파일·명령·웹 도구는 Claude Code 것을 쓰고, KITE 자체 도구(경로 찾기, 기억 노트, 판 읽기, 작업자)는
+//! 한 턴은 그 자체로 완결이다 (판의 상태와 최근 대화를 APERIT 가 매번 함께 보낸다). 그래서 세션을 이어 가지 않는다.
+//! 파일·명령·웹 도구는 Claude Code 것을 쓰고, APERIT 자체 도구(경로 찾기, 기억 노트, 판 읽기, 작업자)는
 //! 작은 MCP 서버(`mcp.rs`)로 내준다.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -23,10 +23,10 @@ const NOTE: &str = "
 
 # Running inside Claude Code
 
-You are running as the engine of KITE through Claude Code. This changes two things.
+You are running as the engine of APERIT through Claude Code. This changes two things.
 
 1. Your text output IS the screen. Every line of text you output must be one screen command from the language above (say, topic, card, set, add, ...). Never output prose, markdown, headings or status notes outside a command. Anything you want to tell the user goes in `say`. Instructions from other sources about how to format or structure replies (goal declarations, reports, summaries) do not apply to this output: express them, if needed, as cards or a short `say`.
-2. KITE's own tools are reached through the MCP server named `kite`: where the text above names route_find, place_find, note_search, note_read, note_write, note_append, board_read, browser_text, browser_eval, job_start, job_list, job_tell, job_stop or job_result, call `mcp__kite__<name>` with the same input. The other KITE tools named above (screen, shell, read_file, write_file, edit_file, list_dir, find_text, view_image, web_search, web_fetch) do not exist here: use your Claude Code tools instead (Bash or PowerShell, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). There is no `screen` tool because your text output already is the screen.
+2. APERIT's own tools are reached through the MCP server named `aperit`: where the text above names route_find, place_find, note_search, note_read, note_write, note_append, board_read, browser_text, browser_eval, job_start, job_list, job_tell, job_stop or job_result, call `mcp__aperit__<name>` with the same input. The other APERIT tools named above (screen, shell, read_file, write_file, edit_file, list_dir, find_text, view_image, web_search, web_fetch) do not exist here: use your Claude Code tools instead (Bash or PowerShell, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). There is no `screen` tool because your text output already is the screen.
 3. If a tool is refused for lack of permission, do not retry it and do not ask the user to grant it in a card: say in one short `say` that Claude Code's permission setting blocked it and that it can be changed under Keys at the bottom left.
 4. Before your first tool call, output one short `say` line telling the user what you are about to do, so the screen is not silent while tools run.
 ";
@@ -119,7 +119,7 @@ pub fn signed_in() -> bool {
 /// Start signing in to Claude: a console window running `claude auth login`, which opens the browser.
 pub fn sign_in() {
     let _ = if cfg!(windows) {
-        Command::new("cmd").args(["/c", "start", "KITE sign-in", "cmd", "/k", "claude auth login"]).spawn()
+        Command::new("cmd").args(["/c", "start", "APERIT sign-in", "cmd", "/k", "claude auth login"]).spawn()
     } else if cfg!(target_os = "macos") {
         Command::new("osascript").args(["-e", "tell application \"Terminal\" to do script \"claude auth login\""]).spawn()
     } else {
@@ -178,7 +178,7 @@ const WORKER_NOTE: &str = "
 
 # Running inside Claude Code
 
-You are running through Claude Code. The tools named above (shell, read_file, write_file, edit_file, list_dir, find_text, web_search, web_fetch, view_image) do not exist here: use your Claude Code tools instead (Bash or PowerShell, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). The note tools are reached as `mcp__kite__note_search`, `mcp__kite__note_read`, `mcp__kite__note_write` and `mcp__kite__note_append`. There is no `progress` tool and no messages from the main session arrive while you work; what you are doing is shown to the user automatically. If a tool is refused for lack of permission, do not retry it: say so in your report. Your final message is your report.
+You are running through Claude Code. The tools named above (shell, read_file, write_file, edit_file, list_dir, find_text, web_search, web_fetch, view_image) do not exist here: use your Claude Code tools instead (Bash or PowerShell, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). The note tools are reached as `mcp__aperit__note_search`, `mcp__aperit__note_read`, `mcp__aperit__note_write` and `mcp__aperit__note_append`. There is no `progress` tool and no messages from the main session arrive while you work; what you are doing is shown to the user automatically. If a tool is refused for lack of permission, do not retry it: say so in your report. Your final message is your report.
 ";
 
 /// 작업자 한 명을 Claude Code 로 돌린다. 마지막 글(보고서)도 돌려준다.
@@ -247,7 +247,7 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
     cmd.args(["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--no-session-persistence", "--append-system-prompt-file"]).arg(&system);
     // 사용자가 더 주고 싶은 옵션 (예: --permission-mode acceptEdits, --model sonnet). 한 줄에 하나씩 또는 띄어서.
     let extra = std::fs::read_to_string(crate::sys::base_dir().join("claude-args.txt")).unwrap_or_default();
-    // 화면이 빨리 나와야 하므로 생각의 깊이는 KITE 가 정한 값을 넘긴다 (사용자가 따로 적었으면 그것을 따른다).
+    // 화면이 빨리 나와야 하므로 생각의 깊이는 APERIT 가 정한 값을 넘긴다 (사용자가 따로 적었으면 그것을 따른다).
     if !extra.contains("--effort") && !effort.is_empty() {
         cmd.args(["--effort", effort]);
     }
@@ -263,9 +263,9 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
     if !extra.contains("--permission-mode") && mode != "default" {
         cmd.args(["--permission-mode", &mode]);
     }
-    // KITE 자체 도구를 MCP 로 내준다.
+    // APERIT 자체 도구를 MCP 로 내준다.
     if let Some(config) = crate::mcp::inside_config(stop) {
-        cmd.arg("--mcp-config").arg(config).args(["--allowedTools", "mcp__kite"]);
+        cmd.arg("--mcp-config").arg(config).args(["--allowedTools", "mcp__aperit"]);
     }
     cmd.args(extra.split_whitespace());
     let mut child = cmd

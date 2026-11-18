@@ -22,30 +22,30 @@ import java.io.File
 /**
  * 실제 SSH 서버에 붙어 Claude Code 로 턴을 돌려 본다. 앱이 쓰는 것과 같은 코드다.
  * 환경 변수가 있을 때만 돈다:
- *   KITE_SSH_HOST, KITE_SSH_PORT, KITE_SSH_USER
- *   KITE_SSH_KEY       개인 키 파일. 없으면 새로 만들고, 공개 키를 KITE_SSH_AUTHKEYS 파일에 덧붙인다.
- *   KITE_SSH_PASSWORD  암호로 붙을 때
+ *   APERIT_SSH_HOST, APERIT_SSH_PORT, APERIT_SSH_USER
+ *   APERIT_SSH_KEY       개인 키 파일. 없으면 새로 만들고, 공개 키를 APERIT_SSH_AUTHKEYS 파일에 덧붙인다.
+ *   APERIT_SSH_PASSWORD  암호로 붙을 때
  */
 class LiveTest {
     private fun env(k: String) = System.getenv(k).orEmpty()
 
     private fun server(fingerprint: String = ""): Server {
-        var key = env("KITE_SSH_KEY").takeIf { it.isNotEmpty() }?.let { File(it).readText() }.orEmpty()
-        if (key.isEmpty() && env("KITE_SSH_AUTHKEYS").isNotEmpty()) {
+        var key = env("APERIT_SSH_KEY").takeIf { it.isNotEmpty() }?.let { File(it).readText() }.orEmpty()
+        if (key.isEmpty() && env("APERIT_SSH_AUTHKEYS").isNotEmpty()) {
             val (prv, pub) = Ssh.newKey("kite-test")
-            File(env("KITE_SSH_AUTHKEYS")).appendText(pub + "\n")
+            File(env("APERIT_SSH_AUTHKEYS")).appendText(pub + "\n")
             key = prv
         }
-        return Server(env("KITE_SSH_HOST"), env("KITE_SSH_PORT").toIntOrNull() ?: 22, env("KITE_SSH_USER"), env("KITE_SSH_PASSWORD"), key, "", fingerprint)
+        return Server(env("APERIT_SSH_HOST"), env("APERIT_SSH_PORT").toIntOrNull() ?: 22, env("APERIT_SSH_USER"), env("APERIT_SSH_PASSWORD"), key, "", fingerprint)
     }
 
     @Test
     fun turnOverSsh() {
-        assumeTrue(env("KITE_SSH_HOST").isNotEmpty())
+        assumeTrue(env("APERIT_SSH_HOST").isNotEmpty())
         var seen = ""
         val srv = server()
         val ssh = Ssh(srv) { seen = it }
-        val cc = ClaudeCode(ssh, EngineConfig("claude", "~", "default", "low", env("KITE_EXTRA")))
+        val cc = ClaudeCode(ssh, EngineConfig("claude", "~", "default", "low", env("APERIT_EXTRA")))
         ssh.connect()
         assertTrue("서버 지문을 기억해야 한다", seen.startsWith("SHA256:"))
         val (os, home) = cc.where()

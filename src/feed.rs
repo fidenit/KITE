@@ -1,6 +1,6 @@
 //! The protocol socket: another program on this computer drives the running board with protocol lines
 //! (protocol/SPEC.md, "Line session"). Off by default; it listens on 127.0.0.1 only when
-//! KITE_PROTOCOL_PORT is set. Standard library only, so it is the same on Windows, macOS and Linux.
+//! APERIT_PROTOCOL_PORT is set. Standard library only, so it is the same on Windows, macOS and Linux.
 //!
 //! A received op goes through the same door as a model's line (`App::apply_op_line`). This module cuts
 //! bytes into lines, limits size and rate, answers each line with one verdict (`ok`, `ok clipped ...`,
@@ -364,8 +364,8 @@ mod tests {
         let t = Instant::now();
         let mut f = LineFeeder::new(t);
         assert_eq!(f.push(b"# kite-protocol 0.1\nsay a\n", t), vec![l("say a")]);
-        assert_eq!(f.push(b"# kite-protocol 0.7\n", t), vec![]);
-        let out = f.push(b"# kite-protocol 1.0\nsay b\n", t);
+        assert_eq!(f.push(b"# patet 0.7\n", t), vec![]);
+        let out = f.push(b"# patet 1.0\nsay b\n", t);
         assert!(matches!(&out[0], Item::Close(m) if m.starts_with("unsupported-version ") && m.contains("1.0")));
     }
 
@@ -392,7 +392,7 @@ mod tests {
             if line.contains("bad") { "err unknown-verb unknown verb 'bad'".into() } else { "ok".into() }
         }
         fn hello(&self) -> Vec<String> {
-            vec!["kite-protocol 0.3".into(), "kinds note record".into()]
+            vec!["patet 0.4".into(), "kinds note record".into()]
         }
         fn read(&self, topic: &str) -> Result<String, String> {
             match topic {
@@ -455,7 +455,7 @@ mod tests {
     #[test]
     fn tcp_refuses_unknown_major_and_port_in_use() {
         let (port, sink, hub) = serve_fake(None);
-        let got = talk(port, b"# kite-protocol 2.0\nsay a\n", 1);
+        let got = talk(port, b"# patet 2.0\nsay a\n", 1);
         assert!(got[0].starts_with("err unsupported-version ") && got[0].contains("2.0"));
         assert!(sink.0.lock().unwrap().is_empty());
         assert!(start(port, None, sink, hub).is_err());
@@ -478,7 +478,7 @@ mod tests {
         assert_eq!(talk(port, b"read a\n", 2), vec!["| topic a A", "ok"]);
         assert_eq!(talk(port, b"read zz\n", 1), vec!["err no-such-topic no topic 'zz'"]);
         assert!(talk(port, b"read a b\n", 1)[0].starts_with("err bad-syntax "));
-        assert_eq!(talk(port, b"hello\n", 3), vec!["| kite-protocol 0.3", "| kinds note record", "ok"]);
+        assert_eq!(talk(port, b"hello\n", 3), vec!["| patet 0.4", "| kinds note record", "ok"]);
         // Session commands never reach the board.
         assert!(sink.0.lock().unwrap().is_empty());
     }

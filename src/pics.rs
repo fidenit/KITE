@@ -84,7 +84,7 @@ pub fn forget() {
 fn fetch(src: &str) -> Result<(usize, usize, Vec<u8>), String> {
     let lower = src.to_lowercase();
     let bytes = if lower.starts_with("http://") || lower.starts_with("https://") {
-        let mut resp = crate::agent::http().get(src).header("user-agent", "KITE-desktop/0.1").call().map_err(|e| format!("그림을 받지 못함: {e}"))?;
+        let mut resp = crate::agent::http().get(src).header("user-agent", "APERIT-desktop/0.1").call().map_err(|e| format!("그림을 받지 못함: {e}"))?;
         if resp.status().as_u16() != 200 {
             return Err(format!("그림을 받지 못함 (HTTP {})", resp.status().as_u16()));
         }

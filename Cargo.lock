@@ -208,6 +208,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "aperit"
+version = "0.4.0"
+dependencies = [
+ "cpal",
+ "eframe",
+ "image",
+ "patet",
+ "raw-window-handle",
+ "rfd",
+ "serde",
+ "serde_json",
+ "ureq",
+ "wry",
+]
+
+[[package]]
 name = "arboard"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2467,26 +2483,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
-name = "kite"
-version = "0.4.0"
-dependencies = [
- "cpal",
- "eframe",
- "image",
- "kite-protocol",
- "raw-window-handle",
- "rfd",
- "serde",
- "serde_json",
- "ureq",
- "wry",
-]
-
-[[package]]
-name = "kite-protocol"
-version = "0.3.0"
-
-[[package]]
 name = "kurbo"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3362,6 +3358,10 @@ name = "parlance"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73072a9470554c8e794778acece2312661218aaabb635600957d952cf01c716e"
+
+[[package]]
+name = "patet"
+version = "0.4.0"
 
 [[package]]
 name = "pem-rfc7468"

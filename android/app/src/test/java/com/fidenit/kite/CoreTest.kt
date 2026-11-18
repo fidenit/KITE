@@ -171,7 +171,7 @@ class CoreTest {
     fun streamJsonBecomesScreenEvents() {
         val out = mutableListOf<Ev>()
         val p = StreamParser({ out.add(it) })
-        p.feed("KITEPID 4242")
+        p.feed("APERITPID 4242")
         p.feed("""{"type":"system","subtype":"init","model":"claude-x"}""")
         p.feed("""{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"text"}}}""")
         p.feed("""{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"say 확인해 볼게요"}}}""")
@@ -216,7 +216,7 @@ class CoreTest {
         val lines = proc.inputStream.bufferedReader().readLines()
         proc.waitFor()
         val text = lines.joinToString("\n")
-        assertTrue(text, lines.any { it.matches(Regex("KITEPID \\d+")) })
+        assertTrue(text, lines.any { it.matches(Regex("APERITPID \\d+")) })
         assertTrue(text, lines.any { it.startsWith("ARGS -p --output-format stream-json --verbose --include-partial-messages --no-session-persistence --append-system-prompt-file ${home.absolutePath}/.kite/system.txt --effort low --tools Bash,Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,ToolSearch --permission-mode acceptEdits --model sonnet") })
         assertTrue(text, lines.any { it.startsWith("PWD ") && it.endsWith("/work dir") })
         assertTrue(text, lines.contains("STDIN <input>it's \"quoted\" \$HOME</input>"))
@@ -230,7 +230,7 @@ class CoreTest {
         for (w in listOf("잠깐만.", "잠깐 기다려 봐", "내가 확인해 볼게", "이거 읽어 볼게요", "잠시만요")) assertTrue(w, Words.isWait(w))
         for (w in listOf("잠깐, 이거 찾아봐", "잠깐만 그거 보여줘", "공모전 조사해 줘")) assertFalse(w, Words.isWait(w))
         assertTrue(Words.isWake("카이트, 다 봤어"))
-        assertTrue(Words.isWake("Hey KITE"))
+        assertTrue(Words.isWake("Hey APERIT"))
         assertFalse(Words.isWake("The quality is fine"))
         assertTrue(Words.similar("회의가 두 개 있고 첫 회의는 열 시예요", "회의가 두개 있고 첫 회의는 열시에요"))
     }

@@ -1,5 +1,5 @@
 // Claude API 엔진: 폰이 Claude API 를 직접 부른다.
-// 무료 앱(KITE)은 사용자가 넣은 API 키로 Anthropic 에, 유료 앱(KITE Pro)은 같은 요청을 우리 중계 서버에 보낸다.
+// 무료 앱(APERIT)은 사용자가 넣은 API 키로 Anthropic 에, 유료 앱(APERIT Pro)은 같은 요청을 우리 중계 서버에 보낸다.
 // 흐름은 데스크톱 src/agent.rs 와 같다: 스트리밍으로 받으며 글자를 바로 화면에 흘리고,
 // 모델이 도구를 요청하면 실행해서 결과를 돌려주기를 모델이 끝낼 때까지 반복한다.
 package com.fidenit.kite.engine
@@ -33,7 +33,7 @@ const val PHONE_NOTE = """
 
 # Running directly on a phone
 
-You are the engine of KITE running directly on the user's Android phone. The app calls you through the Claude API and shows your output on the phone. This changes the following.
+You are the engine of APERIT running directly on the user's Android phone. The app calls you through the Claude API and shows your output on the phone. This changes the following.
 
 1. Your tools here are: screen, web_search, web_fetch, note_search, note_read, note_write, note_append. These tools named above do not exist here: shell, read_file, write_file, edit_file, list_dir, find_text, view_image, route_find, place_find, board_read, browser_text, browser_eval, page_open, page_read, page_run, page_show, job_start, job_list, job_tell, job_stop, job_result, contact_find, message_send, phone_call, message_read. There is no computer, no file system and no shell to work in. Do not offer or promise what needs them (running commands, editing files, booking on a site, sending messages, handing work to workers). Where the text above tells you to hand work to a worker, do the part you can with your own tools in this turn instead. The whole board always arrives in `<board>`. Do not make route cards.
 2. The phone screen is narrow. One topic fills the screen and its cards are stacked in one column at full width, so card sizes and `move` have no effect. Use few, compact cards, and keep tables to three columns. `web` and `image` cards show only a link that opens in the phone's browser.

@@ -1,4 +1,4 @@
-//! KITE's own loop with a model behind an OpenAI-compatible API (`POST <base>/chat/completions`):
+//! APERIT's own loop with a model behind an OpenAI-compatible API (`POST <base>/chat/completions`):
 //! OpenAI itself, a local model served by Ollama or LM Studio, OpenRouter, and others that speak this format.
 //!
 //! The loop is the same as with Claude (`agent.rs`): stream the model's text to the board, run the tools it
@@ -25,7 +25,7 @@ pub struct Provider {
     pub key: Option<String>,
 }
 
-/// KITE_OPENAI_URL and KITE_OPENAI_MODEL (the key from OPENAI_API_KEY), or `openai.txt` next to the
+/// APERIT_OPENAI_URL and APERIT_OPENAI_MODEL (the key from OPENAI_API_KEY), or `openai.txt` next to the
 /// program: the base address, the model, and optionally the key, one per line.
 pub fn settings() -> Option<Provider> {
     let env = |k: &str| crate::sys::var(k).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
@@ -46,12 +46,12 @@ fn parse_settings(text: &str) -> Option<Provider> {
     Some(Provider { url, model, key: lines.next().map(str::to_string) })
 }
 
-/// A service KITE knows from the look of its key, so that pasting the key is all there is to do.
+/// A service APERIT knows from the look of its key, so that pasting the key is all there is to do.
 pub struct Known {
     pub name: &'static str,
     /// Keys of this service start like this.
     prefix: &'static str,
-    /// Empty for Claude, which KITE calls in its own format.
+    /// Empty for Claude, which APERIT calls in its own format.
     pub url: &'static str,
     /// Which of the service's models to use: the newest whose name contains the first of these that any has.
     prefer: &'static [&'static str],
@@ -75,7 +75,7 @@ pub fn recognize(key: &str) -> Option<&'static Known> {
     KNOWN.iter().find(|k| key.starts_with(k.prefix) && key.len() > k.prefix.len() + 8)
 }
 
-/// The service behind this address, if it is one KITE knows.
+/// The service behind this address, if it is one APERIT knows.
 pub fn known_by_url(url: &str) -> Option<&'static Known> {
     KNOWN.iter().find(|k| !k.url.is_empty() && k.url == url.trim_end_matches('/'))
 }
@@ -135,7 +135,7 @@ pub fn ask(p: &Provider, system: &str, user: &str, max_tokens: u32) -> Result<St
     Ok(v["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
 }
 
-/// KITE's tools in this format. Tools that are a service of Anthropic's API have no schema of ours and are left out.
+/// APERIT's tools in this format. Tools that are a service of Anthropic's API have no schema of ours and are left out.
 fn functions(tools: &Value) -> Vec<Value> {
     tools.as_array().into_iter().flatten().filter(|t| t["input_schema"].is_object()).map(|t| json!({ "type": "function", "function": { "name": t["name"], "description": t["description"], "parameters": t["input_schema"] } })).collect()
 }

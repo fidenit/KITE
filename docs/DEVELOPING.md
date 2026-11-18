@@ -1,15 +1,15 @@
-# Developing KITE
+# Developing APERIT
 
 Building, keys, the layout of the code, and how to add a kind of card. What the program is: [README](../README.md). 한국어: [DEVELOPING.ko.md](DEVELOPING.ko.md) (older; this page is the current one).
 
 ## What is in the repository
 
 ```
-protocol/        the KITE Protocol: specification, guide for agents, comparison, schema, examples,
+protocol/        the PATET: specification, guide for agents, comparison, schema, examples,
                  conformance cases, the reference implementation (protocol/rust), the JavaScript
-                 implementation (protocol/js) and the web renderer <kite-board> (protocol/web)
-src/             KITE for Windows and macOS (Rust, egui)
-android/         KITE and KITE Pro for Android (Kotlin, Compose)
+                 implementation (protocol/js) and the web renderer <patet-board> (protocol/web)
+src/             APERIT for Windows and macOS (Rust, egui)
+android/         APERIT and APERIT Pro for Android (Kotlin, Compose)
 docs/            how to use and develop the apps
 tools/promo/     how the intro video is recorded
 ```
@@ -23,7 +23,7 @@ Windows (Rust `stable-x86_64-pc-windows-gnu` and MinGW from [WinLibs](https://wi
 ```powershell
 .\run.ps1          # build and run
 .\run.ps1 test     # tests of the app and of the protocol crate
-.\run.ps1 pack     # make a folder you can carry: portable\KITE
+.\run.ps1 pack     # make a folder you can carry: portable\APERIT
 ```
 
 macOS (Rust from [rustup](https://rustup.rs), Xcode command line tools):
@@ -31,7 +31,7 @@ macOS (Rust from [rustup](https://rustup.rs), Xcode command line tools):
 ```sh
 ./run.sh            # build and run
 ./run.sh test
-./run.sh pack       # portable/KITE/KITE.app
+./run.sh pack       # portable/APERIT/APERIT.app
 ```
 
 On Windows the program needs `WebView2Loader.dll` next to the executable (`run.ps1` copies it).
@@ -48,22 +48,22 @@ Text files next to the program. The **Keys** window writes the first ones for yo
 | `key.txt` | Claude API key | the demo, unless another engine is chosen |
 | `openai.txt` | another model: base address, model, key, one per line | |
 | `agui.txt` | the address of an AG-UI agent, then optional header lines | |
-| `permission.txt` | `ask`, `edits` or `all`: what KITE's own engines may do without asking | `ask` |
+| `permission.txt` | `ask`, `edits` or `all`: what APERIT's own engines may do without asking | `ask` |
 | `jev.txt` | TypeSafe Jev key | no decision model |
 | `eleven.txt` | ElevenLabs key | the OS voice; no microphone conversation |
 | `voice.txt` | ElevenLabs voice id | the default voice |
 
-Every setting read from the environment is named `KITE_<NAME>` (the older `LYBOARD_<NAME>` is still read). Those meant for users are listed in [DRIVING.md](DRIVING.md#settings). The rest are for checking and recording: `KITE_DEMO`, `KITE_AUTOPLAY` (types the given inputs by itself, in a window with another title), `KITE_POS`, `KITE_SIZE`, `KITE_SHOT` (saves a picture of the window), `KITE_KEY_WINDOW`, `KITE_DEBUG` and others; search for `sys::var(` in `src/`.
+Every setting read from the environment is named `APERIT_<NAME>` (the older `LYBOARD_<NAME>` is still read). Those meant for users are listed in [DRIVING.md](DRIVING.md#settings). The rest are for checking and recording: `APERIT_DEMO`, `APERIT_AUTOPLAY` (types the given inputs by itself, in a window with another title), `APERIT_POS`, `APERIT_SIZE`, `APERIT_SHOT` (saves a picture of the window), `APERIT_KEY_WINDOW`, `APERIT_DEBUG` and others; search for `sys::var(` in `src/`.
 
 ## Checking a change without touching the desktop
 
 A test window must not take the keyboard or the mouse, and must not be mistaken for the real one. Start a copy of the executable from an empty folder, off screen, with scripted input:
 
 ```sh
-KITE_AUTOPLAY="plan the workshop|!set k2 chosen o2" KITE_POS="-2600,-2400" KITE_SHOT=shot.bmp KITE_SHOT_AT=9000 ./kite
+APERIT_AUTOPLAY="plan the workshop|!set k2 chosen o2" APERIT_POS="-2600,-2400" APERIT_SHOT=shot.bmp APERIT_SHOT_AT=9000 ./aperit
 ```
 
-`KITE_AUTOPLAY` entries are typed one after another; an entry starting with `!` is applied as a gesture of the user instead. To drive the board from outside in the same run, add `KITE_PROTOCOL_PORT` or `KITE_MCP_PORT` and use the socket or MCP ([DRIVING.md](DRIVING.md)).
+`APERIT_AUTOPLAY` entries are typed one after another; an entry starting with `!` is applied as a gesture of the user instead. To drive the board from outside in the same run, add `APERIT_PROTOCOL_PORT` or `APERIT_MCP_PORT` and use the socket or MCP ([DRIVING.md](DRIVING.md)).
 
 ## Layout of the code
 
@@ -76,13 +76,13 @@ KITE_AUTOPLAY="plan the workshop|!set k2 chosen o2" KITE_POS="-2600,-2400" KITE_
 | `src/agent.rs` | The Claude API engine: the loop of model call and tool use; `use_tool`, shared with `openai.rs` |
 | `src/cc.rs` | The Claude Code engine |
 | `src/openai.rs` | The engine for OpenAI-compatible APIs |
-| `src/agui.rs` | The AG-UI engine (KITE as an AG-UI client) |
-| `src/mcp.rs` | KITE as an MCP server: the inside door for the Claude Code engine, the outside door for other agents |
+| `src/agui.rs` | The AG-UI engine (APERIT as an AG-UI client) |
+| `src/mcp.rs` | APERIT as an MCP server: the inside door for the Claude Code engine, the outside door for other agents |
 | `src/feed.rs` | The protocol socket (line session) |
 | `src/hub.rs` | Numbered events for those who follow the board from outside |
-| `src/prompt.md`, `src/worker.md` | Instructions for the model and for workers (`{{PARTS}}` is filled from the card type table). `prompt.ko.md` and `worker.ko.md` are the older Korean ones, used with `KITE_PROMPT=ko`; they are no longer kept in step |
+| `src/prompt.md`, `src/worker.md` | Instructions for the model and for workers (`{{PARTS}}` is filled from the card type table). `prompt.ko.md` and `worker.ko.md` are the older Korean ones, used with `APERIT_PROMPT=ko`; they are no longer kept in step |
 | `src/tools.rs` | Tools: commands, files, memory notes, browser, web |
-| `src/permit.rs` | What KITE's own engines may do without asking, and the question card when they may not |
+| `src/permit.rs` | What APERIT's own engines may do without asking, and the question card when they may not |
 | `src/jobs.rs` | Workers: delegated jobs that run beside the conversation |
 | `src/decide.rs`, `src/jev.rs` | Small decisions before and after the main model (Jev) |
 | `src/memory.rs`, `src/vault.rs` | Past turns, core memory, the Obsidian vault |
@@ -102,7 +102,7 @@ A new card type is a change to the protocol, so it starts there. (A kind that on
 2. `protocol/SPEC.md` section 6 and the table in `protocol/GUIDE.md` (a test fails until the guide's table matches `PARTS`). Add a case under `protocol/conformance`.
 3. `src/ui.rs`: draw it in `draw_body` (the compiler points at the missing kind).
 4. `android/.../core/Board.kt`: the same entry in `PARTS` (a test compares it with `core.rs`), and its drawing in `ui/Cards.kt`.
-5. `protocol/js/kite-protocol.js`: the same entry in `PARTS`, and its drawing in `protocol/web/kite-board.js`.
+5. `protocol/js/patet.js`: the same entry in `PARTS`, and its drawing in `protocol/web/patet-board.js`.
 
 The instructions for the model need no edit: the card type table in them is built from `PARTS`.
 
@@ -112,8 +112,8 @@ One codebase, two apps (`productFlavors` in `android/app/build.gradle.kts`).
 
 | Flavor | App | Engine |
 |---|---|---|
-| `free` | KITE (`com.fidenit.kite`) | The phone calls the Claude API with the key the user enters. As an advanced choice, the Claude Code on a server of the user's (SSH) |
-| `pro` | KITE Pro (`com.fidenit.kite.pro`) | Nothing to enter. The same requests go to a relay server, which holds the key and meters usage |
+| `free` | APERIT (`com.fidenit.kite`) | The phone calls the Claude API with the key the user enters. As an advanced choice, the Claude Code on a server of the user's (SSH) |
+| `pro` | APERIT Pro (`com.fidenit.kite.pro`) | Nothing to enter. The same requests go to a relay server, which holds the key and meters usage |
 
 ```sh
 cd android
@@ -141,7 +141,7 @@ JDK 17 or newer (the `jbr` of Android Studio) and the Android SDK (`ANDROID_HOME
 
 ## The relay
 
-The server KITE Pro talks to (it holds the key, meters and limits each user, checks the subscription) is kept in a separate private repository. What the app relies on:
+The server APERIT Pro talks to (it holds the key, meters and limits each user, checks the subscription) is kept in a separate private repository. What the app relies on:
 
 - The `baseUrl` of the Anthropic Java SDK is the relay's address and the `apiKey` is the subscriber's token. The address is given at build time (`-PkiteRelayUrl=https://…`) and is not in this repository.
 - Over the month's limit the relay answers HTTP 402, which the app shows as "this month's usage is used up".
@@ -151,5 +151,5 @@ The server KITE Pro talks to (it holds the key, meters and limits each user, che
 
 1. Bump `version` in `Cargo.toml` (the app) and, when the protocol changed, `VERSION` in `protocol/rust/src/lang.rs`, the crate version, and `protocol/CHANGELOG.md`.
 2. Add the release to [CHANGELOG.md](../CHANGELOG.md). Release notes are written in English.
-3. `.\run.ps1 test`, then `.\run.ps1 pack`; zip `portable\KITE` without `key.txt`, `data\` and `vault\`.
+3. `.\run.ps1 test`, then `.\run.ps1 pack`; zip `portable\APERIT` without `key.txt`, `data\` and `vault\`.
 4. Tag `v<version>` and attach the zip to a GitHub release.

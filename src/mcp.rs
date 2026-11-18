@@ -1,13 +1,13 @@
-//! KITE as an MCP server (Streamable HTTP, JSON answers, 127.0.0.1 only). Two doors:
+//! APERIT as an MCP server (Streamable HTTP, JSON answers, 127.0.0.1 only). Two doors:
 //!
-//! - **Inside**: KITE's own Claude Code engine runs in another process and cannot call KITE's tools
+//! - **Inside**: APERIT's own Claude Code engine runs in another process and cannot call APERIT's tools
 //!   (routes, memory notes, reading the board, workers) directly, so they are offered to it here.
 //!   The address and the token change on every start.
 //! - **Outside**: any agent that speaks MCP (Claude Code, Cursor, an agent of your own) can use the running
 //!   board as its screen: write it with `screen`, read it with `board_read`, and learn what the user did with
-//!   `events`. This is the MCP binding of the KITE Protocol (protocol/SPEC.md). Off unless a port is set.
+//!   `events`. This is the MCP binding of PATET (protocol/SPEC.md). Off unless a port is set.
 //!
-//! One request per connection. Tools run inside the KITE process, so they reach the screen as they are.
+//! One request per connection. Tools run inside the APERIT process, so they reach the screen as they are.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 use crate::llm::Msg;
 
-/// Tools offered to KITE's own Claude Code engine. File, command and web tools are Claude Code's own.
+/// Tools offered to APERIT's own Claude Code engine. File, command and web tools are Claude Code's own.
 const INSIDE: [&str; 18] = [
     "route_find", "place_find", "note_search", "note_read", "note_write", "note_append", "board_read", "browser_text", "browser_eval", "job_start", "job_list", "job_tell", "job_stop",
     "job_result", "page_open", "page_read", "page_run", "page_show",
@@ -30,20 +30,20 @@ pub const GUIDE: &str = include_str!("../protocol/GUIDE.md");
 /// Kinds that make the renderer load or open something the writer chose.
 pub const MEDIA_KINDS: [&str; 3] = ["web", "image", "doc"];
 
-/// May a writer outside KITE create those? Off unless KITE_OUTSIDE_MEDIA is set or `outside-media.txt`
+/// May a writer outside APERIT create those? Off unless APERIT_OUTSIDE_MEDIA is set or `outside-media.txt`
 /// next to the program says `yes` (the Keys window writes it).
 pub fn outside_media() -> bool {
     crate::sys::var("OUTSIDE_MEDIA").ok().or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("outside-media.txt")).ok()).map(|v| matches!(v.trim(), "1" | "yes" | "true")).unwrap_or(false)
 }
 
-/// This renderer's description of itself (protocol/SPEC.md section 6), as told to a writer outside KITE.
+/// This renderer's description of itself (protocol/SPEC.md section 6), as told to a writer outside APERIT.
 pub fn description() -> Vec<String> {
     let kinds: Vec<&str> = crate::core::kind_names().into_iter().filter(|k| outside_media() || !MEDIA_KINDS.contains(k)).collect();
-    vec![format!("kite-protocol {}", crate::lang::VERSION), format!("renderer KITE {}", env!("CARGO_PKG_VERSION")), format!("kinds {}", kinds.join(" ")), "features tell".to_string()]
+    vec![format!("patet {}", crate::lang::VERSION), format!("renderer APERIT {}", env!("CARGO_PKG_VERSION")), format!("kinds {}", kinds.join(" ")), "features tell".to_string()]
 }
 
 /// What an MCP client shows its model about this server (the `instructions` of `initialize`).
-const INSTRUCTIONS: &str = "KITE is a screen for an AI: a board of cards instead of a chat transcript. You do not answer the user in prose; you edit their board, and the board is the answer. \
+const INSTRUCTIONS: &str = "APERIT is a screen for an AI: a board of cards instead of a chat transcript. You do not answer the user in prose; you edit their board, and the board is the answer. \
 Write the board with the `screen` tool, one op per line (say, topic, card, set, add, upd, del, ...). Read what is on it with `board_read` before you change it, and change existing cards instead of adding new ones. \
 When you need a decision or a value from the user, put a `decision` or `input` card on the board and call `events` to wait for what they pick or type. \
 Call `guide` once before your first `screen` call: it returns the op syntax, the card types and how to compose a board that reads at a glance.";
@@ -92,7 +92,7 @@ pub fn inside_config(stop: &Arc<AtomicBool>) -> Option<std::path::PathBuf> {
 }
 
 fn client_config(port: u16, token: &str) -> Value {
-    json!({ "mcpServers": { "kite": { "type": "http", "url": format!("http://127.0.0.1:{port}/mcp"), "headers": { "Authorization": format!("Bearer {token}") } } } })
+    json!({ "mcpServers": { "aperit": { "type": "http", "url": format!("http://127.0.0.1:{port}/mcp"), "headers": { "Authorization": format!("Bearer {token}") } } } })
 }
 
 /// The port of the outside door when the outside-agent engine is chosen and no port is set.
@@ -106,13 +106,13 @@ pub fn client_config_text(port: u16, token: &str) -> String {
 /// Where the outside door is listening, once it is: (port, token).
 static OUTSIDE: OnceLock<(u16, String)> = OnceLock::new();
 
-/// The port asked for the outside door: KITE_MCP_PORT, or the number in `mcp-port.txt` next to the program.
+/// The port asked for the outside door: APERIT_MCP_PORT, or the number in `mcp-port.txt` next to the program.
 pub fn outside_port_setting() -> Option<u16> {
     let text = crate::sys::var("MCP_PORT").ok().or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("mcp-port.txt")).ok())?;
     text.trim().parse::<u16>().ok().filter(|p| *p >= 1024)
 }
 
-/// Open the outside door on 127.0.0.1:`port` (once). The token is KITE_MCP_TOKEN, or one made on first use
+/// Open the outside door on 127.0.0.1:`port` (once). The token is APERIT_MCP_TOKEN, or one made on first use
 /// and kept in data/mcp-token.txt. A ready-to-paste client config is written to data/mcp.json.
 pub fn start_outside(port: u16) -> Result<(u16, String), String> {
     if let Some(open) = OUTSIDE.get() {
@@ -139,7 +139,7 @@ pub fn outside() -> Option<(u16, String)> {
 
 /// The command that connects Claude Code to the outside door.
 pub fn claude_code_command(port: u16, token: &str) -> String {
-    format!("claude mcp add --transport http kite http://127.0.0.1:{port}/mcp --header \"Authorization: Bearer {token}\"")
+    format!("claude mcp add --transport http aperit http://127.0.0.1:{port}/mcp --header \"Authorization: Bearer {token}\"")
 }
 
 /// Tool definitions for an outside agent.
@@ -147,7 +147,7 @@ fn outside_tools() -> Value {
     json!([
         {
             "name": "screen",
-            "description": "Edit the user's KITE board. `ops` holds board ops, one per line, applied in order; a line that fails is skipped and the rest still run. Returns `applied`, or the rejected lines with a code and a reason each. This is how you answer the user: there is no chat. Call `guide` first for the syntax and the card types.",
+            "description": "Edit the user's APERIT board. `ops` holds board ops, one per line, applied in order; a line that fails is skipped and the rest still run. Returns `applied`, or the rejected lines with a code and a reason each. This is how you answer the user: there is no chat. Call `guide` first for the syntax and the card types.",
             "inputSchema": { "type": "object", "properties": { "ops": { "type": "string", "description": "Ops, one per line. Example:\nsay Two venues compared. Pick one.\ntopic ws Team Workshop\ncard k1 decision ws 3x3 Which venue?\nadd k1 o1 Gangneung | Far, but better facilities\nadd k1 o2 Gapyeong | Close and cheaper" } }, "required": ["ops"] }
         },
         {
@@ -165,7 +165,7 @@ fn outside_tools() -> Value {
         },
         {
             "name": "guide",
-            "description": "The KITE Protocol guide: every op, every card type with its fields and limits, and how to compose a board that reads at a glance. Read it once before your first `screen` call.",
+            "description": "The PATET guide: every op, every card type with its fields and limits, and how to compose a board that reads at a glance. Read it once before your first `screen` call.",
             "inputSchema": { "type": "object", "properties": {} }
         }
     ])
@@ -275,7 +275,7 @@ fn serve(mut conn: std::net::TcpStream, door: &Door) {
             let mut v = json!({
                 "protocolVersion": req["params"]["protocolVersion"].as_str().unwrap_or("2025-06-18"),
                 "capabilities": { "tools": {} },
-                "serverInfo": { "name": "kite", "version": env!("CARGO_PKG_VERSION") },
+                "serverInfo": { "name": "aperit", "version": env!("CARGO_PKG_VERSION") },
             });
             if door.outside {
                 v["instructions"] = INSTRUCTIONS.into();
@@ -315,7 +315,7 @@ fn serve(mut conn: std::net::TcpStream, door: &Door) {
     reply("200 OK", &json!({ "jsonrpc": "2.0", "id": req["id"], "result": result }).to_string());
 }
 
-/// Run one of KITE's own tools. What lives on the screen side (the board, browser cards) is asked of the screen thread.
+/// Run one of APERIT's own tools. What lives on the screen side (the board, browser cards) is asked of the screen thread.
 fn inside_call(name: &str, input: &Value) -> (String, bool) {
     if let Some(stop) = STOP.lock().unwrap_or_else(|e| e.into_inner()).clone() {
         crate::tools::set_stop(stop);
@@ -380,7 +380,7 @@ mod tests {
         let auth = "Authorization: Bearer t0k\r\n";
         let (status, v) = post(port, auth, r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#);
         assert!(status.contains("200"), "{status}");
-        assert_eq!(v["result"]["serverInfo"]["name"], "kite");
+        assert_eq!(v["result"]["serverInfo"]["name"], "aperit");
         assert!(v["result"]["instructions"].as_str().unwrap().contains("screen"));
         let (_, v) = post(port, auth, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
         let names: Vec<&str> = v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();

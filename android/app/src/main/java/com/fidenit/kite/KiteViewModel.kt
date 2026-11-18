@@ -253,7 +253,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** KITE Pro: 이번 달 사용량을 중계 서버에 묻는다. */
+    /** APERIT Pro: 이번 달 사용량을 중계 서버에 묻는다. */
     suspend fun usage(): String = withContext(Dispatchers.IO) {
         try {
             val token = store.relayToken.trim()
@@ -312,7 +312,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             val memory = tools.list()
             if (memory.isNotEmpty()) t.append("<memory>\n$memory\n</memory>\n")
-            t.append("<env>\n지금: $now\n기기: 안드로이드 폰의 KITE 앱 (컴퓨터와 파일 시스템은 없다)\n</env>\n")
+            t.append("<env>\n지금: $now\n기기: 안드로이드 폰의 APERIT 앱 (컴퓨터와 파일 시스템은 없다)\n</env>\n")
         }
         t.append("<input>$input</input>")
         return t.toString()
