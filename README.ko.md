@@ -2,6 +2,8 @@
 
 **Kinetic Interactive Task Environment** · [English](README.md)
 
+> **KITE는 APERIT으로 이름이 바뀝니다** (라틴어 *aperit*: 열어 보인다). 저장소 이름은 이미 바뀌었고, 프로그램·파일·설정의 이름은 다음 릴리스까지 KITE로 남습니다. 바탕이 되는 규격은 [PATET](https://github.com/fidenit/patet)입니다.
+
 > 글자로 가득 찬 화면은 AI를 쓰는 가장 나쁜 방법이다.
 
 인류는 놀라운 엔진을 발명해 놓고, 그것을 나무 바퀴 달린 마차에 얹었다. 엔진은 AI이고, 마차는 글자로 가득 찬 채팅창이다.

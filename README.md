@@ -2,6 +2,8 @@
 
 **Kinetic Interactive Task Environment** · [한국어](README.ko.md)
 
+> **KITE is becoming APERIT** (Latin *aperit*: it opens, it shows). This repository already carries the new name; the program, its files and its settings still say KITE until the next release. The protocol it is built on is [PATET](https://github.com/fidenit/patet).
+
 > A screen full of text is the worst way to use AI.
 
 Humanity built an extraordinary engine and bolted it to a wooden cart. The engine is AI. The cart is a chat window full of text.
