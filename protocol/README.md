@@ -1,5 +1,7 @@
 # KITE Protocol
 
+> **This protocol is now [PATET](https://github.com/fidenit/patet), in a repository of its own.** New work happens there (version 0.4, with new names on the wire). This folder is the 0.3 copy the app is still built with, until the app moves to PATET.
+
 A line language an AI writes to build and edit a screen, and reads back to see what is on it.
 
 ```

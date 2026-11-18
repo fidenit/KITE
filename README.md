@@ -22,7 +22,7 @@ Nothing like it existed, so we built it. We hope it makes working with AI less t
 
 | | What it is | Where |
 |---|---|---|
-| **KITE Protocol** | The open language an AI writes to build and edit a screen: one op per line, 14 kinds of cards, answers from the user coming back the same way. Any model or agent can write it; any app can render it | [protocol/](protocol) |
+| **PATET** | The open language an AI writes to build and edit a screen: one op per line, 14 kinds of cards, answers from the user coming back the same way. Any model or agent can write it; any app can render it | [protocol/](https://github.com/fidenit/patet) |
 | **KITE** and **KITE Pro** | The first products built on it: the desktop app for Windows and macOS described below, and the Android apps | this page, [android/](android) |
 
 ![KITE by FIDENIT: a wall of text gives way to a live board. One request plans a workshop; the route, schedule, budget and checklist appear, and the one decision that needs your confirmation is always shown at the left.](docs/images/hero.gif)
@@ -109,7 +109,7 @@ Keys, the board and the memory vault live in the program's own folder. Move the 
 
 ### Use it with your own agent
 
-KITE draws whatever writes the [KITE Protocol](protocol). Your agent does not have to be Claude, and you do not have to change it.
+KITE draws whatever writes [PATET](https://github.com/fidenit/patet). Your agent does not have to be Claude, and you do not have to change it.
 
 **An agent that speaks MCP** (Claude Code, Cursor, one of your own):
 
@@ -131,7 +131,7 @@ add k2 o2 Gapyeong | Close and cheaper
 
 When the user taps Gapyeong, the agent hears `user set k2 chosen o2`.
 
-How each of these works, with the settings: [docs/DRIVING.md](docs/DRIVING.md). The language itself: [protocol/SPEC.md](protocol/SPEC.md), and the [guide to give your model](protocol/GUIDE.md). How it compares with A2UI, json-render, AG-UI and MCP Apps: [protocol/COMPARISON.md](protocol/COMPARISON.md).
+How each of these works, with the settings: [docs/DRIVING.md](docs/DRIVING.md). The language itself: [protocol/SPEC.md](https://github.com/fidenit/patet/blob/main/SPEC.md), and the [guide to give your model](https://github.com/fidenit/patet/blob/main/GUIDE.md). How it compares with A2UI, json-render, AG-UI and MCP Apps: [protocol/COMPARISON.md](https://github.com/fidenit/patet/blob/main/COMPARISON.md).
 
 ## Know before you run
 
@@ -151,9 +151,9 @@ How each of these works, with the settings: [docs/DRIVING.md](docs/DRIVING.md). 
 
 ## For developers
 
-**The protocol** is in [protocol/](protocol): the [specification](protocol/SPEC.md), the [guide for agents](protocol/GUIDE.md), a [comparison](protocol/COMPARISON.md) with other formats, a JSON schema, examples, [conformance cases](protocol/conformance), and implementations with no dependencies in Rust and JavaScript. Three implementations pass the conformance cases: Rust (the desktop app), Kotlin (the Android app) and JavaScript.
+**The protocol** is in [protocol/](https://github.com/fidenit/patet): the [specification](https://github.com/fidenit/patet/blob/main/SPEC.md), the [guide for agents](https://github.com/fidenit/patet/blob/main/GUIDE.md), a [comparison](https://github.com/fidenit/patet/blob/main/COMPARISON.md) with other formats, a JSON schema, examples, [conformance cases](https://github.com/fidenit/patet/tree/main/conformance), and implementations with no dependencies in Rust and JavaScript. Three implementations pass the conformance cases: Rust (the desktop app), Kotlin (the Android app) and JavaScript.
 
-**A board in your own web app:** [`<kite-board>`](protocol/web) is one custom element. What your agent writes goes in as lines, and what the user does comes out as events.
+**A board in your own web app:** [`<patet-board>`](https://github.com/fidenit/patet/tree/main/web) is one custom element. What your agent writes goes in as lines, and what the user does comes out as events.
 
 **The desktop app** is Rust and [egui](https://github.com/emilk/egui), with no web front end. With a Claude engine, the model's output is the op stream, applied as each line arrives; the board, written back in the same language, is what the model sees on the next turn. Build steps, the layout of the code and how to add a new kind of card: [docs/DEVELOPING.md](docs/DEVELOPING.md).
 

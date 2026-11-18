@@ -22,7 +22,7 @@ KITE가 그 한곳이다. 필요한 것을 말하면 AI가 화면을 직접 짠�
 
 | | 무엇인가 | 어디에 |
 |---|---|---|
-| **KITE Protocol** | AI가 화면을 만들고 고칠 때 쓰는 공개 언어. 한 줄에 조작 하나, 카드 14종, 사용자의 답도 같은 언어로 돌아온다. 어떤 모델이나 에이전트든 쓸 수 있고 어떤 앱이든 그릴 수 있다 | [protocol/](protocol) (영어) |
+| **PATET** | AI가 화면을 만들고 고칠 때 쓰는 공개 언어. 한 줄에 조작 하나, 카드 14종, 사용자의 답도 같은 언어로 돌아온다. 어떤 모델이나 에이전트든 쓸 수 있고 어떤 앱이든 그릴 수 있다 | [protocol/](https://github.com/fidenit/patet) (영어) |
 | **KITE**, **KITE Pro** | 이 규격으로 만든 첫 제품. 아래에서 설명하는 Windows·macOS 앱과 안드로이드 앱 | 이 문서, [android/](android) |
 
 ![FIDENIT의 KITE: 글자의 벽이 걷히고 살아 있는 판이 나타난다. 요청 한 번으로 워크숍의 경로, 일정, 예산, 준비 목록이 놓이고, 컨펌이 필요한 한 가지는 왼쪽에 늘 보여 준다.](docs/images/hero.gif)
@@ -109,7 +109,7 @@ Linux: GTK와 WebKit 라이브러리(`glib-sys`)가 없는 컴퓨터에서는 �
 
 ### 내 에이전트로 쓰기
 
-KITE는 [KITE Protocol](protocol)을 쓰는 것이면 무엇이든 그린다. 에이전트가 Claude일 필요도, 에이전트를 고칠 필요도 없다.
+KITE는 [PATET](https://github.com/fidenit/patet)을 쓰는 것이면 무엇이든 그린다. 에이전트가 Claude일 필요도, 에이전트를 고칠 필요도 없다.
 
 **MCP를 쓰는 에이전트** (Claude Code, Cursor, 직접 만든 것):
 
@@ -131,7 +131,7 @@ add k2 o2 가평 | 가깝고 저렴함
 
 사용자가 가평을 누르면 에이전트는 `user set k2 chosen o2`를 받는다.
 
-방법과 설정은 [docs/DRIVING.md](docs/DRIVING.md)(영어), 언어 자체는 [protocol/SPEC.md](protocol/SPEC.md), 모델에게 줄 안내서는 [protocol/GUIDE.md](protocol/GUIDE.md)에 있다. A2UI, json-render, AG-UI, MCP Apps 등과 무엇이 다른지는 [protocol/COMPARISON.md](protocol/COMPARISON.md)(영어)에 정리했다.
+방법과 설정은 [docs/DRIVING.md](docs/DRIVING.md)(영어), 언어 자체는 [protocol/SPEC.md](https://github.com/fidenit/patet/blob/main/SPEC.md), 모델에게 줄 안내서는 [protocol/GUIDE.md](https://github.com/fidenit/patet/blob/main/GUIDE.md)에 있다. A2UI, json-render, AG-UI, MCP Apps 등과 무엇이 다른지는 [protocol/COMPARISON.md](https://github.com/fidenit/patet/blob/main/COMPARISON.md)(영어)에 정리했다.
 
 ## 실행하기 전에 알아 둘 것
 
@@ -151,9 +151,9 @@ add k2 o2 가평 | 가깝고 저렴함
 
 ## 개발자에게
 
-**규격**은 [protocol/](protocol)에 있다(영어): [규격 문서](protocol/SPEC.md), [에이전트용 안내서](protocol/GUIDE.md), 다른 형식과의 [비교](protocol/COMPARISON.md), JSON 스키마, 예제, [적합성 시험 사례](protocol/conformance), 의존성 없는 Rust·JavaScript 구현. 적합성 사례는 세 구현이 통과한다: Rust(데스크톱 앱), Kotlin(안드로이드 앱), JavaScript.
+**규격**은 [protocol/](https://github.com/fidenit/patet)에 있다(영어): [규격 문서](https://github.com/fidenit/patet/blob/main/SPEC.md), [에이전트용 안내서](https://github.com/fidenit/patet/blob/main/GUIDE.md), 다른 형식과의 [비교](https://github.com/fidenit/patet/blob/main/COMPARISON.md), JSON 스키마, 예제, [적합성 시험 사례](https://github.com/fidenit/patet/tree/main/conformance), 의존성 없는 Rust·JavaScript 구현. 적합성 사례는 세 구현이 통과한다: Rust(데스크톱 앱), Kotlin(안드로이드 앱), JavaScript.
 
-**내 웹 앱에 보드 넣기:** [`<kite-board>`](protocol/web)는 커스텀 엘리먼트 하나다. 에이전트가 쓴 줄을 넣으면 그려지고, 사용자가 한 일은 이벤트로 나온다.
+**내 웹 앱에 보드 넣기:** [`<patet-board>`](https://github.com/fidenit/patet/tree/main/web)는 커스텀 엘리먼트 하나다. 에이전트가 쓴 줄을 넣으면 그려지고, 사용자가 한 일은 이벤트로 나온다.
 
 **데스크톱 앱**은 Rust와 [egui](https://github.com/emilk/egui)로 만들었고 웹 화면은 없다. Claude 엔진에서는 모델의 출력이 곧 조작 줄이고, 줄이 도착하는 대로 반영된다. 그 판을 같은 언어로 다시 적은 것이 다음 턴에 모델이 보는 전부다. 빌드 방법, 코드의 구조, 새 카드 종류를 더하는 법은 [docs/DEVELOPING.md](docs/DEVELOPING.md)(영어)에 있다.
 
