@@ -1,5 +1,6 @@
-// 화면 트리(보드)와 조작. 데스크톱의 src/core.rs 를 그대로 옮긴 것이다.
-// 부품 목록(PARTS)과 검사 규칙은 core.rs 와 같아야 한다: 모델에게 주는 부품 표가 여기서 만들어진다.
+// The board and its ops: the KITE Protocol (protocol/SPEC.md) in Kotlin, ported from the reference
+// implementation protocol/rust/src/core.rs. The card types (PARTS), the checks, the codes and the messages
+// must stay the same as there; the tests run the protocol's conformance cases against this file.
 package com.fidenit.kite.core
 
 import java.util.TreeMap
@@ -32,26 +33,26 @@ class Part(val kind: Kind, val name: String, val w: Int, val h: Int, val purpose
 
 /** 등록된 부품들. 여기 적힌 순서대로 모델에게 소개된다. */
 val PARTS: List<Part> = listOf(
-    Part(Kind.Status, "status", 2, 1, "상태 한 가지", listOf(Field("state", 8, "state: ok/run/wait/fail/idle"), Field("text", 80, "text(80)")), ""),
-    Part(Kind.Metric, "metric", 2, 2, "숫자 하나", listOf(Field("value", 14, "value(14)"), Field("unit", 8, "unit(8)"), Field("delta", 14, "delta(14, +/-로 시작하면 색이 붙음)"), Field("text", 60, "text(60)")), ""),
-    Part(Kind.Chart, "chart", 4, 3, "수량을 그림으로: 비교(막대), 변화(꺾은선), 몫(도넛)", listOf(Field("unit", 8, "unit(8)"), Field("form", 8, "form: bar(기본)/line/donut")), "이름 | 숫자"),
-    Part(Kind.Route, "route", 6, 5, "경로·동선: 들르는 곳의 위치와 길의 모양, 구간별 거리·시간을 직접 그린다", listOf(Field("total", 40, "total(전체 거리·시간, 40)"), Field("text", 80, "text(80)")), "이름 | 위도,경도 | 다음 곳까지의 거리·시간"),
-    Part(Kind.Draw, "draw", 5, 4, "다른 부품으로 안 되는 그림을 직접 그린다: 구조도, 흐름도, 자리 배치, 관계도", listOf(Field("text", 80, "text(80)")), "도형 | 좌표 | 글 | 색 | 크기"),
-    Part(Kind.Image, "image", 4, 3, "그림 파일이나 그림 주소를 그대로 보여 준다: 사진, 캡처, 만든 그림", listOf(Field("src", 600, "src: 그림 파일의 절대 경로 또는 그림의 웹 주소"), Field("text", 80, "text(그림 설명, 80)")), ""),
-    Part(Kind.Table, "table", 4, 3, "여러 속성의 비교·목록", listOf(Field("cols", 200, "cols: 열이름 | 열이름 ...")), "칸 | 칸 ... (최대 6칸)"),
-    Part(Kind.Progress, "progress", 3, 3, "진행 중인 작업", listOf(Field("pct", 3, "pct(0~100)"), Field("text", 60, "text(60)")), "done/run/todo/fail | 단계 이름"),
-    Part(Kind.Checklist, "checklist", 3, 3, "할 일 (사용자가 직접 체크할 수 있음)", listOf(), "done/todo | 내용"),
-    Part(Kind.Decision, "decision", 3, 3, "사용자의 결정이 필요한 것 (고르기)", listOf(Field("text", 120, "text(질문, 120)"), Field("chosen", 24, "")), "선택지 이름 | 한 줄 설명"),
-    Part(Kind.Input, "input", 3, 3, "사용자에게서 값을 받아야 하는 것 (적어 넣기): 날짜, 이름, 숫자, 주소", listOf(Field("text", 120, "text(무엇을 왜 묻는지, 120)"), Field("sent", 8, "")), "칸 이름 | 안내 글(예시) 또는 칸의 종류: date / number / slider 0~100 단위"),
-    Part(Kind.Timeline, "timeline", 3, 3, "시간 순서", listOf(), "시점 | 내용 | done/run/todo(생략 가능)"),
-    Part(Kind.Note, "note", 3, 2, "위 어느 것으로도 안 되는 짧은 글", listOf(Field("text", 240, "text(240)")), ""),
-    Part(Kind.Web, "web", 6, 5, "웹 페이지나 HTML 파일을 그대로 보여 주는 작은 브라우저", listOf(Field("url", 600, "url: 웹 주소 또는 내 컴퓨터의 파일 절대 경로")), ""),
+    Part(Kind.Status, "status", 2, 1, "one state", listOf(Field("state", 8, "state: ok/run/wait/fail/idle"), Field("text", 80, "text(80)")), ""),
+    Part(Kind.Metric, "metric", 2, 2, "one number", listOf(Field("value", 14, "value(14)"), Field("unit", 8, "unit(8)"), Field("delta", 14, "delta(14, colored when it starts with + or -)"), Field("text", 60, "text(60)")), ""),
+    Part(Kind.Chart, "chart", 4, 3, "quantities as a picture: comparison (bar), change over time (line), shares (donut)", listOf(Field("unit", 8, "unit(8)"), Field("form", 8, "form: bar(default)/line/donut")), "name | number"),
+    Part(Kind.Route, "route", 6, 5, "a route: where the stops are, the shape of the way, distance and time per leg", listOf(Field("total", 40, "total(whole distance and time, 40)"), Field("text", 80, "text(80)")), "name | lat,lon | distance and time to the next stop"),
+    Part(Kind.Draw, "draw", 5, 4, "a drawing no other type can show: structure, flow, seating, relations", listOf(Field("text", 80, "text(80)")), "shape | coordinates | text | color | size"),
+    Part(Kind.Image, "image", 4, 3, "a picture file or picture address shown as it is: a photo, a capture, a generated image", listOf(Field("src", 600, "src: absolute path of a picture file, or the web address of a picture"), Field("text", 80, "text(caption, 80)")), ""),
+    Part(Kind.Table, "table", 4, 3, "a comparison or a list with several attributes", listOf(Field("cols", 200, "cols: column | column ...")), "cell | cell ... (up to 6 cells)"),
+    Part(Kind.Progress, "progress", 3, 3, "work in progress", listOf(Field("pct", 3, "pct(0-100)"), Field("text", 60, "text(60)")), "done/run/todo/fail | step name"),
+    Part(Kind.Checklist, "checklist", 3, 3, "things to do (the user can tick them)", listOf(), "done/todo | text"),
+    Part(Kind.Decision, "decision", 3, 3, "something the user has to decide (pick one)", listOf(Field("text", 120, "text(the question, 120)"), Field("chosen", 24, "")), "option name | one-line description"),
+    Part(Kind.Input, "input", 3, 3, "values the user has to give (fill in): a date, a name, a number, an address", listOf(Field("text", 120, "text(what is asked and why, 120)"), Field("sent", 8, "")), "box name | hint (an example) or the kind of box: date / number / slider 0~100 unit"),
+    Part(Kind.Timeline, "timeline", 3, 3, "things in order of time", listOf(), "when | text | done/run/todo (optional)"),
+    Part(Kind.Note, "note", 3, 2, "a short text that fits none of the above", listOf(Field("text", 240, "text(240)")), ""),
+    Part(Kind.Web, "web", 6, 5, "a web page or an HTML file shown as it is, in a small browser", listOf(Field("url", 600, "url: a web address, or the absolute path of a file on this computer")), ""),
 )
 
 /** 모델에게 줄 부품 표 (마크다운). 등록된 내용에서 만든다. */
 fun partsTable(): String {
-    val t = StringBuilder("| 종류 | 용도 | 필드 (글자 한도) | 항목 형식 | 기본 크기 |\n|---|---|---|---|---|\n")
-    fun cell(s: String) = if (s.isEmpty()) "없음" else s.replace("|", "\\|")
+    val t = StringBuilder("| Type | Use | Fields (length limit) | Item | Default size |\n|---|---|---|---|---|\n")
+    fun cell(s: String) = if (s.isEmpty()) "none" else s.replace("|", "\\|")
     for (p in PARTS) {
         val fields = p.fields.map { it.doc }.filter { it.isNotEmpty() }
         t.append("| ${p.name} | ${p.purpose} | ${cell(fields.joinToString(", "))} | ${cell(p.items)} | ${p.w}x${p.h} |\n")
@@ -116,8 +117,11 @@ class Card(
 
 class Shelved(val topic: Topic, val cards: List<Card>)
 
-/** 조작이 거부된 이유. */
-class Rejected(message: String) : Exception(message)
+/** Why an op was not applied: a stable code for programs, an English message for whoever wrote the line. */
+class Rejected(val code: String, message: String) : Exception(message) {
+    /** The verdict as the protocol writes it: `<code> <message>`. */
+    val line: String get() = "$code $message"
+}
 
 fun chars(s: String): Int = s.codePointCount(0, s.length)
 
@@ -143,7 +147,7 @@ class Board {
     val notes: MutableList<String> = mutableListOf()
 
     fun card(id: String): Card? = cards.firstOrNull { it.id == id }
-    private fun cardMut(id: String): Card = card(id) ?: throw Rejected("카드 '$id' 없음")
+    private fun cardMut(id: String): Card = card(id) ?: throw Rejected("no-such-card", "no card '$id'")
 
     /** 글 안의 {이름} 을 이름 붙은 값으로 바꿔 보여 준다. */
     fun show(s: String): String {
@@ -155,26 +159,26 @@ class Board {
     fun apply(op: Op, by: Author) {
         when (op) {
             is Op.Topic -> {
-                if (!validId(op.id)) throw Rejected("주제 ID '${op.id}' 형식 오류")
-                if (shelf.any { it.topic.id == op.id }) throw Rejected("주제 '${op.id}' 는 보관되어 있음. 다시 쓰려면 restore ${op.id} 로 꺼낸다")
+                if (!validId(op.id)) throw Rejected("bad-id", "topic id '${op.id}' is not valid (1 to 24 letters, digits, _ or -)")
+                if (shelf.any { it.topic.id == op.id }) throw Rejected("shelved", "topic '${op.id}' is on the shelf; bring it back with: restore ${op.id}")
                 val name = clip(op.name.ifEmpty { op.id }, 24)
                 val t = topics.firstOrNull { it.id == op.id }
                 if (t != null) t.name = name else topics.add(Topic(op.id, name))
             }
             is Op.Group -> {
-                if (!validId(op.id)) throw Rejected("분류 ID '${op.id}' 형식 오류")
-                if (topics.any { it.id == op.id } || card(op.id) != null) throw Rejected("'${op.id}' 는 이미 주제나 카드의 ID 로 쓰이고 있음")
+                if (!validId(op.id)) throw Rejected("bad-id", "group id '${op.id}' is not valid (1 to 24 letters, digits, _ or -)")
+                if (topics.any { it.id == op.id } || card(op.id) != null) throw Rejected("id-in-use", "'${op.id}' is already the id of a topic or a card")
                 val name = clip(op.name.ifEmpty { op.id }, 16)
                 val g = groups.firstOrNull { it.id == op.id }
                 if (g != null) {
                     g.name = name
                 } else {
-                    if (groups.size >= 8) throw Rejected("분류는 8개까지. 더 넓게 묶을 것")
+                    if (groups.size >= 8) throw Rejected("limit", "at most 8 groups; make the groups broader")
                     groups.add(Group(op.id, name))
                 }
             }
             is Op.Mv -> {
-                if (topics.none { it.id == op.topic }) throw Rejected("주제 '${op.topic}' 없음")
+                if (topics.none { it.id == op.topic }) throw Rejected("no-such-topic", "no topic '${op.topic}'")
                 val c = cardMut(op.card)
                 c.topic = op.topic
                 c.grid = null
@@ -182,30 +186,30 @@ class Board {
                 c.rev++
             }
             is Op.Put -> {
-                if (groups.none { it.id == op.group }) throw Rejected("분류 '${op.group}' 없음 — 먼저 group 으로 만들 것")
-                val t = topics.firstOrNull { it.id == op.topic } ?: throw Rejected("주제 '${op.topic}' 없음")
+                if (groups.none { it.id == op.group }) throw Rejected("no-such-group", "no group '${op.group}'; create it first with: group ${op.group} <name>")
+                val t = topics.firstOrNull { it.id == op.topic } ?: throw Rejected("no-such-topic", "no topic '${op.topic}'")
                 t.group = op.group
             }
             is Op.Card -> {
-                if (shelf.any { s -> s.cards.any { it.id == op.id } }) throw Rejected("카드 ID '${op.id}' 는 보관된 주제의 카드가 쓰고 있음. 다른 ID 를 쓴다")
-                if (!validId(op.id)) throw Rejected("카드 ID '${op.id}' 형식 오류")
-                if (card(op.id) != null) throw Rejected("카드 '${op.id}' 는 이미 있음 — 새로 만들지 말고 set/add/upd 로 고칠 것")
-                val k = Kind.parse(op.kind) ?: throw Rejected("부품 종류 '${op.kind}' 없음")
-                if (topics.none { it.id == op.topic }) throw Rejected("주제 '${op.topic}' 없음 — 먼저 topic 으로 만들 것")
+                if (shelf.any { s -> s.cards.any { it.id == op.id } }) throw Rejected("shelved", "card id '${op.id}' belongs to a card on the shelf; use another id")
+                if (!validId(op.id)) throw Rejected("bad-id", "card id '${op.id}' is not valid (1 to 24 letters, digits, _ or -)")
+                if (card(op.id) != null) throw Rejected("exists", "card '${op.id}' already exists; change it with set/add/upd instead of creating it again")
+                val k = Kind.parse(op.kind) ?: throw Rejected("unknown-kind", "no card type '${op.kind}'")
+                if (topics.none { it.id == op.topic }) throw Rejected("no-such-topic", "no topic '${op.topic}'; create it first with: topic ${op.topic} <name>")
                 val (w, h) = op.size ?: (k.part.w to k.part.h)
-                if (chars(op.title) > 40) notes.add("${op.id}.title 40자 초과로 잘림")
+                if (chars(op.title) > 40) notes.add("clipped ${op.id}.title 40")
                 cards.add(Card(op.id, k, op.topic, clip(op.title, 40), w.coerceIn(1, MAX_W), h.coerceIn(1, MAX_H)))
             }
             is Op.Set -> {
                 val c = cardMut(op.id)
-                val limit = c.kind.fieldLimit(op.field) ?: throw Rejected("${c.kind.label} 에는 '${op.field}' 필드 없음")
+                val limit = c.kind.fieldLimit(op.field) ?: throw Rejected("unknown-field", "${c.kind.label} has no field '${op.field}'")
                 if (c.kind == Kind.Status && op.field == "state" && op.value !in listOf("ok", "run", "wait", "fail", "idle")) {
-                    throw Rejected("status.state 는 ok|run|wait|fail|idle 중 하나 ('${op.value}')")
+                    throw Rejected("bad-value", "status.state is one of ok|run|wait|fail|idle (got '${op.value}')")
                 }
                 if (c.kind == Kind.Progress && op.field == "pct" && (op.value.toIntOrNull()?.let { it !in 0..100 } ?: true)) {
-                    throw Rejected("progress.pct 는 0~100 정수 ('${op.value}')")
+                    throw Rejected("bad-value", "progress.pct is a whole number from 0 to 100 (got '${op.value}')")
                 }
-                if (chars(op.value) > limit) notes.add("${op.id}.${op.field} ${limit}자 초과로 잘림 — 더 짧게 쓰거나 다른 부품을 쓸 것")
+                if (chars(op.value) > limit) notes.add("clipped ${op.id}.${op.field} $limit")
                 val v = clip(op.value, limit)
                 if (op.field == "title") c.title = v else c.fields[op.field] = v
                 c.live = null
@@ -216,19 +220,19 @@ class Board {
             is Op.Del -> {
                 if (op.item != null) {
                     val c = cardMut(op.id)
-                    if (!c.items.removeAll { it.id == op.item }) throw Rejected("${op.id} 에 항목 '${op.item}' 없음")
+                    if (!c.items.removeAll { it.id == op.item }) throw Rejected("no-such-item", "card '${op.id}' has no item '${op.item}'")
                     c.rev++
                 } else {
                     if (!cards.removeAll { it.id == op.id }) {
                         // 카드가 아니면 주제 삭제로 본다 (비어 있을 때만).
                         if (topics.any { it.id == op.id }) {
-                            if (cards.any { it.topic == op.id }) throw Rejected("주제 '${op.id}' 에 카드가 남아 있음")
+                            if (cards.any { it.topic == op.id }) throw Rejected("not-empty", "topic '${op.id}' still has cards")
                             topics.removeAll { it.id == op.id }
                         } else if (groups.any { it.id == op.id }) {
                             groups.removeAll { it.id == op.id }
                             topics.filter { it.group == op.id }.forEach { it.group = null }
                         } else {
-                            throw Rejected("'${op.id}' 없음")
+                            throw Rejected("not-found", "nothing has the id '${op.id}'")
                         }
                     }
                     if (focus == op.id) focus = null
@@ -236,7 +240,7 @@ class Board {
             }
             is Op.Size -> {
                 val c = cardMut(op.id)
-                if (by == Author.Ai && c.pinned) throw Rejected("${op.id} 는 사용자가 고정함 — 크기 변경 불가")
+                if (by == Author.Ai && c.pinned) throw Rejected("pinned", "the user pinned '${op.id}'; its size cannot be changed")
                 c.w = op.w.coerceIn(1, MAX_W)
                 c.h = op.h.coerceIn(1, MAX_H)
                 if (by == Author.User) c.pinned = true
@@ -244,12 +248,12 @@ class Board {
             }
             is Op.Move -> {
                 val c = cardMut(op.id)
-                if (by == Author.Ai && c.pinned) throw Rejected("${op.id} 는 사용자가 고정함 — 이동 불가")
+                if (by == Author.Ai && c.pinned) throw Rejected("pinned", "the user pinned '${op.id}'; it cannot be moved")
                 c.grid = op.col.coerceAtLeast(0) to op.row.coerceAtLeast(0)
                 if (by == Author.User) c.pinned = true
             }
             is Op.Pin -> {
-                if (by == Author.Ai) throw Rejected("pin 은 사용자만 가능")
+                if (by == Author.Ai) throw Rejected("user-only", "only the user can pin or unpin")
                 val c = cardMut(op.id)
                 c.pinned = op.on
                 if (!op.on) c.grid = null
@@ -259,17 +263,17 @@ class Board {
                 focus = op.id
             }
             is Op.Let -> {
-                if (!validId(op.name)) throw Rejected("값의 이름 '${op.name}' 형식 오류 (영문·숫자로 짧게)")
+                if (!validId(op.name)) throw Rejected("bad-id", "value name '${op.name}' is not valid (1 to 24 letters, digits, _ or -)")
                 if (op.value.isBlank()) {
                     vars.remove(op.name)
                 } else {
-                    if (!vars.containsKey(op.name) && vars.size >= 64) throw Rejected("이름 붙은 값은 64개까지")
-                    if (chars(op.value) > CELL_LIMIT) notes.add("값 ${op.name} ${CELL_LIMIT}자 초과로 잘림")
+                    if (!vars.containsKey(op.name) && vars.size >= 64) throw Rejected("limit", "at most 64 named values")
+                    if (chars(op.value) > CELL_LIMIT) notes.add("clipped let.${op.name} $CELL_LIMIT")
                     vars[op.name] = clip(op.value.trim(), CELL_LIMIT)
                 }
             }
             is Op.Archive -> {
-                val t = topics.firstOrNull { it.id == op.topic } ?: throw Rejected("주제 '${op.topic}' 없음")
+                val t = topics.firstOrNull { it.id == op.topic } ?: throw Rejected("no-such-topic", "no topic '${op.topic}'")
                 topics.remove(t)
                 val gone = cards.filter { it.topic == op.topic }
                 cards.removeAll(gone)
@@ -277,7 +281,7 @@ class Board {
                 shelf.add(Shelved(t, gone))
             }
             is Op.Restore -> {
-                val s = shelf.firstOrNull { it.topic.id == op.topic } ?: throw Rejected("보관함에 주제 '${op.topic}' 없음")
+                val s = shelf.firstOrNull { it.topic.id == op.topic } ?: throw Rejected("not-shelved", "no topic '${op.topic}' on the shelf")
                 shelf.remove(s)
                 // 보관해 둔 사이에 분류가 없어졌으면 미분류로 꺼낸다.
                 if (s.topic.group != null && groups.none { it.id == s.topic.group }) s.topic.group = null
@@ -288,7 +292,7 @@ class Board {
                 }
             }
             is Op.Say -> {
-                if (chars(op.text) > 80) notes.add("say 80자 초과로 잘림")
+                if (chars(op.text) > 80) notes.add("clipped say 80")
                 say = clip(op.text, 80)
             }
         }
@@ -296,33 +300,33 @@ class Board {
 
     private fun putItem(id: String, item: String, cells: List<String>, update: Boolean) {
         val c = cardMut(id)
-        if (!c.kind.hasItems) throw Rejected("${c.kind.label} 에는 항목을 넣을 수 없음")
-        if (!validId(item)) throw Rejected("항목 ID '$item' 형식 오류")
-        if (cells.isEmpty() || cells.size > MAX_CELLS) throw Rejected("항목의 칸 수는 1~$MAX_CELLS")
+        if (!c.kind.hasItems) throw Rejected("no-items", "${c.kind.label} takes no items")
+        if (!validId(item)) throw Rejected("bad-id", "item id '$item' is not valid (1 to 24 letters, digits, _ or -)")
+        if (cells.isEmpty() || cells.size > MAX_CELLS) throw Rejected("cell-count", "an item has 1 to $MAX_CELLS cells")
         val states = when (c.kind) {
             Kind.Checklist -> listOf("done", "todo")
             Kind.Progress -> listOf("done", "run", "todo", "fail")
             else -> emptyList()
         }
-        if (states.isNotEmpty() && cells[0] !in states) throw Rejected("${c.kind.label} 항목의 첫 칸은 ${states.joinToString("|")} 중 하나 ('${cells[0]}')")
+        if (states.isNotEmpty() && cells[0] !in states) throw Rejected("bad-value", "the first cell of a ${c.kind.label} item is one of ${states.joinToString("|")} (got '${cells[0]}')")
         if (c.kind == Kind.Route) {
             val ok = cells.getOrNull(1)?.split(',', limit = 2)?.let { p -> p.size == 2 && p[0].trim().toDoubleOrNull() != null && p[1].trim().toDoubleOrNull() != null } ?: false
-            if (!ok) throw Rejected("route 항목은 '이름 | 위도,경도 | 다음 곳까지의 거리·시간(생략 가능)'. 좌표는 route_find 가 알려 준 것을 쓴다")
+            if (!ok) throw Rejected("bad-value", "a route item is 'name | lat,lon | distance and time to the next stop (optional)'; the second cell must be two numbers")
         }
         if (c.kind == Kind.Draw && cells[0] !in listOf("line", "arrow", "rect", "circle", "text")) {
-            throw Rejected("draw 항목의 첫 칸은 line|arrow|rect|circle|text 중 하나 ('${cells[0]}')")
+            throw Rejected("bad-value", "the first cell of a draw item is one of line|arrow|rect|circle|text (got '${cells[0]}')")
         }
-        if (c.kind == Kind.Chart && cells.getOrNull(1)?.replace(",", "")?.toDoubleOrNull() == null) throw Rejected("chart 항목은 '이름 | 숫자'")
-        if (cells.any { chars(it) > CELL_LIMIT }) notes.add("$id.$item 칸 ${CELL_LIMIT}자 초과로 잘림")
+        if (c.kind == Kind.Chart && cells.getOrNull(1)?.replace(",", "")?.toDoubleOrNull() == null) throw Rejected("bad-value", "a chart item is 'name | number'")
+        if (cells.any { chars(it) > CELL_LIMIT }) notes.add("clipped $id.$item $CELL_LIMIT")
         val clipped = cells.map { clip(it, CELL_LIMIT) }
         val slot = c.items.firstOrNull { it.id == item }
         if (slot != null) {
             slot.cells = clipped // add 가 기존 ID 에 오면 덮어쓴다 (중복 생성 방지)
         } else {
-            if (update) throw Rejected("$id 에 항목 '$item' 없음 — add 로 추가할 것")
+            if (update) throw Rejected("no-such-item", "card '$id' has no item '$item'; add it with add")
             // 그림 카드는 도형 하나가 항목 하나라서 더 많이 받는다.
             val limit = if (c.kind == Kind.Draw) 80 else MAX_ITEMS
-            if (c.items.size >= limit) throw Rejected("$id 항목 수 한도($limit) 초과")
+            if (c.items.size >= limit) throw Rejected("limit", "card '$id' already has $limit items")
             c.items.add(Item(item, clipped))
         }
         c.rev++

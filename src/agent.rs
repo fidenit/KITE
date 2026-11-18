@@ -61,7 +61,7 @@ pub fn ask(key: &str, model: &str, system: &str, user: &str, max_tokens: u32) ->
         .header("x-api-key", key)
         .header("anthropic-version", "2026-10-21")
         .send(body)
-        .map_err(|e| format!("연결 실패: {e}"))?;
+        .map_err(|e| format!("{}: {e}", crate::sys::tr("연결 실패", "Could not connect")))?;
     let status = resp.status().as_u16();
     let text = resp.body_mut().read_to_string().unwrap_or_default();
     if status != 200 {
@@ -216,8 +216,8 @@ pub fn run_as(cfg: &Config, key: &str, role: &Role, turn_text: &str, images: &[(
             }
             // 서버 쪽 도구(웹 검색 등)가 길어져 잠시 멈춘 것: 받은 것을 그대로 붙여 다시 보내면 이어서 한다.
             "pause_turn" => messages.push(json!({ "role": "assistant", "content": content })),
-            "refusal" => return Err("모델이 이 요청을 거절했습니다".into()),
-            "max_tokens" => return Err("출력이 한도에서 잘렸습니다".into()),
+            "refusal" => return Err(crate::sys::tr("모델이 이 요청을 거절했습니다", "The model declined this request").into()),
+            "max_tokens" => return Err(crate::sys::tr("출력이 한도에서 잘렸습니다", "The answer was cut off at the output limit").into()),
             _ => {
                 stats.total_ms = started.elapsed().as_millis() as u64;
                 let text: Vec<&str> = content.iter().filter_map(|b| if b["type"] == "text" { b["text"].as_str() } else { None }).collect();
@@ -225,7 +225,7 @@ pub fn run_as(cfg: &Config, key: &str, role: &Role, turn_text: &str, images: &[(
             }
         }
     }
-    Err(format!("한 번에 {}단계를 넘겨 중단했습니다", role.max_steps))
+    Err(if crate::sys::english() { format!("Stopped after {} steps in one turn", role.max_steps) } else { format!("한 번에 {}단계를 넘겨 중단했습니다", role.max_steps) })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -251,7 +251,7 @@ fn stream_once(
         if !betas.is_empty() {
             req = req.header("anthropic-beta", betas.join(","));
         }
-        req.send(body(cfg, role, messages, fallbacks, drop_block)).map_err(|e| format!("연결 실패: {e}"))
+        req.send(body(cfg, role, messages, fallbacks, drop_block)).map_err(|e| format!("{}: {e}", crate::sys::tr("연결 실패", "Could not connect")))
     };
     let mut resp = post(*fallbacks, *drop_block)?;
     for _ in 0..2 {
@@ -283,7 +283,7 @@ fn stream_once(
     let mut stop = String::new();
     let reader = BufReader::new(resp.into_body().into_reader());
     for line in reader.lines() {
-        let line = line.map_err(|e| format!("스트림 끊김: {e}"))?;
+        let line = line.map_err(|e| format!("{}: {e}", crate::sys::tr("스트림 끊김", "The stream broke")))?;
         if crate::tools::stopped() {
             return Err(STOPPED.into());
         }
@@ -368,7 +368,7 @@ fn stream_once(
                     stop = s.to_string();
                 }
             }
-            "error" => return Err(format!("API 오류: {}", v["error"]["message"].as_str().unwrap_or("알 수 없음"))),
+            "error" => return Err(format!("{}: {}", crate::sys::tr("API 오류", "API error"), v["error"]["message"].as_str().unwrap_or("unknown"))),
             _ => {}
         }
     }

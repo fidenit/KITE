@@ -25,7 +25,7 @@ function Copy-Loader($dest) {
 
 switch ($args[0]) {
     'build' { cargo build --release; Copy-Loader target\release }
-    'test'  { cargo test }
+    'test'  { cargo test --workspace }
     'pack'  {
         cargo build --release
         if ($LASTEXITCODE -ne 0) { exit 1 }

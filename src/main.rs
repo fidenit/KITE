@@ -2110,7 +2110,7 @@ impl App {
                         Ok(view) => {
                             self.webviews.insert(s.id.clone(), Web { view, url, rect: s.rect, visible: s.visible });
                         }
-                        Err(e) => self.error = Some(format!("브라우저 화면을 띄우지 못함: {e}")),
+                        Err(e) => self.error = Some(format!("{}: {e}", sys::tr("브라우저 화면을 띄우지 못함", "Could not open the browser view"))),
                     }
                 }
             }

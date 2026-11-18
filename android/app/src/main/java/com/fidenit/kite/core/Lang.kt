@@ -1,4 +1,5 @@
-// 화면 수정 언어. 한 줄이 조작 하나이고, 줄이 끝나는 순간 적용된다. 데스크톱의 src/lang.rs 를 옮긴 것이다.
+// The line language: one line is one op, applied the moment the line ends. The KITE Protocol (protocol/SPEC.md)
+// in Kotlin, ported from the reference implementation protocol/rust/src/lang.rs.
 package com.fidenit.kite.core
 
 object Lang {
@@ -8,7 +9,7 @@ object Lang {
         return if (i < 0) s to "" else s.substring(0, i) to s.substring(i).trimStart()
     }
 
-    private fun need(s: String, what: String): String = s.ifEmpty { throw Rejected("$what 누락") }
+    private fun need(s: String, usage: String): String = s.ifEmpty { throw Rejected("missing-argument", "expected: $usage") }
 
     private fun parseSize(s: String): Pair<Int, Int>? {
         val i = s.indexOfFirst { it == 'x' || it == 'X' }
@@ -26,15 +27,15 @@ object Lang {
         if (line.isEmpty() || line.startsWith("#") || line.startsWith("```")) return null
         val (cmd, rest) = split1(line)
         return when (cmd) {
-            "topic" -> split1(rest).let { (id, name) -> Op.Topic(need(id, "주제 ID"), name) }
-            "group" -> split1(rest).let { (id, name) -> Op.Group(need(id, "분류 ID"), name) }
-            "mv" -> split1(rest).let { (card, topic) -> Op.Mv(need(card, "mv <카드ID> <주제ID>"), need(topic, "mv <카드ID> <주제ID>")) }
-            "put" -> split1(rest).let { (topic, group) -> Op.Put(need(topic, "put <주제ID> <분류ID>"), need(group, "put <주제ID> <분류ID>")) }
+            "topic" -> split1(rest).let { (id, name) -> Op.Topic(need(id, "topic <id> <name>"), name) }
+            "group" -> split1(rest).let { (id, name) -> Op.Group(need(id, "group <id> <name>"), name) }
+            "mv" -> split1(rest).let { (card, topic) -> Op.Mv(need(card, "mv <card> <topic>"), need(topic, "mv <card> <topic>")) }
+            "put" -> split1(rest).let { (topic, group) -> Op.Put(need(topic, "put <topic> <group>"), need(group, "put <topic> <group>")) }
             "card" -> {
                 val (id, r1) = split1(rest)
                 val (kind, r2) = split1(r1)
                 val (topic, r3) = split1(r2)
-                need(topic, "card <id> <종류> <주제>")
+                need(topic, "card <id> <kind> <topic> [<w>x<h>] <title>")
                 // 크기는 생략 가능
                 val (maybe, after) = split1(r3)
                 val size = parseSize(maybe)
@@ -43,19 +44,20 @@ object Lang {
             "set" -> {
                 val (id, r1) = split1(rest)
                 val (field, value) = split1(r1)
-                Op.Set(id, need(field, "set <id> <필드>"), value)
+                Op.Set(id, need(field, "set <id> <field> <value>"), value)
             }
             "add", "upd" -> {
                 val (id, r1) = split1(rest)
                 val (item, r2) = split1(r1)
-                need(item, "항목 ID")
-                val c = cells(need(r2, "항목 내용"))
+                val usage = "$cmd <id> <item> <cell> | <cell> ..."
+                need(item, usage)
+                val c = cells(need(r2, usage))
                 if (cmd == "add") Op.Add(id, item, c) else Op.Upd(id, item, c)
             }
-            "del" -> split1(rest).let { (id, item) -> Op.Del(need(id, "ID"), item.ifEmpty { null }) }
+            "del" -> split1(rest).let { (id, item) -> Op.Del(need(id, "del <id> [<item>]"), item.ifEmpty { null }) }
             "size" -> {
                 val (id, s) = split1(rest)
-                val (w, h) = parseSize(s) ?: throw Rejected("size <id> <가로>x<세로>")
+                val (w, h) = parseSize(s) ?: throw Rejected("bad-syntax", "expected: size <id> <w>x<h>")
                 Op.Size(id, w, h)
             }
             "move" -> {
@@ -63,18 +65,18 @@ object Lang {
                 val (c, r) = split1(r1)
                 val col = c.toIntOrNull()
                 val row = r.toIntOrNull()
-                if (col == null || row == null) throw Rejected("move <id> <열> <행>")
+                if (col == null || row == null) throw Rejected("bad-syntax", "expected: move <id> <col> <row>")
                 Op.Move(id, col, row)
             }
-            "let" -> split1(rest).let { (name, value) -> Op.Let(need(name, "let <이름> <값>"), value) }
-            "archive" -> Op.Archive(need(rest, "archive <주제ID>"))
-            "restore" -> Op.Restore(need(rest, "restore <주제ID>"))
-            "pin", "unpin" -> Op.Pin(need(rest, "ID"), cmd == "pin")
-            "focus" -> Op.Focus(need(rest, "ID"))
+            "let" -> split1(rest).let { (name, value) -> Op.Let(need(name, "let <name> <value>"), value) }
+            "archive" -> Op.Archive(need(rest, "archive <topic>"))
+            "restore" -> Op.Restore(need(rest, "restore <topic>"))
+            "pin", "unpin" -> Op.Pin(need(rest, "pin <id>"), cmd == "pin")
+            "focus" -> Op.Focus(need(rest, "focus <id>"))
             "say" -> Op.Say(rest)
             // 소리 내어 읽는 문장. 보드를 바꾸지 않으므로 조작이 아니다 (음성 재생 쪽에서 따로 처리한다).
             "tell" -> null
-            else -> throw Rejected("모르는 명령 '$cmd'")
+            else -> throw Rejected("unknown-verb", "unknown verb '$cmd'")
         }
     }
 

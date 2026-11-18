@@ -446,7 +446,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (by == Author.Ai && topic != null) current = topic
         } catch (e: Rejected) {
-            if (by == Author.Ai) rejects.add("${line.trim().take(80)} → ${e.message}")
+            if (by == Author.Ai) rejects.add("${line.trim().take(80)} → ${e.line}")
         }
         if (current == null || board.topics.none { it.id == current }) current = board.topics.lastOrNull()?.id
         rev++

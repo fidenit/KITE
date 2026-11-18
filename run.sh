@@ -18,7 +18,7 @@ cd "$(dirname "$0")"
 
 case "$1" in
   build) cargo build --release ;;
-  test)  cargo test ;;
+  test)  cargo test --workspace ;;
   pack)
     cargo build --release
     out="portable/KITE"

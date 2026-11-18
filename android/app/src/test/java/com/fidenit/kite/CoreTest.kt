@@ -29,7 +29,7 @@ class CoreTest {
             try {
                 Lang.parse(l)?.let { b.apply(it, by) }
             } catch (e: Rejected) {
-                errs.add(e.message ?: "")
+                errs.add(e.code)
             }
         }
         return errs
@@ -52,14 +52,14 @@ class CoreTest {
     fun rejectsWhatDesktopRejects() {
         val b = Board()
         run(b, "topic t 일\ncard c checklist t 할 일\ncard s status t 상태\ncard g chart t 수량")
-        assertEquals(1, run(b, "add c i1 maybe | 내용").size) // 첫 칸은 done/todo
-        assertEquals(1, run(b, "set s state great").size)
-        assertEquals(1, run(b, "add g a 이름 | 많이").size) // 숫자가 아님
-        assertEquals(0, run(b, "add g a 이름 | 1,200").size)
-        assertEquals(1, run(b, "card c note t 또").size) // 이미 있는 ID
-        assertEquals(1, run(b, "card x nothing t 없음").size)
-        assertEquals(1, run(b, "pin c").size) // pin 은 사용자만
-        assertEquals(1, run(b, "hello there").size)
+        assertEquals(listOf("bad-value"), run(b, "add c i1 maybe | 내용")) // 첫 칸은 done/todo
+        assertEquals(listOf("bad-value"), run(b, "set s state great"))
+        assertEquals(listOf("bad-value"), run(b, "add g a 이름 | 많이")) // 숫자가 아님
+        assertEquals(emptyList<String>(), run(b, "add g a 이름 | 1,200"))
+        assertEquals(listOf("exists"), run(b, "card c note t 또")) // 이미 있는 ID
+        assertEquals(listOf("unknown-kind"), run(b, "card x nothing t 없음"))
+        assertEquals(listOf("user-only"), run(b, "pin c")) // pin 은 사용자만
+        assertEquals(listOf("unknown-verb"), run(b, "hello there"))
         assertNull(Lang.parse("tell 소리로만 읽는 말"))
     }
 
@@ -69,7 +69,7 @@ class CoreTest {
         run(b, "topic t 일\ncard n note t 메모\nset n text " + "가".repeat(300))
         assertEquals(240, b.card("n")!!.field("text").length)
         assertTrue(b.card("n")!!.field("text").endsWith("…"))
-        assertEquals(1, b.notes.size)
+        assertEquals(listOf("clipped n.text 240"), b.notes)
     }
 
     @Test
@@ -107,10 +107,55 @@ class CoreTest {
         assertEquals(Triple("k", "text", "안녕"), Lang.partialText("set k text 안녕"))
     }
 
-    /** 부품 표는 데스크톱(src/core.rs)과 같아야 한다: 같은 지시문(prompt.md)에 끼워 넣기 때문이다. */
+    /**
+     * The protocol's conformance cases (protocol/conformance), the same files the reference implementation runs.
+     * Each line has an author and the verdict expected; the board at the end is compared as written back.
+     */
+    @Test
+    fun protocolConformance() {
+        fun expand(s: String) = Regex("<(\\d+) (.)>").replace(s) { it.groupValues[2].repeat(it.groupValues[1].toInt()) }
+        fun tidy(s: String) = s.lines().joinToString("\n") { it.trimEnd() }.trimEnd()
+        val files = File("../../protocol/conformance").listFiles { f -> f.extension == "txt" }!!.sortedBy { it.name }
+        assertTrue("the conformance cases are missing", files.size >= 6)
+        for (file in files) {
+            val text = file.readText().replace("\r\n", "\n")
+            val script = text.substringBefore("\nboard:\n")
+            val want = expand(text.substringAfter("\nboard:\n"))
+            val b = Board()
+            val lines = script.lines()
+            var i = 0
+            while (i < lines.size) {
+                val line = lines[i++]
+                val by = when {
+                    line.startsWith("agent:") -> Author.Ai
+                    line.startsWith("user:") -> Author.User
+                    else -> continue
+                }
+                val op = expand(line.substringAfter(":").removePrefix(" "))
+                val expected = lines[i++].trim().removePrefix("-> ")
+                val got = try {
+                    val parsed = Lang.parse(op)
+                    if (parsed == null) {
+                        "skip"
+                    } else {
+                        b.apply(parsed, by)
+                        val notes = b.notes.toList()
+                        b.notes.clear()
+                        if (notes.isEmpty()) "ok" else "ok " + notes.joinToString("; ")
+                    }
+                } catch (e: Rejected) {
+                    "err ${e.code}"
+                }
+                assertEquals("${file.name}:$i: $line", expected, got)
+            }
+            assertEquals("${file.name}: the board at the end", tidy(want), tidy(Lang.serialize(b)))
+        }
+    }
+
+    /** The card type table must be the reference implementation's: the same guide and prompt are filled from it. */
     @Test
     fun partsMatchDesktop() {
-        val rust = File("../../src/core.rs").readText()
+        val rust = File("../../protocol/rust/src/core.rs").readText()
         assertEquals(Regex("Part \\{").findAll(rust.substringBefore("pub fn parts_table")).count() - 1, PARTS.size) // 하나는 struct 선언
         for (p in PARTS) {
             for (s in listOf(p.name, p.purpose, p.items) + p.fields.flatMap { listOf(it.name, it.doc) }) {
