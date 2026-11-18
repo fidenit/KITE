@@ -14,7 +14,7 @@ All of these are chosen in the app under **Keys** (bottom left), or with the fil
 
 ## MCP: your agent comes to KITE
 
-1. In KITE, open **Keys**, choose **Your own agent**, and save. KITE stops running a model of its own and opens an MCP door at `http://127.0.0.1:7711/mcp`.
+1. In KITE, open **Keys**, then **More options**, choose **Your own agent**, and save. KITE stops running a model of its own and opens an MCP door at `http://127.0.0.1:7711/mcp`.
 2. Open **Keys** again and press **Copy the Claude Code command** (or **Copy the config (JSON)** for other clients). For Claude Code the command is:
 
    ```sh

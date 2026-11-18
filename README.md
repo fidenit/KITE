@@ -91,7 +91,7 @@ Linux: the build stops at the GTK and WebKit libraries (`glib-sys`) on a machine
 
 ### Pick an engine
 
-The engine is who answers. Choose it under **Keys** at the bottom left.
+The engine is who answers. Open **Keys** at the bottom left and do one of two things: press **Sign in with Claude** (it uses the Claude Code on this computer; no key), or **paste a key**. KITE tells from the key whose it is (Claude, OpenAI, Gemini, OpenRouter, Groq, xAI) and picks the model. A local model, another address, or an agent of your own are under **More options**.
 
 | Engine | You need | What you get |
 |---|---|---|
@@ -113,11 +113,11 @@ KITE draws whatever writes the [KITE Protocol](protocol). Your agent does not ha
 
 **An agent that speaks MCP** (Claude Code, Cursor, one of your own):
 
-1. In KITE: **Keys** → **Your own agent** → **Save**.
+1. In KITE: **Keys** → **More options** → **Your own agent** → **Save**.
 2. **Keys** again → **Copy the Claude Code command**, and run it in a terminal (other clients: **Copy the config (JSON)**).
 3. Ask your agent to answer on the board. It has four tools: `guide`, `board_read`, `screen`, `events`.
 
-**An agent built with an AG-UI framework** (LangGraph, CrewAI, Pydantic AI, ...): give KITE the agent's address under **Keys** → **Your own agent** → **AG-UI**.
+**An agent built with an AG-UI framework** (LangGraph, CrewAI, Pydantic AI, ...): give KITE the agent's address under **Keys** → **More options** → **Your own agent** → **AG-UI**.
 
 **A script:** start KITE with `KITE_PROTOCOL_PORT=7878` and write lines to that port.
 
@@ -146,7 +146,7 @@ How each of these works, with the settings: [docs/DRIVING.md](docs/DRIVING.md). 
   Reading files and searching the web are not asked about.
 - **It costs money as you use it.** By default it uses the most capable Claude model. A turn sends about as much as a Claude Code turn does; what was measured is in [docs/COSTS.md](docs/COSTS.md).
 - **It is early.** One person uses it daily. English and Korean, switched in the corner; cards and answers follow the language you choose. See [what changed](CHANGELOG.md) and [what is next](docs/NEXT.md) (Korean).
-- **Other models and agents are new.** The Claude engines are the ones used every day. The others were checked with real runs (Claude Code connected over MCP as an outside agent; a real server behind the OpenAI-compatible engine) but are not in daily use, and no AG-UI framework or non-Claude model was tried.
+- **Other models and agents are new.** The Claude engines are the ones used every day. The others were checked with real runs (Claude Code connected over MCP as an outside agent; a real server behind the OpenAI-compatible engine; an agent built with Pydantic AI over AG-UI) but are not in daily use, and no model that is not Claude was tried: recognising a key and picking a model for OpenAI, Gemini and the others is untested against those services.
 - Distances and times on route cards are read from Kakao Map, so routes work in South Korea.
 
 ## For developers

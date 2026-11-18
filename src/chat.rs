@@ -626,8 +626,8 @@ impl App {
             ui.add_space(8.0);
             ui.label(
                 egui::RichText::new(crate::sys::tr(
-                    "누가 답할지 고릅니다. Claude(API 키 또는 이 컴퓨터의 Claude Code), 다른 모델, 또는 직접 만든 에이전트.\n키는 이 프로그램 폴더에만 저장되고, 고른 곳 말고는 어디로도 보내지지 않습니다.",
-                    "Choose who answers: Claude (an API key, or the Claude Code on this computer), another model, or an agent of your own.\nKeys are saved only in this program's folder and are sent nowhere except to the one you choose.",
+                    "로그인하거나 키를 붙여넣으면 바로 시작합니다.\n키는 이 프로그램 폴더에만 저장되고, 그 키의 서비스 말고는 어디로도 보내지지 않습니다.",
+                    "Sign in, or paste a key, and you are ready.\nA key is saved only in this program's folder and is sent nowhere except to the service it belongs to.",
                 ))
                 .size(12.5)
                 .color(ui::DIM()),
@@ -663,43 +663,106 @@ impl App {
                 // Show what is saved, so that opening the window and saving changes nothing.
                 self.engine_pick = Some(current.to_string());
                 if let Some(p) = crate::openai::settings() {
+                    // A service KITE set up by itself from a key needs no unfolding; an address typed by hand does.
+                    self.more_open = crate::openai::known_by_url(&p.url).is_none();
                     self.openai_input = [p.url, p.model, String::new()];
                 }
                 self.agui_input = crate::agui::settings().map(|s| s.url).unwrap_or_default();
+                self.more_open |= current == "agent";
             }
-            let pick = self.engine_pick.clone().unwrap_or_default();
-            let cc_sub = match &cc_version {
-                Some(v) => format!("{} {v}", crate::sys::tr("설치됨", "installed")),
-                None => crate::sys::tr("이 컴퓨터에 없음", "not found on this computer").to_string(),
+            // Two ways in: sign in, or paste a key. Everything else is under "More options".
+            let signed = cc_version.is_some() && crate::cc::signed_in();
+            let on = self.engine_pick.as_deref() == Some("claude-code") && cc_version.is_some();
+            let sub = match (&cc_version, signed) {
+                (None, _) => crate::sys::tr("Claude Code가 필요합니다 · 눌러서 설치 안내 열기", "Needs Claude Code · press for how to install it").to_string(),
+                (Some(v), true) => format!("{} · Claude Code {v}", crate::sys::tr("로그인됨 · 키 필요 없음", "signed in · no key needed")),
+                (Some(_), false) => crate::sys::tr("누르면 브라우저에서 로그인합니다", "press to sign in with your browser").to_string(),
             };
-            let rows: [[(&str, &str, &str, bool); 2]; 2] = [
-                [
-                    ("api", crate::sys::tr("Claude API 키", "Claude API key"), crate::sys::tr("KITE가 직접 호출 · 쓴 만큼 과금", "KITE calls the API · pay per use"), true),
-                    ("claude-code", "Claude Code", cc_sub.as_str(), cc_version.is_some()),
-                ],
-                [
-                    ("openai", crate::sys::tr("다른 모델", "Another model"), crate::sys::tr("OpenAI 호환 · 로컬 모델", "OpenAI-compatible · local"), true),
-                    ("agent", crate::sys::tr("내 에이전트", "Your own agent"), crate::sys::tr("MCP 또는 AG-UI로 연결", "connects over MCP or AG-UI"), true),
-                ],
-            ];
-            for row in rows {
+            let (r, p) = ui.allocate_painter(egui::vec2(ui.available_width(), 56.0), egui::Sense::click());
+            p.rect_filled(r.rect, 14.0, if on { ui::ORANGE().gamma_multiply(0.14) } else { FIELD() });
+            p.rect_stroke(r.rect, 14.0, egui::Stroke::new(if on { 1.5 } else { 1.0 }, if on { ui::ORANGE() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
+            p.text(r.rect.left_top() + egui::vec2(16.0, 19.0), egui::Align2::LEFT_CENTER, crate::sys::tr("Claude로 로그인", "Sign in with Claude"), ui::bold(14.0), ui::TEXT());
+            p.text(r.rect.left_top() + egui::vec2(16.0, 39.0), egui::Align2::LEFT_CENTER, &sub, ui::font(11.5), if signed { ui::GREEN() } else { ui::FAINT() });
+            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                if cc_version.is_none() {
+                    ctx.open_url(egui::OpenUrl::new_tab("https://claude.com/claude-code"));
+                } else {
+                    if !signed {
+                        crate::cc::sign_in();
+                    }
+                    self.engine_pick = Some("claude-code".to_string());
+                    self.key_input.clear();
+                    // Already signed in: one press is all it takes.
+                    if signed && current != "claude-code" {
+                        save = true;
+                    }
+                }
+            }
+            ui.add_space(12.0);
+            ui.label(egui::RichText::new(crate::sys::tr("또는 키 붙여넣기", "Or paste a key")).font(ui::bold(12.5)).color(ui::TEXT()));
+            ui.add_space(4.0);
+            field(ui, &mut self.key_input, "Claude · OpenAI · Gemini · OpenRouter · Groq · xAI");
+            // The key says whose it is: nothing else to fill in.
+            let typed = self.key_input.trim().to_string();
+            let known = crate::openai::recognize(&typed);
+            if let Some(k) = known {
+                if k.is_claude() {
+                    self.engine_pick = Some("api".to_string());
+                } else {
+                    self.engine_pick = Some("openai".to_string());
+                    self.openai_input = [k.url.to_string(), String::new(), typed.clone()];
+                    self.more_open = false;
+                }
+            }
+            ui.add_space(5.0);
+            let (note, good) = match known {
+                Some(k) if k.is_claude() => (crate::sys::tr("Claude 키입니다.", "A Claude key.").to_string(), true),
+                Some(k) => (format!("{} {}", k.name, crate::sys::tr("키입니다. 모델은 알아서 고릅니다.", "key. KITE picks the model.")), true),
+                None if typed.len() > 8 => (crate::sys::tr("처음 보는 키입니다. 아래 '다른 방법'에서 주소를 적어 주세요.", "A key KITE does not know. Give its address under \"More options\".").to_string(), false),
+                None => match current {
+                    "api" if has_key => (crate::sys::tr("Claude 키가 저장되어 있습니다. 비워 두면 그대로 씁니다.", "A Claude key is saved. Leave this empty to keep it.").to_string(), true),
+                    "openai" => (self.cfg.openai.as_ref().map(|p| format!("{} · {} {}", crate::openai::known_by_url(&p.url).map(|k| k.name).unwrap_or(p.url.as_str()), p.model, crate::sys::tr("저장됨", "saved"))).unwrap_or_default(), true),
+                    _ => (String::new(), false),
+                },
+            };
+            if !note.is_empty() {
+                ui.label(egui::RichText::new(note).size(11.5).color(if good { ui::GREEN() } else { ui::FAINT() }));
+            }
+            let link = ui.add(egui::Label::new(egui::RichText::new(crate::sys::tr("키가 없으신가요? Claude Console에서 만들기 ↗", "No key yet? Create one in the Claude Console ↗")).size(12.0).color(ui::ORANGE())).sense(egui::Sense::click()));
+            if link.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                ctx.open_url(egui::OpenUrl::new_tab("https://console.anthropic.com/settings/keys"));
+            }
+            ui.add_space(12.0);
+            // The less common ways: a local model or another address, an agent of your own.
+            let more = ui.add(egui::Label::new(egui::RichText::new(format!("{} {}", crate::sys::tr("다른 방법", "More options"), if self.more_open { "▾" } else { "▸" })).font(ui::bold(12.5)).color(ui::DIM())).sense(egui::Sense::click()));
+            if more.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                self.more_open = !self.more_open;
+            }
+            ui.add_space(6.0);
+            let pick = self.engine_pick.clone().unwrap_or_default();
+            if self.more_open {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     let half = (ui.available_width() - 8.0) / 2.0;
-                    for (id, title, sub, enabled) in row {
+                    for (id, title, sub) in [
+                        ("openai", crate::sys::tr("로컬·다른 모델", "Local or other model"), crate::sys::tr("주소와 모델을 직접 적기", "give the address and the model")),
+                        ("agent", crate::sys::tr("내 에이전트", "Your own agent"), crate::sys::tr("MCP 또는 AG-UI로 연결", "connects over MCP or AG-UI")),
+                    ] {
                         let on = pick == id;
-                        let (r, p) = ui.allocate_painter(egui::vec2(half, 52.0), if enabled { egui::Sense::click() } else { egui::Sense::hover() });
+                        let (r, p) = ui.allocate_painter(egui::vec2(half, 52.0), egui::Sense::click());
                         p.rect_filled(r.rect, 14.0, if on { ui::ORANGE().gamma_multiply(0.14) } else { FIELD() });
                         p.rect_stroke(r.rect, 14.0, egui::Stroke::new(if on { 1.5 } else { 1.0 }, if on { ui::ORANGE() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
-                        p.text(r.rect.left_top() + egui::vec2(14.0, 17.0), egui::Align2::LEFT_CENTER, title, ui::bold(13.0), if enabled { ui::TEXT() } else { ui::FAINT() });
+                        p.text(r.rect.left_top() + egui::vec2(14.0, 17.0), egui::Align2::LEFT_CENTER, title, ui::bold(13.0), ui::TEXT());
                         p.text(r.rect.left_top() + egui::vec2(14.0, 36.0), egui::Align2::LEFT_CENTER, sub, ui::font(11.0), ui::FAINT());
-                        if enabled && r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             self.engine_pick = Some(id.to_string());
+                            self.key_input.clear();
                         }
                     }
                 });
                 ui.add_space(8.0);
             }
+            let more_open = self.more_open;
             let pick = self.engine_pick.clone().unwrap_or_default();
             let pick_cc = pick == "claude-code" && cc_version.is_some();
             let (pick_openai, pick_agent) = (pick == "openai", pick == "agent");
@@ -788,7 +851,7 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                 );
                 ui.add_space(14.0);
             }
-            if pick_openai {
+            if pick_openai && more_open {
                 ui.label(
                     egui::RichText::new(crate::sys::tr(
                         "KITE의 기억, 작업자, 도구는 그대로 쓰고 모델만 바꿉니다. OpenAI, Ollama·LM Studio의 로컬 모델, OpenRouter처럼 chat/completions 형식을 받는 곳이면 됩니다. 웹 검색 도구는 Claude에서만 됩니다.",
@@ -809,7 +872,7 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                 field(ui, &mut self.openai_input[2], "sk-…");
                 ui.add_space(14.0);
             }
-            if pick_agent {
+            if pick_agent && more_open {
                 ui.label(
                     egui::RichText::new(crate::sys::tr(
                         "KITE 안의 모델은 쉬고, 바깥의 에이전트가 이 보드를 화면으로 씁니다. 여기에 치는 말과 누르는 선택은 그 에이전트에게 전해집니다.",
@@ -862,21 +925,11 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                 ui.label(egui::RichText::new(crate::sys::tr("LangGraph, CrewAI, Pydantic AI처럼 AG-UI를 쓰는 에이전트의 주소를 적으면 KITE가 턴마다 그 주소를 부릅니다. 비워 두면 MCP로 오는 에이전트를 기다립니다.", "Give the address of an agent that speaks AG-UI (LangGraph, CrewAI, Pydantic AI) and KITE calls it on every turn. Leave it empty to wait for an agent over MCP.")).size(11.5).color(ui::FAINT()));
                 ui.add_space(14.0);
             }
-            if pick == "api" {
-            caption(ui, crate::sys::tr("Claude API 키", "Claude API key"), if has_key { crate::sys::tr("저장됨", "saved") } else { crate::sys::tr("필수", "required") }, has_key);
-            field(ui, &mut self.key_input, if has_key { crate::sys::tr("비워 두면 지금 키를 그대로 씁니다", "Leave empty to keep the current key") } else { "sk-ant-…" });
-            ui.add_space(6.0);
-            let link = ui.add(egui::Label::new(egui::RichText::new(crate::sys::tr("키가 없으신가요? Claude Console에서 만들기 ↗", "No key yet? Create one in the Claude Console ↗")).size(12.0).color(ui::ORANGE())).sense(egui::Sense::click()));
-            if link.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                ctx.open_url(egui::OpenUrl::new_tab("https://console.anthropic.com/settings/keys"));
-            }
-            ui.add_space(14.0);
-            }
-            if !pick_agent {
+            if !pick_agent && more_open {
             caption(ui, crate::sys::tr("TypeSafe Jev 키", "TypeSafe Jev key"), if has_jev { crate::sys::tr("저장됨", "saved") } else { crate::sys::tr("선택", "optional") }, has_jev);
             field(ui, &mut self.jev_input, if has_jev { crate::sys::tr("비워 두면 지금 키를 그대로 씁니다", "Leave empty to keep the current key") } else { crate::sys::tr("없어도 됩니다", "Not needed to start") });
             }
-            if pick == "api" {
+            if !pick_agent && more_open {
             ui.add_space(6.0);
             ui.label(
                 egui::RichText::new(crate::sys::tr(
@@ -897,12 +950,12 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                 // An address and a model, and something changed.
                 let [url, model, key] = &self.openai_input;
                 let (url, model) = (url.trim().trim_end_matches('/'), model.trim());
-                (url.starts_with("http://") || url.starts_with("https://")) && !model.is_empty() && (pick != current || jev_typed || !key.trim().is_empty() || self.cfg.openai.as_ref().map(|p| p.url != url || p.model != model).unwrap_or(true))
+                (url.starts_with("http://") || url.starts_with("https://")) && (!model.is_empty() || crate::openai::known_by_url(url).is_some()) && (pick != current || jev_typed || !key.trim().is_empty() || self.cfg.openai.as_ref().map(|p| p.url != url || p.model != model).unwrap_or(true))
             } else if pick_agent {
                 let url = self.agui_input.trim();
                 (url.is_empty() || url.starts_with("http://") || url.starts_with("https://")) && (pick != current || jev_typed || self.media_pick.map(|m| m != crate::mcp::outside_media()).unwrap_or(false) || self.cfg.agui.as_ref().map(|s| s.url.as_str()).unwrap_or("") != url)
             } else {
-                self.key_input.trim().len() > 20 || (has_key && (jev_typed || pick != current))
+                crate::openai::recognize(&self.key_input).map(|k| k.is_claude()).unwrap_or(false) || (self.key_input.trim().is_empty() && has_key && (jev_typed || pick != current))
             };
             let has_key = has_key || !self.cfg.demo();
             let (r, p) = ui.allocate_painter(egui::vec2(ui.available_width(), 42.0), egui::Sense::click());
@@ -933,7 +986,13 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                     let [url, model, key] = &self.openai_input;
                     let old_key = std::fs::read_to_string(base.join("openai.txt")).ok().and_then(|t| t.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).nth(2).map(str::to_string));
                     let key = if key.trim().is_empty() { old_key.unwrap_or_default() } else { key.trim().to_string() };
-                    let _ = std::fs::write(base.join("openai.txt"), format!("{}\n{}\n{key}\n", url.trim().trim_end_matches('/'), model.trim()));
+                    let url = url.trim().trim_end_matches('/');
+                    // A service KITE knows: it picks the model from the service's own list.
+                    let model = match crate::openai::known_by_url(url) {
+                        Some(k) if model.trim().is_empty() => k.model(&key),
+                        _ => model.trim().to_string(),
+                    };
+                    let _ = std::fs::write(base.join("openai.txt"), format!("{url}\n{model}\n{key}\n"));
                     "openai"
                 }
                 Some("agent") if !self.agui_input.trim().is_empty() => {
@@ -955,7 +1014,7 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
             if let Some(m) = self.media_pick.take() {
                 let _ = std::fs::write(base.join("outside-media.txt"), if m { "yes" } else { "no" });
             }
-            if !self.key_input.trim().is_empty() {
+            if engine == "api" && !self.key_input.trim().is_empty() {
                 let _ = std::fs::write(base.join("key.txt"), self.key_input.trim());
             }
             if !self.jev_input.trim().is_empty() {

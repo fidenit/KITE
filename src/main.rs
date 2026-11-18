@@ -100,6 +100,8 @@ struct App {
     /// What is typed in the keys window for another model (base address, model, key) and for an AG-UI agent (its address).
     openai_input: [String; 3],
     agui_input: String,
+    /// The keys window: are the less common choices (a local model, an agent of your own, the Jev key) unfolded?
+    more_open: bool,
     /// 키 창에서 고른 Claude Code 권한 방식
     perm_pick: Option<String>,
     /// 화면 조작에 AI 가 반응할 예정 시각
@@ -533,6 +535,7 @@ impl App {
             engine_pick: None,
             openai_input: Default::default(),
             agui_input: String::new(),
+            more_open: false,
             perm_pick: None,
             react_at: None,
             pending: Default::default(),

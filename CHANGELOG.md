@@ -24,7 +24,8 @@ The apps. Changes to the protocol itself are in [protocol/CHANGELOG.md](protocol
 
 ### Use another model
 
-- **Another model** under **Keys**: any OpenAI-compatible endpoint (OpenAI, Ollama, LM Studio, OpenRouter). KITE's memory, workers and tools stay; web search is with Claude only.
+- **Keys** is two things now: **Sign in with Claude** (one press when the Claude Code on this computer is signed in; otherwise it opens the sign-in), or **paste a key**. KITE tells whose key it is (Claude, OpenAI, Gemini, OpenRouter, Groq, xAI), sets the address, and picks the newest general model from the service's own list. Nothing else to fill in.
+- A local model or another address is under **More options**: any OpenAI-compatible endpoint (Ollama, LM Studio, ...). KITE's memory, workers and tools stay; web search is with Claude only.
 
 ### You decide what runs
 
@@ -50,7 +51,8 @@ The apps. Changes to the protocol itself are in [protocol/CHANGELOG.md](protocol
 ### Good to know
 
 - Checked with real runs on a real window: the Claude API engine (Haiku and Opus), the Claude Code engine, the question card before a command, Claude Code connected as an outside agent over MCP, the OpenAI-compatible engine against a real server, and saving from the Keys window.
-- Not tried: an agent built on an AG-UI framework, a model that is not Claude, macOS, and the new cards on an Android device.
+- AG-UI was checked with an agent built on Pydantic AI and a real model: the guide reached it as context, and its text drew the board. It answered in text; it did not call the `screen` tool in that run.
+- Not tried: a model that is not Claude (so recognising a key and picking a model for the other services is untested against them), macOS, and the new cards on an Android device.
 - Text sent back to a model about a rejected line changed from Korean to the coded English form. A board saved by 0.3.0 loads unchanged.
 
 ## 0.3.0 (2026-11-16)

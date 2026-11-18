@@ -96,6 +96,37 @@ pub fn version() -> Option<String> {
     found().map(|f| f.1)
 }
 
+/// Is the Claude Code on this computer signed in (`claude auth status`)? The answer is the last one known:
+/// asking takes a moment, so it is asked in the background, at most once every few seconds.
+pub fn signed_in() -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static KNOWN: AtomicBool = AtomicBool::new(false);
+    static ASKING: AtomicBool = AtomicBool::new(false);
+    static ASKED: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let stale = ASKED.lock().unwrap().map(|t| t.elapsed().as_secs() >= 4).unwrap_or(true);
+    if stale && !ASKING.swap(true, Ordering::SeqCst) {
+        *ASKED.lock().unwrap() = Some(std::time::Instant::now());
+        std::thread::spawn(|| {
+            let out = command().args(["auth", "status"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output();
+            let yes = out.ok().and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()).map(|v| v["loggedIn"] == true).unwrap_or(false);
+            KNOWN.store(yes, Ordering::SeqCst);
+            ASKING.store(false, Ordering::SeqCst);
+        });
+    }
+    KNOWN.load(Ordering::SeqCst)
+}
+
+/// Start signing in to Claude: a console window running `claude auth login`, which opens the browser.
+pub fn sign_in() {
+    let _ = if cfg!(windows) {
+        Command::new("cmd").args(["/c", "start", "KITE sign-in", "cmd", "/k", "claude auth login"]).spawn()
+    } else if cfg!(target_os = "macos") {
+        Command::new("osascript").args(["-e", "tell application \"Terminal\" to do script \"claude auth login\""]).spawn()
+    } else {
+        Command::new("x-terminal-emulator").args(["-e", "sh", "-c", "claude auth login"]).spawn()
+    };
+}
+
 /// base64 글자를 바이트로 되돌린다.
 fn unbase64(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() * 3 / 4);

@@ -46,6 +46,68 @@ fn parse_settings(text: &str) -> Option<Provider> {
     Some(Provider { url, model, key: lines.next().map(str::to_string) })
 }
 
+/// A service KITE knows from the look of its key, so that pasting the key is all there is to do.
+pub struct Known {
+    pub name: &'static str,
+    /// Keys of this service start like this.
+    prefix: &'static str,
+    /// Empty for Claude, which KITE calls in its own format.
+    pub url: &'static str,
+    /// Which of the service's models to use: the newest whose name contains the first of these that any has.
+    prefer: &'static [&'static str],
+    /// The model when the list could not be read.
+    fallback: &'static str,
+}
+
+/// Longer prefixes first: an OpenRouter key also starts with `sk-`.
+const KNOWN: [Known; 6] = [
+    Known { name: "Claude", prefix: "sk-ant-", url: "", prefer: &[], fallback: "" },
+    Known { name: "OpenRouter", prefix: "sk-or-", url: "https://openrouter.ai/api/v1", prefer: &[], fallback: "openrouter/auto" },
+    Known { name: "Groq", prefix: "gsk_", url: "https://api.groq.com/openai/v1", prefer: &["versatile", "llama"], fallback: "llama-3.3-70b-versatile" },
+    Known { name: "xAI", prefix: "xai-", url: "https://api.x.ai/v1", prefer: &["grok"], fallback: "grok-4" },
+    Known { name: "Gemini", prefix: "AIza", url: "https://generativelanguage.googleapis.com/v1beta/openai", prefer: &["pro", "flash"], fallback: "gemini-2.5-flash" },
+    Known { name: "OpenAI", prefix: "sk-", url: "https://api.openai.com/v1", prefer: &["gpt-"], fallback: "gpt-5" },
+];
+
+/// Whose key is this?
+pub fn recognize(key: &str) -> Option<&'static Known> {
+    let key = key.trim();
+    KNOWN.iter().find(|k| key.starts_with(k.prefix) && key.len() > k.prefix.len() + 8)
+}
+
+/// The service behind this address, if it is one KITE knows.
+pub fn known_by_url(url: &str) -> Option<&'static Known> {
+    KNOWN.iter().find(|k| !k.url.is_empty() && k.url == url.trim_end_matches('/'))
+}
+
+impl Known {
+    pub fn is_claude(&self) -> bool {
+        self.url.is_empty()
+    }
+
+    /// The model to use with this key: read the service's list and take the newest general one.
+    pub fn model(&self, key: &str) -> String {
+        if self.prefer.is_empty() {
+            return self.fallback.to_string();
+        }
+        let listed = || -> Option<Vec<String>> {
+            let mut resp = crate::agent::http().get(format!("{}/models", self.url)).config().timeout_global(Some(std::time::Duration::from_secs(6))).build().header("authorization", format!("Bearer {}", key.trim())).call().ok()?;
+            let v: Value = serde_json::from_str(&resp.body_mut().read_to_string().ok()?).ok()?;
+            Some(v["data"].as_array()?.iter().filter_map(|m| m["id"].as_str().map(str::to_string)).collect())
+        };
+        listed().and_then(|ids| self.choose(&ids)).unwrap_or_else(|| self.fallback.to_string())
+    }
+
+    /// From a list of model names: no small, dated or special-purpose ones, then the highest version.
+    fn choose(&self, ids: &[String]) -> Option<String> {
+        const AVOID: [&str; 22] = ["mini", "nano", "lite", "audio", "realtime", "image", "tts", "transcribe", "whisper", "search", "embed", "preview", "instruct", "vision", "guard", "codex", "latest", "exp", "moderation", "8b", "instant", "learnlm"];
+        let numbers = |id: &str| -> Vec<u32> { id.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty()).filter_map(|p| p.parse().ok()).collect() };
+        // Whole words of the name: "gemini" is not "mini".
+        let general = |id: &&String| !id.split(|c: char| !c.is_ascii_alphanumeric()).any(|word| AVOID.iter().any(|a| word.starts_with(a))) && !numbers(id).iter().any(|n| *n >= 1000);
+        self.prefer.iter().find_map(|want| ids.iter().filter(|id| id.contains(want)).filter(general).max_by_key(|id| (numbers(id), std::cmp::Reverse(id.len()))).cloned())
+    }
+}
+
 fn post(p: &Provider, body: &Value) -> Result<ureq::http::Response<ureq::Body>, String> {
     let mut req = crate::agent::http().post(format!("{}/chat/completions", p.url)).header("content-type", "application/json");
     if let Some(k) = &p.key {
@@ -353,5 +415,33 @@ mod tests {
         assert_eq!(parse_settings("# OpenAI\nhttps://api.openai.com/v1\ngpt-5\nsk-abc"), Some(Provider { url: "https://api.openai.com/v1".into(), model: "gpt-5".into(), key: Some("sk-abc".into()) }));
         assert_eq!(parse_settings("https://api.openai.com/v1"), None);
         assert_eq!(parse_settings("api.openai.com\nx"), None);
+    }
+}
+
+#[cfg(test)]
+mod known {
+    use super::*;
+
+    #[test]
+    fn a_key_says_whose_it_is() {
+        let name = |k: &str| recognize(k).map(|k| k.name);
+        assert_eq!(name("sk-ant-api03-abcdefghijkl"), Some("Claude"));
+        assert_eq!(name("sk-or-v1-abcdefghijklmnop"), Some("OpenRouter"));
+        assert_eq!(name("sk-proj-abcdefghijklmnop"), Some("OpenAI"));
+        assert_eq!(name("AIzaSyAbcdefghijklmnop"), Some("Gemini"));
+        assert_eq!(name("gsk_abcdefghijklmnop"), Some("Groq"));
+        assert_eq!(name("hello"), None);
+        assert_eq!(name("sk-"), None);
+        assert!(recognize("sk-ant-api03-abcdefghijkl").unwrap().is_claude());
+    }
+
+    #[test]
+    fn the_newest_general_model_is_chosen() {
+        let ids = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let of = |name: &str| KNOWN.iter().find(|k| k.name == name).unwrap();
+        assert_eq!(of("OpenAI").choose(&ids(&["gpt-4o", "gpt-5", "gpt-5-mini", "gpt-5.2", "gpt-5.2-2026-01-10", "gpt-5.2-codex", "o3", "text-embedding-3-large"])).as_deref(), Some("gpt-5.2"));
+        assert_eq!(of("Gemini").choose(&ids(&["models/gemini-2.5-flash", "models/gemini-2.5-pro", "models/gemini-3-pro-preview", "models/gemini-2.5-flash-lite"])).as_deref(), Some("models/gemini-2.5-pro"));
+        assert_eq!(of("Gemini").choose(&ids(&["models/gemini-2.5-flash", "models/gemini-embedding-001"])).as_deref(), Some("models/gemini-2.5-flash"));
+        assert_eq!(of("OpenAI").choose(&ids(&["whisper-1"])), None);
     }
 }
