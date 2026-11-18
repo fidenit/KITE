@@ -64,6 +64,12 @@ Every one of the 83 op lines was valid: none was rejected when applied (checked 
 
 Output tokens as billed, which include the model's thinking: 7,988 for the boards, 9,852 for the chat answers. Four requests and one small model are a small sample; the direction (a board is somewhat shorter, never much longer) is what to take from it.
 
+## A newcomer's app, for scale
+
+An agent that knew nothing of KITE was given only the `protocol/` folder and built a web app from it: `<kite-board>`, a small server, and Haiku through the Claude Code CLI as the model, with the guide as the system prompt. Twelve model calls: 103 lines applied, 2 rejected, no prose. Each call read about 5,400 tokens from the cache and wrote 2,500 to 3,000 new ones; the whole run cost about one cent. The guide plus the renderer's description was 15 KB, about 5,000 tokens: that is what the protocol itself costs a developer per turn before caching, against about 20,000 for KITE's own instructions.
+
+What that run got wrong went into the protocol the same day: a model that answered its own questions (now rejected with `user-only`), and turns started by a gesture that lost track of the request (the turn layout in SPEC.md 10.1 now carries the earlier requests). Rerun with the corrected guide as it is: 22 lines, none rejected, and wrong values in a form were asked for again and not guessed.
+
 ## Not measured
 
 - A comparison with other UI formats (A2UI, json-render) for the same screen.

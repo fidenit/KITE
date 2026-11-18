@@ -116,7 +116,7 @@ class CoreTest {
         fun expand(s: String) = Regex("<(\\d+) (.)>").replace(s) { it.groupValues[2].repeat(it.groupValues[1].toInt()) }
         fun tidy(s: String) = s.lines().joinToString("\n") { it.trimEnd() }.trimEnd()
         val files = File("../../protocol/conformance").listFiles { f -> f.extension == "txt" }!!.sortedBy { it.name }
-        assertTrue("the conformance cases are missing", files.size >= 7)
+        assertTrue("the conformance cases are missing", files.size >= 8)
         for (file in files) {
             val text = file.readText().replace("\r\n", "\n")
             val script = text.substringBefore("\nboard:\n")

@@ -222,6 +222,11 @@ class Board {
                 if (c.kind == Kind.Record && op.field != "title" && !c.fields.containsKey(op.field) && c.fields.size >= MAX_RECORD_FIELDS) {
                     throw Rejected("limit", "card '${op.id}' already has $MAX_RECORD_FIELDS fields")
                 }
+                // The user's answers are the user's: an agent does not write them.
+                if (by == Author.Ai && ((c.kind == Kind.Decision && op.field == "chosen") || (c.kind == Kind.Input && op.field == "sent"))) {
+                    throw Rejected("user-only", "'${op.field}' is the user's answer; it is set when the user picks or sends, never by an agent")
+                }
+                if (c.kind == Kind.Input && op.field == "sent" && op.value != "yes") throw Rejected("bad-value", "input.sent is yes (got '${op.value}')")
                 if (c.kind == Kind.Decision && op.field == "multi" && op.value !in listOf("yes", "no")) {
                     throw Rejected("bad-value", "decision.multi is yes or no (got '${op.value}')")
                 }
@@ -240,8 +245,8 @@ class Board {
                 c.live = null
                 c.rev++
             }
-            is Op.Add -> putItem(op.id, op.item, op.cells, false)
-            is Op.Upd -> putItem(op.id, op.item, op.cells, true)
+            is Op.Add -> putItem(op.id, op.item, op.cells, false, by)
+            is Op.Upd -> putItem(op.id, op.item, op.cells, true, by)
             is Op.Del -> {
                 if (op.item != null) {
                     val c = cardMut(op.id)
@@ -323,11 +328,15 @@ class Board {
         }
     }
 
-    private fun putItem(id: String, item: String, cells: List<String>, update: Boolean) {
+    private fun putItem(id: String, item: String, cells: List<String>, update: Boolean, by: Author) {
         val c = cardMut(id)
         if (!c.kind.hasItems) throw Rejected("no-items", "${c.kindName} takes no items")
         if (!validId(item)) throw Rejected("bad-id", "item id '$item' is not valid (1 to 24 letters, digits, _ or -)")
         if (cells.isEmpty() || cells.size > MAX_CELLS) throw Rejected("cell-count", "an item has 1 to $MAX_CELLS cells")
+        // The third cell of an input box is what the user typed. An agent writes the name and the hint only.
+        if (by == Author.Ai && c.kind == Kind.Input && cells.size > 2) {
+            throw Rejected("user-only", "the third cell of an input box is the user's value; write 'box name | hint or kind' only")
+        }
         val states = when (c.kind) {
             Kind.Checklist -> listOf("done", "todo")
             Kind.Progress -> listOf("done", "run", "todo", "fail")
