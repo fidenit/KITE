@@ -151,7 +151,9 @@ add k2 o2 가평 | 가깝고 저렴함
 
 ## 개발자에게
 
-**규격**은 [protocol/](protocol)에 있다(영어): [규격 문서](protocol/SPEC.md), [에이전트용 안내서](protocol/GUIDE.md), JSON 스키마, 예제, [적합성 시험 사례](protocol/conformance), 의존성 없는 Rust 참조 구현. 적합성 사례는 데스크톱 앱이 쓰는 참조 구현과, 안드로이드 앱의 Kotlin 구현이 각각 돌린다.
+**규격**은 [protocol/](protocol)에 있다(영어): [규격 문서](protocol/SPEC.md), [에이전트용 안내서](protocol/GUIDE.md), 다른 형식과의 [비교](protocol/COMPARISON.md), JSON 스키마, 예제, [적합성 시험 사례](protocol/conformance), 의존성 없는 Rust·JavaScript 구현. 적합성 사례는 세 구현이 통과한다: Rust(데스크톱 앱), Kotlin(안드로이드 앱), JavaScript.
+
+**내 웹 앱에 보드 넣기:** [`<kite-board>`](protocol/web)는 커스텀 엘리먼트 하나다. 에이전트가 쓴 줄을 넣으면 그려지고, 사용자가 한 일은 이벤트로 나온다.
 
 **데스크톱 앱**은 Rust와 [egui](https://github.com/emilk/egui)로 만들었고 웹 화면은 없다. Claude 엔진에서는 모델의 출력이 곧 조작 줄이고, 줄이 도착하는 대로 반영된다. 그 판을 같은 언어로 다시 적은 것이 다음 턴에 모델이 보는 전부다. 빌드 방법, 코드의 구조, 새 카드 종류를 더하는 법은 [docs/DEVELOPING.md](docs/DEVELOPING.md)(영어)에 있다.
 

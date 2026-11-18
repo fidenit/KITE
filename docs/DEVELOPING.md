@@ -5,15 +5,16 @@ Building, keys, the layout of the code, and how to add a kind of card. What the 
 ## What is in the repository
 
 ```
-protocol/        the KITE Protocol: specification, guide for agents, schema, examples,
-                 conformance cases, and the reference implementation (protocol/rust)
+protocol/        the KITE Protocol: specification, guide for agents, comparison, schema, examples,
+                 conformance cases, the reference implementation (protocol/rust), the JavaScript
+                 implementation (protocol/js) and the web renderer <kite-board> (protocol/web)
 src/             KITE for Windows and macOS (Rust, egui)
 android/         KITE and KITE Pro for Android (Kotlin, Compose)
 docs/            how to use and develop the apps
 tools/promo/     how the intro video is recorded
 ```
 
-The protocol does not depend on the apps. The apps depend on the protocol: the desktop app uses the crate in `protocol/rust`, and the Android app has its own implementation in Kotlin that is held to the same [conformance cases](../protocol/conformance).
+The protocol does not depend on the apps. The apps depend on the protocol: the desktop app uses the crate in `protocol/rust`, and the Android app has its own implementation in Kotlin that is held to the same [conformance cases](../protocol/conformance). `node protocol/js/test.mjs` runs them against the JavaScript implementation; `protocol/web/index.html?selftest=1`, served by any static server, uses the web renderer as a person would and prints what happened.
 
 ## Build and run the desktop app
 
@@ -95,12 +96,13 @@ How a line reaches the board: every writer (the model's stream, the `screen` too
 
 ## Adding a kind of card
 
-A new card type is a change to the protocol (a major one: an older reader rejects it), so it starts there.
+A new card type is a change to the protocol, so it starts there. (A kind that only one renderer draws needs none of this: name it `x-...` and draw it; every other renderer shows it as a record.)
 
 1. `protocol/rust/src/core.rs`: add the kind to `Kind` and register it in `PARTS` (name, default size, fields with limits, item shape, and the description a model reads when choosing). If its items or fields need a check, add it in `put_item` or in `Op::Set`. If it waits for the user, add it to `Kind::asks`.
 2. `protocol/SPEC.md` section 6 and the table in `protocol/GUIDE.md` (a test fails until the guide's table matches `PARTS`). Add a case under `protocol/conformance`.
 3. `src/ui.rs`: draw it in `draw_body` (the compiler points at the missing kind).
 4. `android/.../core/Board.kt`: the same entry in `PARTS` (a test compares it with `core.rs`), and its drawing in `ui/Cards.kt`.
+5. `protocol/js/kite-protocol.js`: the same entry in `PARTS`, and its drawing in `protocol/web/kite-board.js`.
 
 The instructions for the model need no edit: the card type table in them is built from `PARTS`.
 

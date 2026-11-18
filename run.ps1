@@ -25,7 +25,7 @@ function Copy-Loader($dest) {
 
 switch ($args[0]) {
     'build' { cargo build --release; Copy-Loader target\release }
-    'test'  { cargo test --workspace }
+    'test'  { cargo test --workspace; if (Get-Command node -ErrorAction SilentlyContinue) { node protocol\js\test.mjs } }
     'pack'  {
         cargo build --release
         if ($LASTEXITCODE -ne 0) { exit 1 }

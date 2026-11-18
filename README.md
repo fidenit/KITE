@@ -151,7 +151,9 @@ How each of these works, with the settings: [docs/DRIVING.md](docs/DRIVING.md). 
 
 ## For developers
 
-**The protocol** is in [protocol/](protocol): the [specification](protocol/SPEC.md), the [guide for agents](protocol/GUIDE.md), a JSON schema, examples, [conformance cases](protocol/conformance), and a reference implementation in Rust with no dependencies. The conformance cases are run by the reference implementation, which the desktop app uses, and by the Android app's own implementation in Kotlin.
+**The protocol** is in [protocol/](protocol): the [specification](protocol/SPEC.md), the [guide for agents](protocol/GUIDE.md), a [comparison](protocol/COMPARISON.md) with other formats, a JSON schema, examples, [conformance cases](protocol/conformance), and implementations with no dependencies in Rust and JavaScript. Three implementations pass the conformance cases: Rust (the desktop app), Kotlin (the Android app) and JavaScript.
+
+**A board in your own web app:** [`<kite-board>`](protocol/web) is one custom element. What your agent writes goes in as lines, and what the user does comes out as events.
 
 **The desktop app** is Rust and [egui](https://github.com/emilk/egui), with no web front end. With a Claude engine, the model's output is the op stream, applied as each line arrives; the board, written back in the same language, is what the model sees on the next turn. Build steps, the layout of the code and how to add a new kind of card: [docs/DEVELOPING.md](docs/DEVELOPING.md).
 

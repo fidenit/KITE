@@ -8,9 +8,11 @@ The apps. Changes to the protocol itself are in [protocol/CHANGELOG.md](protocol
 
 ### The protocol stands apart
 
-- The board language is the **KITE Protocol**, version 0.2, in [protocol/](protocol): a specification that does not depend on the app, a guide to give your model, a schema, examples, conformance cases, and a reference implementation in Rust with no dependencies.
+- The board language is the **KITE Protocol**, version 0.3, in [protocol/](protocol): a specification that does not depend on the app, a guide to give your model, a comparison with A2UI, json-render, AG-UI and MCP Apps, a schema, examples, conformance cases, and implementations with no dependencies in Rust and JavaScript.
+- **`<kite-board>`**, a renderer for the web as one custom element, for developers who want a board in their own product ([protocol/web](protocol/web)).
 - Rejections carry a stable code and an English message (`err unknown-verb unknown verb 'foo'`). Before, they were Korean sentences.
-- The desktop app uses the reference implementation. The Android app's Kotlin implementation was brought to 0.2 and runs the same conformance cases.
+- The desktop app uses the reference implementation. The Android app's Kotlin implementation was brought to 0.3 and runs the same conformance cases.
+- New in the language with 0.3: a renderer says what it supports; a `record` card with fields the agent names; `doc` cards that point at long content; kinds a renderer adds (`x-...`); decisions with several answers or marked as not undoable; required boxes, time and choice in forms. See [protocol/CHANGELOG.md](protocol/CHANGELOG.md).
 
 ### Use your own agent
 
@@ -18,6 +20,7 @@ The apps. Changes to the protocol itself are in [protocol/CHANGELOG.md](protocol
 - **AG-UI.** KITE can be the client of an AG-UI agent (LangGraph, CrewAI, Pydantic AI and others): give the agent's address under **Keys**.
 - **The protocol socket answers back.** `read` returns the board, `watch` pushes what the user does and types. Verdicts are `ok`, `ok clipped ...`, `err <code> <message>`.
 - With an outside agent, what you type and pick goes to it as events, and KITE runs no model.
+- An outside agent cannot create web, image and file cards unless you allow it under **Keys**: those cards load what the agent chose.
 
 ### Use another model
 

@@ -18,7 +18,7 @@ cd "$(dirname "$0")"
 
 case "$1" in
   build) cargo build --release ;;
-  test)  cargo test --workspace ;;
+  test)  cargo test --workspace; command -v node >/dev/null && node protocol/js/test.mjs ;;
   pack)
     cargo build --release
     out="portable/KITE"
