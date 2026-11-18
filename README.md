@@ -135,7 +135,15 @@ How each of these works, with the settings: [docs/DRIVING.md](docs/DRIVING.md). 
 
 ## Know before you run
 
-- **The AI acts without asking.** It runs commands and changes files on your computer on its own. KITE was built to be used that way. Run it knowing this, on a machine where that is acceptable.
+- **KITE is the interface; the engine decides what happens on your computer.** What may be done without asking is set per engine, under **Keys**:
+
+  | Engine | Commands and file changes |
+  |---|---|
+  | Claude API, another model | Asked first, with a card in "my turn" (Allow once / Allow all like this / Don't). You can allow file edits, or everything |
+  | Claude Code | Your Claude Code permission settings. You can allow file edits, or everything |
+  | Your own agent | Whatever your agent does. KITE only draws its board |
+
+  Reading files and searching the web are not asked about.
 - **It costs money as you use it.** By default it uses the most capable Claude model.
 - **It is early.** One person uses it daily. English and Korean, switched in the corner. The instructions KITE gives Claude are still written in Korean; cards and answers follow the language you choose. See [what changed](CHANGELOG.md) and [what is next](docs/NEXT.md) (Korean).
 - **Other models and agents are new.** The Claude engines are the ones used every day. The engines for other models and for outside agents were tested against test servers, not yet in daily use.

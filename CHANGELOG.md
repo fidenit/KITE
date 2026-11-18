@@ -23,6 +23,11 @@ The apps. Changes to the protocol itself are in [protocol/CHANGELOG.md](protocol
 
 - **Another model** under **Keys**: any OpenAI-compatible endpoint (OpenAI, Ollama, LM Studio, OpenRouter). KITE's memory, workers and tools stay; web search is with Claude only.
 
+### You decide what runs
+
+- KITE is the interface; what an engine may do on your computer is a setting, not a trait of the app. With the Claude API engine and with another model, KITE now **asks first**: before a command runs or a file is created or changed, a card comes to "my turn" (Allow once / Allow all like this / Don't). Under **Keys** you can allow file edits, or everything. To keep the behaviour of 0.3.0, choose **Everything**.
+- Reading and searching are not asked about. The Claude Code engine keeps following your Claude Code settings.
+
 ### English first
 
 - The app starts in English. Switch to Korean in the corner, or set `KITE_LANG=ko`. An existing choice is kept.

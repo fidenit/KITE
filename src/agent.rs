@@ -145,7 +145,13 @@ pub fn use_tool(role: &Role, name: &str, input: &Value, send: &dyn Fn(Msg)) -> T
             })
         }
         n if n.starts_with("page_") => text(crate::page::call(name, input)),
-        _ => text((role.tool)(name, input).unwrap_or_else(|| crate::tools::execute(name, input))),
+        _ => {
+            // Work that changes something on the computer is done only if the user allowed it.
+            if let Err(why) = crate::permit::check(name, input) {
+                return ToolOut::Text(why, true);
+            }
+            text((role.tool)(name, input).unwrap_or_else(|| crate::tools::execute(name, input)))
+        }
     }
 }
 

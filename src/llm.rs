@@ -37,6 +37,11 @@ pub enum Msg {
     Keys(usize, String),
     /// 일하는 도중에 사용자가 덧붙인 말이 모델에게 전해졌다
     Added(Vec<String>),
+    /// A tool is about to change something and the user has not allowed that kind of work (`permit.rs`):
+    /// put the question on the board. The answer is `yes`, `all` (this kind, for the rest of this run) or `no`.
+    Approve { key: u64, title: String, detail: String, reply: Sender<String> },
+    /// The question is no longer needed (the turn was stopped): take it off the board.
+    ApproveCancel { key: u64 },
     Done(Stats),
     Error(String),
 }

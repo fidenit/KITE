@@ -113,6 +113,8 @@ Everything can be set in the **Keys** window. The same choices as files next to 
 | `mcp-port.txt` | `KITE_MCP_PORT` | open the MCP door on this port (always open, on 7711, with engine `external`) |
 | `data/mcp-token.txt` | `KITE_MCP_TOKEN` | the MCP token; made on first use |
 | | `KITE_PROTOCOL_PORT`, `KITE_PROTOCOL_TOKEN` | the protocol socket, and an optional token (`auth <token>` as the first line) |
+| `permission.txt` | `KITE_PERMISSION` | what KITE's own engines may do without asking: `ask` (the default), `edits`, `all` |
+| `claude-permission.txt` | | the same for the Claude Code engine: `default`, `acceptEdits`, `bypassPermissions` |
 | `data/lang.txt` | `KITE_LANG` | `en` or `ko`; also the switch in the corner |
 
 Variables named `LYBOARD_...` from earlier versions are still read.

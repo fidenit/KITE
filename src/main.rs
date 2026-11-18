@@ -19,6 +19,7 @@ mod mcp;
 mod openai;
 mod memory;
 mod page;
+mod permit;
 mod phone;
 mod pics;
 mod route;
@@ -37,6 +38,8 @@ use eframe::egui;
 use crate::core::{Author, Board};
 
 const TITLE: &str = "KITE";
+/// The topic that holds questions about work a tool wants to do.
+const APPROVALS: &str = "kite-asks";
 
 /// 창의 이름. 확인용으로 띄운 창은 사용자가 실제 창과 헷갈리지 않게 이름을 다르게 한다.
 /// 확인용 창 크기 바꾸기 순서 (KITE_RESIZE)
@@ -103,6 +106,10 @@ struct App {
     react_at: Option<std::time::Instant>,
     /// 사용자가 조작했고 AI 의 반응을 기다리는 카드
     pending: std::collections::HashSet<String>,
+    /// Questions on the board about work a tool wants to do: the card, with who is waiting for the answer.
+    approvals: std::collections::HashMap<String, (u64, Sender<String>)>,
+    /// What is chosen in the keys window for KITE's own engines, not saved yet: ask, edits or all.
+    level_pick: Option<String>,
     /// 최근 (사용자 입력, AI 의 한마디)
     recent: Vec<(String, String)>,
     /// 지난 턴 이후 사용자가 화면에서 직접 한 조작
@@ -527,6 +534,8 @@ impl App {
             perm_pick: None,
             react_at: None,
             pending: Default::default(),
+            approvals: Default::default(),
+            level_pick: None,
             recent: Vec::new(),
             events: Vec::new(),
             rejects: Vec::new(),
@@ -872,6 +881,13 @@ impl App {
                     // 문자·전화 확인 카드에서 고른 것이면, 여기서 실제로 보내거나 건다 (AI 를 거치지 않는다).
                     let w: Vec<&str> = line.split_whitespace().collect();
                     if let ["set", card, "chosen", option] = w.as_slice() {
+                        // An answer to "may I do this?": hand it to the tool that is waiting. The model is not asked.
+                        if let Some((_, reply)) = self.approvals.remove(*card) {
+                            let _ = reply.send(option.to_string());
+                            let card = card.to_string();
+                            self.close_approval(&card);
+                            return Ok(());
+                        }
                         if let Some(ops) = phone::confirm(card, option) {
                             for op in ops {
                                 self.apply_line(&op, Author::Ai);
@@ -899,6 +915,14 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Take an answered or withdrawn question off the board, and its topic when nothing else is in it.
+    fn close_approval(&mut self, card: &str) {
+        self.apply_line(&format!("del {card}"), Author::Ai);
+        if self.board.topics.iter().any(|t| t.id == APPROVALS) && !self.board.cards.iter().any(|c| c.topic == APPROVALS) {
+            self.apply_line(&format!("del {APPROVALS}"), Author::Ai);
+        }
     }
 
     /// 사용자가 화면에서 한 조작을 대화 기록에 남길 짧은 말로 바꾼다 (명령어 그대로는 읽기 어렵다).
@@ -1112,11 +1136,13 @@ impl App {
             self.view.task = None;
         }
         // 방금 한 답을 AI 가 반영하는 동안에는 화면이 그 일의 구역에 머문다. 반영이 끝나면 다음 일을 가져온다.
-        if self.busy || self.react_at.is_some() {
+        // A question from a tool that is waiting to run cannot wait for the turn to end: the turn waits for it.
+        let waiting = asks.iter().find(|a| self.approvals.contains_key(&a.0)).cloned();
+        if waiting.is_none() && (self.busy || self.react_at.is_some()) {
             return;
         }
         // 방금 처리한 일과 같은 주제의 일이 남아 있으면 그것부터, 없으면 가장 오래 기다린 것부터.
-        let next = asks.iter().find(|a| Some(&a.1) == self.task_topic.as_ref()).or_else(|| asks.first());
+        let next = waiting.as_ref().or_else(|| asks.iter().find(|a| Some(&a.1) == self.task_topic.as_ref())).or_else(|| asks.first());
         if let Some((id, topic)) = next.cloned() {
             // 새 일이 오면 사용자가 골라 둔 카드는 닫고 그 일을 앞에 놓는다 (일이 사용자를 찾아온다).
             if self.view.picked.is_some() {
@@ -1822,6 +1848,31 @@ impl App {
                     problems.extend(self.board.notes.drain(notes_before..));
                     let _ = reply.send(if problems.is_empty() { "applied".to_string() } else { format!("some lines were rejected or clipped:\n{}", problems.join("\n")) });
                 }
+                llm::Msg::Approve { key, title, detail, reply } => {
+                    // The question is a decision card like any other: it comes to "my turn", and the answer is an op.
+                    let card = format!("ask{key}");
+                    if !self.board.topics.iter().any(|t| t.id == APPROVALS) {
+                        self.apply_line(&format!("topic {APPROVALS} {}", sys::tr("확인", "Your OK")), Author::Ai);
+                    }
+                    for line in [
+                        format!("card {card} decision {APPROVALS} 4x3 {title}"),
+                        format!("set {card} text {detail}"),
+                        format!("add {card} yes {}", sys::tr("이번만 허용 | 이 한 번만 실행합니다", "Allow once | Just this one")),
+                        format!("add {card} all {}", sys::tr("이번 실행 동안 모두 허용 | 같은 종류는 더 묻지 않습니다", "Allow all like this | No more questions of this kind until KITE is closed")),
+                        format!("add {card} no {}", sys::tr("하지 않기 | 이 일은 건너뜁니다", "Don't | Skip this")),
+                        format!("focus {card}"),
+                    ] {
+                        self.apply_line(&line, Author::Ai);
+                    }
+                    self.approvals.insert(card, (key, reply));
+                }
+                llm::Msg::ApproveCancel { key } => {
+                    let cards: Vec<String> = self.approvals.iter().filter(|(_, v)| v.0 == key).map(|(k, _)| k.clone()).collect();
+                    for card in cards {
+                        self.approvals.remove(&card);
+                        self.close_approval(&card);
+                    }
+                }
                 llm::Msg::Delta(d) => {
                     if !d.trim().is_empty() {
                         self.got_output = true;
@@ -2387,6 +2438,9 @@ impl eframe::App for App {
                 if said == "!stop" {
                     // 확인용: 멈춤 버튼을 누른 것으로 친다.
                     self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                } else if let Some(op) = said.strip_prefix('!') {
+                    // For checking: a gesture of the user while the turn is running (answering a question a tool asked).
+                    self.apply_line(&op.replace('¦', "|"), Author::User);
                 } else {
                     self.input = said;
                     self.send(&ctx);

@@ -750,6 +750,37 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                 });
                 ui.add_space(4.0);
             };
+            if pick == "api" || pick_openai {
+                // What KITE's own engine may do on this computer without asking first.
+                ui.label(egui::RichText::new(crate::sys::tr("묻지 않고 해도 되는 일", "What it may do without asking")).font(ui::bold(12.5)).color(ui::TEXT()));
+                ui.add_space(4.0);
+                let now = self.level_pick.get_or_insert_with(|| crate::permit::level().name().to_string()).clone();
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let third = (ui.available_width() - 12.0) / 3.0;
+                    for (value, name) in [("ask", crate::sys::tr("먼저 묻기", "Ask first")), ("edits", crate::sys::tr("파일 수정", "File edits")), ("all", crate::sys::tr("전부", "Everything"))] {
+                        let on = now == value;
+                        let (r, p) = ui.allocate_painter(egui::vec2(third, 30.0), egui::Sense::click());
+                        p.rect_filled(r.rect, 10.0, if on { ui::ORANGE().gamma_multiply(0.14) } else { FIELD() });
+                        p.rect_stroke(r.rect, 10.0, egui::Stroke::new(1.0, if on { ui::ORANGE() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
+                        p.text(r.rect.center(), egui::Align2::CENTER_CENTER, name, ui::bold(12.0), ui::TEXT());
+                        if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            self.level_pick = Some(value.to_string());
+                        }
+                    }
+                });
+                ui.add_space(5.0);
+                ui.label(
+                    egui::RichText::new(match now.as_str() {
+                        "edits" => crate::sys::tr("파일을 만들고 고치는 것은 묻지 않고 합니다. 명령을 실행하기 전에는 카드로 묻습니다.", "Creates and changes files without asking. Asks with a card before running a command."),
+                        "all" => crate::sys::tr("명령 실행과 파일 수정을 전부 묻지 않고 합니다.", "Runs commands and changes files without asking."),
+                        _ => crate::sys::tr("명령을 실행하거나 파일을 만들고 고치기 전에 카드로 묻습니다. 읽기와 검색은 묻지 않습니다.", "Asks with a card before running a command or creating or changing a file. Reading and searching are not asked about."),
+                    })
+                    .size(11.5)
+                    .color(ui::FAINT()),
+                );
+                ui.add_space(14.0);
+            }
             if pick_openai {
                 ui.label(
                     egui::RichText::new(crate::sys::tr(
@@ -837,7 +868,7 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
             );
             }
             ui.add_space(16.0);
-            let jev_typed = self.jev_input.trim().len() > 8;
+            let jev_typed = self.jev_input.trim().len() > 8 || self.level_pick.as_deref().map(|l| l != crate::permit::level().name()).unwrap_or(false);
             let ready = if pick_cc {
                 pick != current || jev_typed || self.perm_pick.as_deref().map(|p| p != crate::cc::permission()).unwrap_or(false)
             } else if pick_openai {
@@ -896,6 +927,9 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
             if let Some(p) = self.perm_pick.take() {
                 let _ = std::fs::write(base.join("claude-permission.txt"), p);
             }
+            if let Some(l) = self.level_pick.take() {
+                let _ = std::fs::write(base.join("permission.txt"), l);
+            }
             if !self.key_input.trim().is_empty() {
                 let _ = std::fs::write(base.join("key.txt"), self.key_input.trim());
             }
@@ -925,6 +959,7 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
             self.key_popup = false;
             self.engine_pick = None;
             self.perm_pick = None;
+            self.level_pick = None;
         }
     }
 }

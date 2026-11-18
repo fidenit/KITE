@@ -47,6 +47,7 @@ Text files next to the program. The **Keys** window writes the first ones for yo
 | `key.txt` | Claude API key | the demo, unless another engine is chosen |
 | `openai.txt` | another model: base address, model, key, one per line | |
 | `agui.txt` | the address of an AG-UI agent, then optional header lines | |
+| `permission.txt` | `ask`, `edits` or `all`: what KITE's own engines may do without asking | `ask` |
 | `jev.txt` | TypeSafe Jev key | no decision model |
 | `eleven.txt` | ElevenLabs key | the OS voice; no microphone conversation |
 | `voice.txt` | ElevenLabs voice id | the default voice |
@@ -80,6 +81,7 @@ KITE_AUTOPLAY="plan the workshop|!set k2 chosen o2" KITE_POS="-2600,-2400" KITE_
 | `src/hub.rs` | Numbered events for those who follow the board from outside |
 | `src/prompt.md`, `src/worker.md` | Instructions for the model and for workers (Korean; `{{PARTS}}` is filled from the card type table) |
 | `src/tools.rs` | Tools: commands, files, memory notes, browser, web |
+| `src/permit.rs` | What KITE's own engines may do without asking, and the question card when they may not |
 | `src/jobs.rs` | Workers: delegated jobs that run beside the conversation |
 | `src/decide.rs`, `src/jev.rs` | Small decisions before and after the main model (Jev) |
 | `src/memory.rs`, `src/vault.rs` | Past turns, core memory, the Obsidian vault |
