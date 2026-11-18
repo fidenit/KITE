@@ -92,7 +92,11 @@ struct App {
     /// 키를 넣는 창이 떠 있는가 (키 없이 처음 켰을 때 뜬다)
     key_popup: bool,
     /// 키 창에서 고른 엔진 (true = Claude Code). 창을 열 때 지금 설정으로 맞춘다.
-    engine_pick: Option<bool>,
+    /// The engine chosen in the keys window, not saved yet: api, claude-code, openai or agent.
+    engine_pick: Option<String>,
+    /// What is typed in the keys window for another model (base address, model, key) and for an AG-UI agent (its address).
+    openai_input: [String; 3],
+    agui_input: String,
     /// 키 창에서 고른 Claude Code 권한 방식
     perm_pick: Option<String>,
     /// 화면 조작에 AI 가 반응할 예정 시각
@@ -518,6 +522,8 @@ impl App {
             jev_input: String::new(),
             key_popup: false,
             engine_pick: None,
+            openai_input: Default::default(),
+            agui_input: String::new(),
             perm_pick: None,
             react_at: None,
             pending: Default::default(),
@@ -653,6 +659,11 @@ impl App {
         }
         // 시연 모드는 매번 빈 보드에서 시작한다. 실제 모드는 조작 기록을 재생해 보드를 되살린다.
         app.key_popup = app.cfg.demo() && crate::sys::var("DEMO").is_err() && crate::sys::var("NO_KEY_WINDOW").is_err();
+        // For checking: open the keys window on a given engine (KITE_KEY_WINDOW=api|claude-code|openai|agent).
+        if let Ok(engine) = crate::sys::var("KEY_WINDOW") {
+            app.key_popup = true;
+            app.engine_pick = Some(engine).filter(|e| !e.is_empty());
+        }
         // 소개 영상용: 시연 모드에서도 KITE_DEMO_SEED 의 조작 기록으로 보드를 채워 두고 시작한다 (이미 몇 주째 진행 중인 프로젝트 등).
         if let Some(text) = crate::sys::var("DEMO_SEED").ok().filter(|_| app.cfg.demo()).and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in text.lines() {

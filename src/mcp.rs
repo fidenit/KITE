@@ -83,6 +83,11 @@ fn client_config(port: u16, token: &str) -> Value {
 /// The port of the outside door when the outside-agent engine is chosen and no port is set.
 pub const DEFAULT_PORT: u16 = 7711;
 
+/// The client config as text, to paste into an agent's MCP settings.
+pub fn client_config_text(port: u16, token: &str) -> String {
+    serde_json::to_string_pretty(&client_config(port, token)).unwrap_or_default()
+}
+
 /// Where the outside door is listening, once it is: (port, token).
 static OUTSIDE: OnceLock<(u16, String)> = OnceLock::new();
 
