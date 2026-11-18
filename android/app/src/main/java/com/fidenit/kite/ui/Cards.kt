@@ -5,6 +5,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -278,12 +280,21 @@ private fun InputCard(vm: KiteViewModel, card: Card) {
             val v = values[item.id]?.toFloatOrNull() ?: ((lo + hi) / 2f).also { values[item.id] = it.toInt().toString() }
             Text("$name  ${v.toInt()}${if (unit.isNotEmpty()) " $unit" else ""}", color = C.text, fontSize = 15.sp)
             Slider(value = v, onValueChange = { values[item.id] = it.toInt().toString() }, valueRange = lo..hi)
+        } else if (hint.startsWith("choice ")) {
+            // "choice Train / Car / Flight": one of the listed values, picked with a press
+            Text(name, color = C.dim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp, bottom = 6.dp))
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp)) {
+                for (option in hint.removePrefix("choice ").split('/').map { it.trim() }.filter { it.isNotEmpty() }) {
+                    Pill(option, selected = values[item.id] == option) { values[item.id] = option }
+                    Spacer(Modifier.width(8.dp))
+                }
+            }
         } else {
             OutlinedTextField(
                 value = values[item.id].orEmpty(),
                 onValueChange = { values[item.id] = it },
                 label = { Text(name) },
-                placeholder = { Text(if (hint == "date") "예: 12/3" else if (hint == "number") "숫자" else hint, color = C.faint) },
+                placeholder = { Text(if (hint == "date") "예: 12/3" else if (hint == "time") "예: 18:30" else if (hint == "number") "숫자" else hint, color = C.faint) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = if (hint == "number") KeyboardType.Number else KeyboardType.Text),
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -292,7 +303,9 @@ private fun InputCard(vm: KiteViewModel, card: Card) {
     }
     if (!sent) {
         Spacer(Modifier.height(4.dp))
-        Pill(if (vm.store.lang == "en") "Send" else "보내기", selected = true) { vm.submit(card, values.toMap()) }
+        // A box whose name ends with `*` must be filled before the form can be sent.
+        val missing = card.items.any { it.cells[0].trimEnd().endsWith("*") && values[it.id].isNullOrBlank() }
+        Pill(if (vm.store.lang == "en") "Send" else "보내기", selected = !missing) { if (!missing) vm.submit(card, values.toMap()) }
     }
 }
 
