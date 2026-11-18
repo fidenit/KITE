@@ -33,6 +33,7 @@ from .lang import (
     join_cells,
     parse,
     split_cells,
+    strip_bom,
 )
 
 __version__ = "0.4.0"
@@ -40,5 +41,5 @@ __version__ = "0.4.0"
 __all__ = [
     "VERSION", "LIMITS", "PARTS", "Part", "Board", "Card", "Group", "Item", "Topic", "Reject", "LineStream",
     "parse", "serialize", "split_cells", "join_cells", "is_blank", "valid_id", "is_extension_kind", "asks",
-    "kind_names", "parts_table", "header", "declared_version", "can_read",
+    "kind_names", "parts_table", "header", "declared_version", "can_read", "strip_bom",
 ]

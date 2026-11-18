@@ -75,7 +75,8 @@ const val MAX_H = 8
 const val RECORD_FIELD_LIMIT = 80
 const val MAX_RECORD_FIELDS = 12
 
-enum class Author { Ai, User }
+/** Restore loads a board written back as ops: it has the user's rights, but its `move` and `size` do not pin. */
+enum class Author { Ai, User, Restore }
 
 sealed class Op {
     data class Topic(val id: String, val name: String) : Op()
@@ -114,7 +115,7 @@ class Card(
     /** The kind as the writer named it. */
     val kindName: String get() = ext ?: kind.label
 
-    val fields: TreeMap<String, String> = TreeMap()
+    val fields: TreeMap<String, String> = TreeMap(BY_CODE_POINT)
     val items: MutableList<Item> = mutableListOf()
     var grid: Pair<Int, Int>? = null
     var pinned: Boolean = false
@@ -145,15 +146,40 @@ fun clip(s: String, limit: Int): String {
     return s.substring(0, s.offsetByCodePoints(0, keep)) + "…"
 }
 
+/** White space is the Unicode property White_Space, the same 25 characters in every implementation. */
+fun isWhiteSpace(c: Int): Boolean =
+    c in 0x09..0x0D || c == 0x20 || c == 0x85 || c == 0xA0 || c == 0x1680 || c in 0x2000..0x200A || c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F || c == 0x3000
+
+fun String.trimWs(): String = trim { isWhiteSpace(it.code) }
+fun String.trimWsStart(): String = trimStart { isWhiteSpace(it.code) }
+fun String.trimWsEnd(): String = trimEnd { isWhiteSpace(it.code) }
+fun String.isWsBlank(): Boolean = all { isWhiteSpace(it.code) }
+
+/** An id: ASCII letters and digits, `_`, `-`, and any character outside ASCII that is neither white space nor a control character. */
 internal fun validId(id: String): Boolean =
-    id.isNotEmpty() && chars(id) <= 24 && id.codePoints().allMatch { Character.isLetterOrDigit(it) || it == '_'.code || it == '-'.code }
+    id.isNotEmpty() && chars(id) <= 24 && id.codePoints().allMatch { c ->
+        if (c < 0x80) (c in 'a'.code..'z'.code || c in 'A'.code..'Z'.code || c in '0'.code..'9'.code || c == '_'.code || c == '-'.code)
+        else !isWhiteSpace(c) && c !in 0x80..0x9F
+    }
+
+private val NUMBER = Regex("[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)([eE][+-]?[0-9]+)?")
+
+/** A number as the protocol writes it: decimal, with an optional sign, fraction and exponent, and finite. */
+internal fun isNumber(s: String): Boolean = NUMBER.matches(s) && (s.toDoubleOrNull()?.isFinite() ?: false)
+
+/** Names are written in code point order (a Kotlin string compares UTF-16 units, which differs above U+FFFF). */
+internal val BY_CODE_POINT = Comparator<String> { a, b ->
+    val x = a.codePoints().iterator(); val y = b.codePoints().iterator()
+    while (x.hasNext() && y.hasNext()) { val d = x.nextInt().compareTo(y.nextInt()); if (d != 0) return@Comparator d }
+    x.hasNext().compareTo(y.hasNext())
+}
 
 class Board {
     val groups: MutableList<Group> = mutableListOf()
     val topics: MutableList<Topic> = mutableListOf()
     val cards: MutableList<Card> = mutableListOf()
     val shelf: MutableList<Shelved> = mutableListOf()
-    val vars: TreeMap<String, String> = TreeMap()
+    val vars: TreeMap<String, String> = TreeMap(BY_CODE_POINT)
     var say: String = ""
     var focus: String? = null
 
@@ -181,6 +207,8 @@ class Board {
             }
             is Op.Group -> {
                 if (!validId(op.id)) throw Rejected("bad-id", "group id '${op.id}' is not valid (1 to 24 letters, digits, _ or -)")
+                // Ids on the shelf stay reserved, for a group too: the topic or card comes back with its id.
+                if (shelf.any { s -> s.topic.id == op.id || s.cards.any { it.id == op.id } }) throw Rejected("shelved", "'${op.id}' is the id of a topic or a card on the shelf; use another id")
                 if (topics.any { it.id == op.id } || card(op.id) != null) throw Rejected("id-in-use", "'${op.id}' is already the id of a topic or a card")
                 val name = clip(op.name.ifEmpty { op.id }, 16)
                 val g = groups.firstOrNull { it.id == op.id }
@@ -294,12 +322,12 @@ class Board {
             }
             is Op.Let -> {
                 if (!validId(op.name)) throw Rejected("bad-id", "value name '${op.name}' is not valid (1 to 24 letters, digits, _ or -)")
-                if (op.value.isBlank()) {
+                if (op.value.isWsBlank()) {
                     vars.remove(op.name)
                 } else {
                     if (!vars.containsKey(op.name) && vars.size >= 64) throw Rejected("limit", "at most 64 named values")
                     if (chars(op.value) > CELL_LIMIT) notes.add("clipped let.${op.name} $CELL_LIMIT")
-                    vars[op.name] = clip(op.value.trim(), CELL_LIMIT)
+                    vars[op.name] = clip(op.value.trimWs(), CELL_LIMIT)
                 }
             }
             is Op.Archive -> {
@@ -344,14 +372,13 @@ class Board {
         }
         if (states.isNotEmpty() && cells[0] !in states) throw Rejected("bad-value", "the first cell of a ${c.kind.label} item is one of ${states.joinToString("|")} (got '${cells[0]}')")
         if (c.kind == Kind.Route) {
-            val ok = cells.getOrNull(1)?.split(',', limit = 2)?.let { p -> p.size == 2 && p[0].trim().toDoubleOrNull() != null && p[1].trim().toDoubleOrNull() != null } ?: false
+            val ok = cells.getOrNull(1)?.split(',', limit = 2)?.let { p -> p.size == 2 && isNumber(p[0].trimWs()) && isNumber(p[1].trimWs()) } ?: false
             if (!ok) throw Rejected("bad-value", "a route item is 'name | lat,lon | distance and time to the next stop (optional)'; the second cell must be two numbers")
         }
         if (c.kind == Kind.Draw && cells[0] !in listOf("line", "arrow", "rect", "circle", "text")) {
             throw Rejected("bad-value", "the first cell of a draw item is one of line|arrow|rect|circle|text (got '${cells[0]}')")
         }
-        if (c.kind == Kind.Chart && cells.getOrNull(1)?.replace(",", "")?.toDoubleOrNull() == null) throw Rejected("bad-value", "a chart item is 'name | number'")
-        if (cells.any { chars(it) > CELL_LIMIT }) notes.add("clipped $id.$item $CELL_LIMIT")
+        if (c.kind == Kind.Chart && cells.getOrNull(1)?.replace(",", "")?.let { isNumber(it) } != true) throw Rejected("bad-value", "a chart item is 'name | number'")
         val clipped = cells.map { clip(it, CELL_LIMIT) }
         val slot = c.items.firstOrNull { it.id == item }
         if (slot != null) {
@@ -363,6 +390,8 @@ class Board {
             if (c.items.size >= limit) throw Rejected("limit", "card '$id' already has $limit items")
             c.items.add(Item(item, clipped))
         }
+        // Noted only once the op is accepted: a rejected op leaves nothing behind for the next verdict.
+        if (cells.any { chars(it) > CELL_LIMIT }) notes.add("clipped $id.$item $CELL_LIMIT")
         c.rev++
     }
 }

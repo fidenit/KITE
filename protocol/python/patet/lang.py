@@ -10,10 +10,10 @@ VERSION = "0.4"
 
 # What counts as white space: the Unicode White_Space property, as in the reference implementation.
 # (str.strip() and \s in Python also take U+001C..U+001F, which the protocol does not.)
-WS = "\t\n\x0b\x0c\r \x85\xa0                　"
+WS = "".join(map(chr, [0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x0020, 0x0085, 0x00A0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000]))
 _WS_RE = re.compile("[" + WS + "]")
 _SIZE_RE = re.compile(r"([0-9]+)[xX]([0-9]+)")
-_INT_RE = re.compile(r"[+-]?[0-9]+")
+_INT_RE = re.compile(r"[0-9]+")
 
 Op = Dict[str, Any]
 
@@ -46,9 +46,11 @@ def declared_version(line: str) -> Optional[str]:
     if not line.startswith("#"):
         return None
     rest = line[1:].lstrip(WS)
-    if not rest.startswith("patet"):
+    # Up to 0.3 the protocol was called KITE Protocol; files written then are still read.
+    name = next((n for n in ("patet", "kite-protocol") if rest.startswith(n)), None)
+    if name is None:
         return None
-    rest = rest[len("patet"):]
+    rest = rest[len(name):]
     if rest == "" or rest[0] not in WS:
         return None
     return split1(rest)[0] or None
@@ -80,11 +82,24 @@ def _parse_size(s: str) -> Optional[Tuple[int, int]]:
     if m is None:
         return None
     w, h = int(m.group(1)), int(m.group(2))
-    return (w, h) if w <= 255 and h <= 255 else None
+    # However large, it is a size: the board clamps it.
+    return min(w, 255), min(h, 255)
 
 
-def _int(s: str) -> Optional[int]:
-    return int(s) if _INT_RE.fullmatch(s) else None
+def _position(s: str) -> Optional[int]:
+    # A column or a row: ASCII digits without a sign (leading zeros are allowed), 0 to 9999.
+    if not _INT_RE.fullmatch(s):
+        return None
+    n = int(s)
+    return n if n <= 9999 else None
+
+
+def strip_bom(text: str) -> str:
+    """Drop one leading U+FEFF: whoever reads a file or a stream does this before the first line.
+
+    U+FEFF is not white space, so a line that keeps it starts with an unknown verb.
+    """
+    return text[1:] if text.startswith("﻿") else text
 
 
 def split_cells(rest: str) -> List[str]:
@@ -169,7 +184,7 @@ def parse(raw: str) -> Optional[Op]:
     if cmd == "move":
         id_, r1 = split1(rest)
         c, r = split1(r1)
-        col, row = _int(c), _int(r)
+        col, row = _position(c), _position(r)
         if col is None or row is None:
             raise Reject("bad-syntax", "expected: move <id> <col> <row>")
         return {"op": "move", "id": id_, "col": col, "row": row}
@@ -196,9 +211,14 @@ class LineStream:
 
     def __init__(self) -> None:
         self.partial = ""
+        self.started = False
 
     def feed(self, delta: str) -> List[str]:
         self.partial += delta
+        # One U+FEFF at the very start of a stream or file is a byte order mark, not text (SPEC.md 10.2).
+        if not self.started and self.partial != "":
+            self.started = True
+            self.partial = strip_bom(self.partial)
         if "\n" not in self.partial:
             return []
         *done, self.partial = self.partial.split("\n")

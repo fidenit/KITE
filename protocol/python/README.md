@@ -45,7 +45,8 @@ print(serialize(board))                     # the board as ops: the <board> part
 | `LineStream` | cuts a token stream into lines: `feed(delta)`, `partial`, `finish()` |
 | `split_cells`, `join_cells` | item cells and the `\|` escape |
 | `PARTS`, `parts_table()`, `kind_names()`, `LIMITS` | the 16 card types and the limits |
-| `VERSION`, `header()`, `declared_version(line)`, `can_read(version)` | the protocol version and the `# patet 0.4` header |
+| `VERSION`, `header()`, `declared_version(line)`, `can_read(version)` | the protocol version and the `# patet 0.4` header (the older `# kite-protocol 0.3` is read too) |
+| `strip_bom(text)` | drops one leading U+FEFF; call it on a file or stream you read yourself, before the first line |
 
 A rejected op changes nothing, and the line after it still runs. Limits count Unicode characters, not bytes.
 

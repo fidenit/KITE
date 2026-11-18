@@ -4,9 +4,9 @@ package com.fidenit.kite.core
 
 object Lang {
     private fun split1(s0: String): Pair<String, String> {
-        val s = s0.trimStart()
-        val i = s.indexOfFirst { it.isWhitespace() }
-        return if (i < 0) s to "" else s.substring(0, i) to s.substring(i).trimStart()
+        val s = s0.trimWsStart()
+        val i = s.indexOfFirst { isWhiteSpace(it.code) }
+        return if (i < 0) s to "" else s.substring(0, i) to s.substring(i).trimWsStart()
     }
 
     private fun need(s: String, usage: String): String = s.ifEmpty { throw Rejected("missing-argument", "expected: $usage") }
@@ -14,9 +14,20 @@ object Lang {
     private fun parseSize(s: String): Pair<Int, Int>? {
         val i = s.indexOfFirst { it == 'x' || it == 'X' }
         if (i < 0) return null
-        val w = s.substring(0, i).toIntOrNull()?.takeIf { it in 0..255 } ?: return null
-        val h = s.substring(i + 1).toIntOrNull()?.takeIf { it in 0..255 } ?: return null
+        val w = digits(s.substring(0, i), 255, true) ?: return null
+        val h = digits(s.substring(i + 1), 255, true) ?: return null
         return w to h
+    }
+
+    /** A column or a row: ASCII digits without a sign, 0 to 9999. */
+    private fun cell(s: String): Int? = digits(s, 9999, false)
+
+    /** ASCII digits only, no sign. Over `max`: the largest value when `saturate` (a size), not a number otherwise (a grid cell). */
+    private fun digits(s: String, max: Int, saturate: Boolean): Int? {
+        if (s.isEmpty() || !s.all { it in '0'..'9' }) return null
+        val n = s.trimStart('0').ifEmpty { "0" }
+        val v = if (n.length > 9) Int.MAX_VALUE else n.toInt()
+        return if (v <= max) v else if (saturate) max else null
     }
 
     /** Split a value into cells at `|`. Inside a cell, `\\|` is a `|` that does not split. */
@@ -32,14 +43,14 @@ object Lang {
                 continue
             }
             if (c == '|') {
-                out.add(cur.toString().trim())
+                out.add(cur.toString().trimWs())
                 cur.setLength(0)
             } else {
                 cur.append(c)
             }
             i++
         }
-        out.add(cur.toString().trim())
+        out.add(cur.toString().trimWs())
         return out
     }
 
@@ -50,7 +61,7 @@ object Lang {
 
     /** 한 줄을 조작으로 해석한다. 빈 줄·주석·코드 울타리·tell 은 null. 잘못된 줄이면 Rejected 를 던진다. */
     fun parse(raw: String): Op? {
-        val line = raw.trim()
+        val line = raw.trimWs()
         if (line.isEmpty() || line.startsWith("#") || line.startsWith("```")) return null
         val (cmd, rest) = split1(line)
         return when (cmd) {
@@ -90,8 +101,8 @@ object Lang {
             "move" -> {
                 val (id, r1) = split1(rest)
                 val (c, r) = split1(r1)
-                val col = c.toIntOrNull()
-                val row = r.toIntOrNull()
+                val col = cell(c)
+                val row = cell(r)
                 if (col == null || row == null) throw Rejected("bad-syntax", "expected: move <id> <col> <row>")
                 Op.Move(id, col, row)
             }
@@ -147,7 +158,7 @@ object Lang {
         val b = Board()
         for (line in text.lineSequence()) {
             try {
-                parse(line)?.let { b.apply(it, Author.User) }
+                parse(line)?.let { b.apply(it, Author.Restore) }
             } catch (_: Rejected) {
             }
         }
@@ -181,14 +192,20 @@ sealed class Chunk {
 /** 토큰 스트림을 줄 단위로 끊는다. */
 class LineStream {
     private val buf = StringBuilder()
+    private var started = false
 
     fun feed(delta: String): List<Chunk> {
         buf.append(delta)
+        // One U+FEFF at the very start of a stream or file is a byte order mark, not text.
+        if (!started && buf.isNotEmpty()) {
+            started = true
+            if (buf[0] == '\uFEFF') buf.deleteCharAt(0)
+        }
         val out = mutableListOf<Chunk>()
         while (true) {
             val i = buf.indexOf("\n")
             if (i < 0) break
-            out.add(Chunk.Line(buf.substring(0, i).trimEnd()))
+            out.add(Chunk.Line(buf.substring(0, i).trimWsEnd()))
             buf.delete(0, i + 1)
         }
         if (buf.isNotEmpty()) out.add(Chunk.Partial(buf.toString()))
@@ -198,6 +215,6 @@ class LineStream {
     fun finish(): String? {
         val rest = buf.toString()
         buf.setLength(0)
-        return rest.ifBlank { null }
+        return if (rest.isWsBlank()) null else rest
     }
 }

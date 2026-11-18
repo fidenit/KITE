@@ -3,7 +3,8 @@
     python -m patet check <file|->     each line that was clipped or rejected, with its line number; exit 1 on a rejection
     python -m patet show <file|->      the resulting board, as ops
 
-The input is plain op lines (author: agent), or a log (SPEC.md 10.2): a `# patet 0.4` header, then `A<tab>op`,
+The input is plain op lines (author: agent), or a log (SPEC.md 10.2): a `# patet 0.4` header (or the older
+`# kite-protocol 0.3`), then `A<tab>op`,
 `U<tab>op` and `T<tab>date` lines.
 """
 
@@ -12,7 +13,7 @@ from __future__ import annotations
 import sys
 from typing import List, Optional
 
-from . import VERSION, Board, can_read, declared_version, serialize
+from . import VERSION, Board, can_read, declared_version, serialize, strip_bom
 
 USAGE = "usage: python -m patet check <file|->\n       python -m patet show <file|->\n"
 
@@ -23,7 +24,8 @@ def read_text(path: str) -> str:
     else:
         with open(path, "rb") as f:
             data = f.read()
-    return data.decode("utf-8-sig")
+    # One byte order mark at the start is dropped; a second one is part of the first line (it is not white space).
+    return strip_bom(data.decode("utf-8"))
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -36,7 +38,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
     check = argv[0] == "check"
     try:
-        lines = read_text(argv[1]).splitlines()
+        # Lines end at a line feed only: U+0085 and U+2028 are white space inside a line, not line ends.
+        lines = read_text(argv[1]).split("\n")
     except (OSError, UnicodeDecodeError) as e:
         sys.stderr.write(f"patet: {argv[1]}: {e}\n")
         return 2

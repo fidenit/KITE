@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "python"))
 
-from patet import VERSION, Board, LineStream, join_cells, parts_table, serialize, split_cells  # noqa: E402
+from patet import VERSION, Board, LineStream, declared_version, join_cells, parts_table, serialize, split_cells, strip_bom  # noqa: E402
 from patet.__main__ import main  # noqa: E402
 
 
@@ -36,7 +36,7 @@ class Conformance(unittest.TestCase):
 
     def test_conformance_cases(self):
         files = sorted((ROOT / "conformance").glob("*.txt"))
-        self.assertGreaterEqual(len(files), 8, "expected the conformance cases")
+        self.assertGreaterEqual(len(files), 36, "expected the conformance cases")
         lines = 0
         for path in files:
             with self.subTest(case=path.name):
@@ -73,11 +73,11 @@ class Conformance(unittest.TestCase):
             ran += 1
         got = serialize(board)
         self.assertEqual(tidy(got), tidy(expand(want)), f"{name}: the board at the end")
-        # What was written back rebuilds the same board when the user replays it.
+        # What was written back rebuilds the same board when it is replayed with the author "restore".
         again = Board()
         for l in got.split("\n"):
             if l:
-                self.assertEqual(again.line(l, "user"), "ok", f"{name}: replay of '{l}'")
+                self.assertEqual(again.line(l, "restore"), "ok", f"{name}: replay of '{l}'")
         self.assertEqual(serialize(again), got, f"{name}: replaying the board")
         return ran
 
@@ -94,8 +94,8 @@ class Conformance(unittest.TestCase):
             # The board an example builds survives being written and read back.
             text = serialize(board)
             again = Board()
-            for l in text.splitlines():
-                self.assertEqual(again.line(l, "user"), "ok", f"{path.name}: replay of '{l}'")
+            for l in text.split("\n")[:-1]:
+                self.assertEqual(again.line(l, "restore"), "ok", f"{path.name}: replay of '{l}'")
             self.assertEqual(serialize(again), text, f"{path.name}: round trip")
 
     def test_guide_table_is_this_table(self):
@@ -115,6 +115,10 @@ class Conformance(unittest.TestCase):
         self.assertEqual(s.partial, "say end")
         self.assertEqual(s.finish(), "say end")
         self.assertIsNone(s.finish())
+        # One U+FEFF at the very start of a stream is a byte order mark; any other is text.
+        bom = chr(0xFEFF)
+        s = LineStream()
+        self.assertEqual(s.feed("") + s.feed(bom) + s.feed("topic t T\n" + bom + "topic u U\n"), ["topic t T", bom + "topic u U"])
 
     def test_limits_count_characters(self):
         b = Board()
@@ -158,6 +162,33 @@ class Conformance(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertTrue(out.startswith("1: this is patet "), out)
         self.assertEqual(self.cli("frob")[0], 2)
+
+    def test_command_line_reads_the_old_header(self):
+        # Up to 0.3 the protocol was called KITE Protocol; its files are still read.
+        self.assertEqual(declared_version("# kite-protocol 0.3"), "0.3")
+        self.assertEqual(declared_version("# patet 0.4"), "0.4")
+        self.assertIsNone(declared_version("# kite-protocolX 0.3"))
+        self.assertIsNone(declared_version("# note"))
+        code, out, _ = self.cli("check", "-", stdin="# kite-protocol 0.3\nA\ttopic t A\nU\tcard k note t X\n")
+        self.assertEqual((code, out), (0, "2 applied (0 clipped), 0 rejected\n"))
+        code, out, _ = self.cli("check", "-", stdin="# kite-protocol 1.0\ntopic t A\n")
+        self.assertEqual(code, 1)
+        self.assertTrue(out.startswith("1: this is patet "), out)
+
+    def test_command_line_drops_one_byte_order_mark(self):
+        bom = chr(0xFEFF)
+        self.assertEqual(strip_bom(bom + bom + "x"), bom + "x")
+        self.assertEqual(strip_bom("x"), "x")
+        # A reader drops one mark before the first line...
+        code, out, _ = self.cli("show", "-", stdin=bom + "topic t A\n")
+        self.assertEqual((code, out), (0, "topic t A\n"))
+        code, out, _ = self.cli("check", "-", stdin=bom + "# patet 1.0\n")
+        self.assertEqual(code, 1)
+        # ...and only one: U+FEFF is not white space, so what is left is the start of the first word.
+        code, out, _ = self.cli("check", "-", stdin=bom + bom + "topic t A\n")
+        self.assertEqual(code, 1)
+        self.assertTrue(out.startswith("1: err unknown-verb "), out)
+        self.assertTrue(Board().line(bom + "topic t A").startswith("err unknown-verb "))
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 from .lang import WS, Op, Reject, join_cells, parse
 
 _ID = "(1 to 24 letters, digits, _ or -)"
+_ID_ASCII = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
 
 LIMITS: Dict[str, int] = {
     "id": 24, "title": 40, "topic": 24, "group": 16, "cell": 60, "cells": 6, "items": 24, "draw_items": 80,
@@ -75,8 +76,15 @@ def _clip(s: str, limit: int) -> str:
 
 
 def valid_id(id: str) -> bool:
-    """1 to 24 letters, digits, ``_`` or ``-``. Letters and digits of any script count."""
-    return id != "" and len(id) <= LIMITS["id"] and all(c in "_-" or unicodedata.category(c)[0] in "LN" for c in id)
+    """1 to 24 characters: an ASCII letter or digit, ``_``, ``-``, or any character outside ASCII that is
+    neither white space nor a control character."""
+    return id != "" and len(id) <= LIMITS["id"] and all(_id_char(c) for c in id)
+
+
+def _id_char(c: str) -> bool:
+    if c < "\x80":
+        return c in _ID_ASCII
+    return c not in WS and unicodedata.category(c) != "Cc"
 
 
 def is_extension_kind(name: str) -> bool:
@@ -205,8 +213,13 @@ class Board:
         return _VAR_RE.sub(lambda m: self.vars.get(m.group(1), m.group(0)), s)
 
     def apply(self, op: Op, by: str = "agent") -> None:
-        """Check one op and apply it. Raises :class:`Reject`; a rejected op changes nothing. ``by`` is "agent" or "user"."""
-        agent = by != "user"
+        """Check one op and apply it. Raises :class:`Reject`; a rejected op changes nothing. 
+
+        ``by`` is "agent" or "user". A third author, "restore", is for replaying a saved board: it has the
+        user's rights, but its ``move`` and ``size`` do not pin the card. It is not an author on the wire.
+        """
+        agent = by not in ("user", "restore")
+        pins = by == "user"
         verb = op["op"]
         if verb == "topic":
             id = op["id"]
@@ -224,6 +237,8 @@ class Board:
             id = op["id"]
             if not valid_id(id):
                 raise Reject("bad-id", f"group id '{id}' is not valid {_ID}")
+            if any(s.topic.id == id or any(c.id == id for c in s.cards) for s in self.shelf):
+                raise Reject("shelved", f"'{id}' is the id of a topic or a card on the shelf; use another id")
             if self.topic(id) or self.card(id):
                 raise Reject("id-in-use", f"'{id}' is already the id of a topic or a card")
             name = _clip(op["name"] or id, LIMITS["group"])
@@ -263,7 +278,7 @@ class Board:
                 raise Reject("pinned", f"the user pinned '{op['id']}'; its size cannot be changed")
             c.w = min(max(op["w"], 1), LIMITS["size"])
             c.h = min(max(op["h"], 1), LIMITS["size"])
-            if not agent:
+            if pins:
                 c.pinned = True
             c.rev += 1
         elif verb == "move":
@@ -271,7 +286,7 @@ class Board:
             if agent and c.pinned:
                 raise Reject("pinned", f"the user pinned '{op['id']}'; it cannot be moved")
             c.grid = (max(op["col"], 0), max(op["row"], 0))
-            if not agent:
+            if pins:
                 c.pinned = True
         elif verb == "pin":
             if agent:
@@ -443,7 +458,7 @@ class Board:
 
 
 def serialize(b: Board, topic: Optional[str] = None) -> str:
-    """Write the board as ops. Applying them to an empty board with author ``user`` gives the same board.
+    """Write the board as ops. Applying them to an empty board with author ``restore`` gives the same board.
 
     With ``topic``, only that topic and its cards are written.
     """

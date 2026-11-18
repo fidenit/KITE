@@ -116,7 +116,7 @@ class CoreTest {
         fun expand(s: String) = Regex("<(\\d+) (.)>").replace(s) { it.groupValues[2].repeat(it.groupValues[1].toInt()) }
         fun tidy(s: String) = s.lines().joinToString("\n") { it.trimEnd() }.trimEnd()
         val files = File("../../protocol/conformance").listFiles { f -> f.extension == "txt" }!!.sortedBy { it.name }
-        assertTrue("the conformance cases are missing", files.size >= 8)
+        assertTrue("the conformance cases are missing", files.size >= 36)
         for (file in files) {
             val text = file.readText().replace("\r\n", "\n")
             val script = text.substringBefore("\nboard:\n")
@@ -149,6 +149,8 @@ class CoreTest {
                 assertEquals("${file.name}:$i: $line", expected, got)
             }
             assertEquals("${file.name}: the board at the end", tidy(want), tidy(Lang.serialize(b)))
+            // Written back and loaded again, it is the same board (SPEC.md 8).
+            assertEquals("${file.name}: read back", Lang.serialize(b), Lang.serialize(Lang.load(Lang.serialize(b))))
         }
     }
 
