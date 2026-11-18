@@ -131,7 +131,7 @@ add k2 o2 Gapyeong | Close and cheaper
 
 When the user taps Gapyeong, the agent hears `user set k2 chosen o2`.
 
-How each of these works, with the settings: [docs/DRIVING.md](docs/DRIVING.md). The language itself: [protocol/SPEC.md](protocol/SPEC.md), and the [guide to give your model](protocol/GUIDE.md).
+How each of these works, with the settings: [docs/DRIVING.md](docs/DRIVING.md). The language itself: [protocol/SPEC.md](protocol/SPEC.md), and the [guide to give your model](protocol/GUIDE.md). How it compares with A2UI, json-render, AG-UI and MCP Apps: [protocol/COMPARISON.md](protocol/COMPARISON.md).
 
 ## Know before you run
 

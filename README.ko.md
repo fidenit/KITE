@@ -131,7 +131,7 @@ add k2 o2 가평 | 가깝고 저렴함
 
 사용자가 가평을 누르면 에이전트는 `user set k2 chosen o2`를 받는다.
 
-방법과 설정은 [docs/DRIVING.md](docs/DRIVING.md)(영어), 언어 자체는 [protocol/SPEC.md](protocol/SPEC.md), 모델에게 줄 안내서는 [protocol/GUIDE.md](protocol/GUIDE.md)에 있다.
+방법과 설정은 [docs/DRIVING.md](docs/DRIVING.md)(영어), 언어 자체는 [protocol/SPEC.md](protocol/SPEC.md), 모델에게 줄 안내서는 [protocol/GUIDE.md](protocol/GUIDE.md)에 있다. A2UI, json-render, AG-UI, MCP Apps 등과 무엇이 다른지는 [protocol/COMPARISON.md](protocol/COMPARISON.md)(영어)에 정리했다.
 
 ## 실행하기 전에 알아 둘 것
 
