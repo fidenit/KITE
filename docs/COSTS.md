@@ -7,7 +7,7 @@ Measured on 2026-11-18. Numbers are tokens. The methods are at the end, so they 
 - **A board answer is not longer than a chat answer.** For the same four requests, the ops a model wrote were 3,641 characters in total and the chat answers 5,048: about 28% less visible output. Output is the small side of the bill either way.
 - **The cost of a turn is its input**, and most of that is the same on every turn: instructions and tool definitions. With KITE's Claude API engine a turn sends about 36,500 tokens, of which about 90% is read from the cache in a session of consecutive turns.
 - **That is the same size as a Claude Code turn.** On the same machine, one empty Claude Code turn (`claude -p`, with its own instructions, tools, skills and MCP servers) sent 38,175 tokens.
-- **Two things were wasteful and one still is.** A cache that lasted five minutes, so a turn after a pause paid for everything again (fixed: one hour). Instructions written in Korean, which cost about half again as many tokens as the same text in English (not fixed yet).
+- **Two things were wasteful, and both are fixed.** A cache that lasted five minutes, so a turn after a pause paid for everything again (now one hour). Instructions written in Korean, which cost about half again as many tokens as the same text in English (now English: a request went from about 32,800 tokens to about 26,300 on an empty board).
 
 ## Where the input goes (Claude API engine)
 
@@ -21,6 +21,8 @@ From 20 real turns of daily use with Opus (2026-11-16): input per request 34,088
 | **Total** | **about 36,500** | about two thirds |
 
 A turn that uses tools sends all of it once per step. Until this version the status line showed only the last step's input; it now shows the sum.
+
+Checked with real turns after the change: the one-hour cache was accepted, and a second turn read 34,014 of its 34,661 input tokens from the cache (98%).
 
 ## What a cached and an uncached turn cost
 
@@ -38,7 +40,14 @@ A turn that misses the cache costs about nine times a turn that hits it. A chat 
 
 The same four principles from the instructions, in Korean and in a faithful English translation: 371 tokens against 248. English is 67% of Korean.
 
-Applied to the whole of `src/prompt.md`, an English version would be about 13,400 tokens instead of 19,965: about 6,600 fewer on every request, or 18% of a turn. This is an estimate from one sample, and translating the instructions changes how the model behaves, so it has to be done with real turns to compare. It is the largest saving left.
+The instructions and the tool descriptions were then translated (`src/prompt.md`; the Korean ones remain as `src/prompt.ko.md`, chosen with `KITE_PROMPT=ko` or `prompt-lang.txt`). The same Korean request on an empty board, real turns with Haiku:
+
+| Instructions | Input tokens per request | Board |
+|---|---|---|
+| Korean | 32,773 | Korean; a metric, an input card asking for the three candidates |
+| English | about 26,300 (52,698 over two requests) | Korean; the same cards, plus named values |
+
+About 6,400 fewer tokens on every request, 20%. With Opus and the English instructions a Korean request gave a Korean board of four cards with nothing rejected, for 25,870 input tokens. The instructions are in English; the model writes in the language the user chose (`<lang>`).
 
 For comparison, the protocol's own guide for agents ([protocol/GUIDE.md](../protocol/GUIDE.md), English) is 5,042 tokens: what an outside agent needs to write boards. The rest of KITE's instructions is about working on the computer, memory, workers and voice.
 
@@ -75,7 +84,7 @@ What that run got wrong went into the protocol the same day: a model that answer
 - A comparison with other UI formats (A2UI, json-render) for the same screen.
 - The share of rejected lines for models other than Haiku, and over long conversations.
 - Tokens of the tool definitions exactly (the figure above is estimated from their size).
-- Whether the one-hour cache is accepted in practice: it was added from the documentation and has a fallback, but no real turn was run.
+- Board quality with English instructions over many days of real use: a handful of turns looked the same as with the Korean ones.
 
 ## How it was measured
 

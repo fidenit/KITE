@@ -1260,18 +1260,18 @@ impl App {
                     let words = memory::grams(&format!("{} {}", s.topic.name, titles.join(" ")));
                     let shared = words.iter().filter(|g| said.binary_search(g).is_ok()).count();
                     // 겹치는 것 먼저, 그다음 최근에 보관한 것 먼저
-                    (shared * 100_000 + n, format!("{} {} (카드 {}장: {}){}", s.topic.id, s.topic.name, s.cards.len(), titles.join(", "), if shared >= 2 { "  ← 이번 말과 관련 있어 보임" } else { "" }))
+                    (shared * 100_000 + n, format!("{} {} ({} cards: {}){}", s.topic.id, s.topic.name, s.cards.len(), titles.join(", "), if shared >= 2 { "  <- looks related to this input" } else { "" }))
                 })
                 .collect();
             rows.sort_by(|a, b| b.0.cmp(&a.0));
             let more = rows.len().saturating_sub(40);
             let lines: Vec<String> = rows.into_iter().take(40).map(|r| r.1).collect();
-            t += &format!("<archived>\n{}\n{}</archived>\n", lines.join("\n"), if more > 0 { format!("(이 밖에 {more}개)\n") } else { String::new() });
+            t += &format!("<archived>\n{}\n{}</archived>\n", lines.join("\n"), if more > 0 { format!("(and {more} more)\n") } else { String::new() });
         }
         if !self.recent.is_empty() {
             t += "<recent>\n";
             for (u, a) in self.recent.iter().rev().take(recent_count()).rev() {
-                t += &format!("사용자: {u}\nsay: {a}\n");
+                t += &format!("user: {u}\nsay: {a}\n");
             }
             t += "</recent>\n";
         }
@@ -1284,7 +1284,7 @@ impl App {
         if !self.job_news.is_empty() {
             let names: Vec<String> = self.job_news.iter().map(|n| n.1.clone()).collect();
             for (id, title, ok, report) in self.job_news.drain(..) {
-                t += &format!("<job_done id=\"{id}\" title=\"{title}\" state=\"{}\">\n{report}\n</job_done>\n", if ok { "끝남" } else { "끝내지 못함" });
+                t += &format!("<job_done id=\"{id}\" title=\"{title}\" state=\"{}\">\n{report}\n</job_done>\n", if ok { "done" } else { "failed" });
             }
             if input.is_empty() && self.events.is_empty() {
                 self.job_turn = Some(names.join(", "));
@@ -1319,9 +1319,7 @@ impl App {
         if self.voice {
             t += "<voice>on</voice>\n";
         }
-        if sys::english() {
-            t += "<lang>en</lang>\n";
-        }
+        t += if sys::english() { "<lang>en</lang>\n" } else { "<lang>ko</lang>\n" };
         self.events.clear();
         // 기억 보관함의 노트 목록과 지금의 환경
         let notes = vault::index();
@@ -1331,7 +1329,7 @@ impl App {
         let (date, time) = sys::now_local();
         let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default();
         t += &format!(
-            "<env>\n지금: {date} {time}\n운영체제: {}\n사용자 홈 폴더: {home}\n기억 보관함 폴더: {}\n</env>\n",
+            "<env>\nnow: {date} {time}\nos: {}\nhome folder: {home}\nmemory vault folder: {}\n</env>\n",
             if cfg!(windows) { "Windows" } else { "macOS" },
             vault::root().display()
         );
@@ -1401,7 +1399,7 @@ impl App {
             }
         }
         if !images.is_empty() {
-            text += &format!("\n<images>\n사용자가 이번 말에 사진 {}장을 붙였다 (이 메시지 앞에 들어 있다). 저장된 곳:\n{}\n</images>", images.len(), saved.join("\n"));
+            text += &format!("\n<images>\nThe user attached {} picture(s) to this input (they come before this text). Saved at:\n{}\n</images>", images.len(), saved.join("\n"));
         }
         let pics_note = if images.is_empty() { String::new() } else { if sys::english() { format!("({} pictures) ", images.len()) } else { format!("(사진 {}장) ", images.len()) } };
         if crate::sys::var("DEBUG").is_ok() {
@@ -1514,7 +1512,7 @@ impl App {
         self.input = if asides.is_empty() {
             text
         } else {
-            format!("{text}\n(기다리는 동안 사용자가 혼잣말하거나 읽은 말: {})", asides.join(" / "))
+            format!("{text}\n(while waiting, the user said to themselves or read: {})", asides.join(" / "))
         };
         self.send(ctx);
     }
@@ -1600,7 +1598,7 @@ impl App {
                 .filter(|t| !self.board.cards.iter().any(|c| c.topic == t.id && (c.kind.asks() || c.id.starts_with("job"))))
                 .filter_map(|t| {
                     let age = today - days_of(self.touched_on.get(&t.id)?);
-                    (age >= limit).then(|| (age, format!("주제 {}({})는 {age}일 동안 손대지 않음. 끝났거나 한동안 볼 일이 없으면 archive 로 보관할 것", t.id, t.name)))
+                    (age >= limit).then(|| (age, format!("topic {} ({}) untouched for {age} days. If it is finished or will not be looked at for a while, shelve it with archive", t.id, t.name)))
                 })
                 .collect();
             stale.sort_by(|a, b| b.0.cmp(&a.0));
@@ -1807,7 +1805,7 @@ impl App {
                     self.review = post
                         .unclear
                         .iter()
-                        .map(|(id, p)| format!("카드 {id}: 화면만 봐서는 무엇에 관한 것인지 알기 어려움 (분명할 확률 {p:.2})"))
+                        .map(|(id, p)| format!("card {id}: hard to tell what it is about from the screen alone (probability it is clear: {p:.2})"))
                         .collect();
                     self.view.set_importance(post.importance);
                 }

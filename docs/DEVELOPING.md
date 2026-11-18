@@ -80,7 +80,7 @@ KITE_AUTOPLAY="plan the workshop|!set k2 chosen o2" KITE_POS="-2600,-2400" KITE_
 | `src/mcp.rs` | KITE as an MCP server: the inside door for the Claude Code engine, the outside door for other agents |
 | `src/feed.rs` | The protocol socket (line session) |
 | `src/hub.rs` | Numbered events for those who follow the board from outside |
-| `src/prompt.md`, `src/worker.md` | Instructions for the model and for workers (Korean; `{{PARTS}}` is filled from the card type table) |
+| `src/prompt.md`, `src/worker.md` | Instructions for the model and for workers (`{{PARTS}}` is filled from the card type table). `prompt.ko.md` and `worker.ko.md` are the older Korean ones, used with `KITE_PROMPT=ko`; they are no longer kept in step |
 | `src/tools.rs` | Tools: commands, files, memory notes, browser, web |
 | `src/permit.rs` | What KITE's own engines may do without asking, and the question card when they may not |
 | `src/jobs.rs` | Workers: delegated jobs that run beside the conversation |

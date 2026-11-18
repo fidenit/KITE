@@ -98,7 +98,7 @@ Choose **Another model** under **Keys** and give the base address, the model and
 | LM Studio | `http://localhost:1234/v1` |
 | OpenRouter | `https://openrouter.ai/api/v1` |
 
-What to expect: the instructions KITE gives its model were written and tuned for Claude (and are in Korean, to be translated). A smaller model may write worse boards or wrong ops; wrong lines are rejected and it is told why. Web search and web fetch are tools of Anthropic's API and are not available here.
+What to expect: the instructions KITE gives its model were written and tuned for Claude. A smaller model may write worse boards or wrong ops; wrong lines are rejected and it is told why. Web search and web fetch are tools of Anthropic's API and are not available here.
 
 ## Settings
 
@@ -115,7 +115,9 @@ Everything can be set in the **Keys** window. The same choices as files next to 
 | | `KITE_PROTOCOL_PORT`, `KITE_PROTOCOL_TOKEN` | the protocol socket, and an optional token (`auth <token>` as the first line) |
 | `permission.txt` | `KITE_PERMISSION` | what KITE's own engines may do without asking: `ask` (the default), `edits`, `all` |
 | `claude-permission.txt` | | the same for the Claude Code engine: `default`, `acceptEdits`, `bypassPermissions` |
-| `data/lang.txt` | `KITE_LANG` | `en` or `ko`; also the switch in the corner |
+| `data/lang.txt` | `KITE_LANG` | `en` or `ko`: the language of the screen and of what the model writes; also the switch in the corner |
+| `prompt-lang.txt` | `KITE_PROMPT` | `ko` uses the Korean instructions for the model; without it they are English (about 20% fewer tokens, same answers) |
+| `outside-media.txt` | `KITE_OUTSIDE_MEDIA` | `yes` lets an agent outside KITE create web, image and file cards |
 
 Variables named `LYBOARD_...` from earlier versions are still read.
 

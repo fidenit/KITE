@@ -145,8 +145,8 @@ How each of these works, with the settings: [docs/DRIVING.md](docs/DRIVING.md). 
 
   Reading files and searching the web are not asked about.
 - **It costs money as you use it.** By default it uses the most capable Claude model. A turn sends about as much as a Claude Code turn does; what was measured is in [docs/COSTS.md](docs/COSTS.md).
-- **It is early.** One person uses it daily. English and Korean, switched in the corner. The instructions KITE gives Claude are still written in Korean; cards and answers follow the language you choose. See [what changed](CHANGELOG.md) and [what is next](docs/NEXT.md) (Korean).
-- **Other models and agents are new.** The Claude engines are the ones used every day. The engines for other models and for outside agents were tested against test servers, not yet in daily use.
+- **It is early.** One person uses it daily. English and Korean, switched in the corner; cards and answers follow the language you choose. See [what changed](CHANGELOG.md) and [what is next](docs/NEXT.md) (Korean).
+- **Other models and agents are new.** The Claude engines are the ones used every day. The others were checked with real runs (Claude Code connected over MCP as an outside agent; a real server behind the OpenAI-compatible engine) but are not in daily use, and no AG-UI framework or non-Claude model was tried.
 - Distances and times on route cards are read from Kakao Map, so routes work in South Korea.
 
 ## For developers

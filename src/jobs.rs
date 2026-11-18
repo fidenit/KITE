@@ -14,7 +14,10 @@ use serde_json::Value;
 use crate::llm::{Config, Msg};
 use crate::{agent, sys, tools, vault};
 
-const WORKER: &str = include_str!("worker.md");
+/// The instructions for a worker, in the same language as the main instructions.
+fn worker_prompt() -> &'static str {
+    if crate::sys::korean_prompt() { include_str!("worker.ko.md") } else { include_str!("worker.md") }
+}
 /// 작업자 하나가 도구를 주고받는 횟수의 상한
 const MAX_STEPS: usize = 200;
 
@@ -249,9 +252,9 @@ fn start(input: &Value) -> Result<String, String> {
                     }
                 }
             };
-            crate::cc::worker(&id, WORKER, &jdir, &cfg.effort, &first, &stop, &shown)
+            crate::cc::worker(&id, worker_prompt(), &jdir, &cfg.effort, &first, &stop, &shown)
         } else {
-            let role = agent::Role { system: WORKER, tools: tools::definitions(true), max_steps: MAX_STEPS, check: &check, tool: &tool };
+            let role = agent::Role { system: worker_prompt(), tools: tools::definitions(true), max_steps: MAX_STEPS, check: &check, tool: &tool };
             match &cfg.openai {
                 Some(p) => crate::openai::run_as(p, &role, &first, &[], &send),
                 None => agent::run_as(&cfg, &key, &role, &first, &[], &send),

@@ -10,7 +10,7 @@ use crate::llm::{Config, Msg, Stats};
 /// 지시문. 부품 표는 등록된 부품 목록에서 만들어 끼워 넣는다 (프로그램이 떠 있는 동안 한 번만 만든다: 바뀌면 캐시가 깨진다).
 pub fn system() -> &'static str {
     static BUILT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| include_str!("prompt.md").replace("{{PARTS}}", crate::core::parts_table().trim_end()))
+    BUILT.get_or_init(|| if crate::sys::korean_prompt() { include_str!("prompt.ko.md") } else { include_str!("prompt.md") }.replace("{{PARTS}}", crate::core::parts_table().trim_end()))
 }
 /// 사용자가 멈춰서 턴이 끝났다는 표시
 pub const STOPPED: &str = "__stopped";

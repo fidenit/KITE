@@ -40,6 +40,13 @@ pub fn var(name: &str) -> Result<String, std::env::VarError> {
 /// Is the language English? English is the default; a choice made in the app is kept in data/lang.txt.
 static ENGLISH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
+/// Are the instructions for the model the Korean ones? They are English unless KITE_PROMPT is `ko` or
+/// `prompt-lang.txt` next to the program says `ko`. (This is the language of the instructions, not of the answers:
+/// the model writes in the language the user chose.) English costs about a third fewer tokens.
+pub fn korean_prompt() -> bool {
+    var("PROMPT").ok().or_else(|| std::fs::read_to_string(base_dir().join("prompt-lang.txt")).ok()).map(|v| v.trim() == "ko").unwrap_or(false)
+}
+
 /// Pick the text for the screen: English, or Korean when the user chose Korean.
 pub fn tr(ko: &'static str, en: &'static str) -> &'static str {
     if english() { en } else { ko }

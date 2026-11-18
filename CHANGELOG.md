@@ -41,10 +41,16 @@ The apps. Changes to the protocol itself are in [protocol/CHANGELOG.md](protocol
 
 - The protocol socket (`KITE_PROTOCOL_PORT`), the version header of the log, and the Android apps KITE and KITE Pro, which were added after the 0.3.0 release.
 
+### Lighter turns
+
+- The instructions KITE gives its model, and the tool descriptions, are in English: about 20% fewer input tokens per request, with the same boards in the user's language. The Korean instructions can be chosen with `prompt-lang.txt`.
+- The instructions and tools are cached for an hour, not five minutes, so coming back to the board after a pause does not pay for everything again.
+- The status line counts every request of a turn that uses tools. What was measured is in [docs/COSTS.md](docs/COSTS.md).
+
 ### Good to know
 
-- The instructions KITE gives Claude are still written in Korean. Cards and answers follow the language you choose.
-- The engines for outside agents and other models were tested with test servers and scripted clients on a real window, not yet with a real model or an agent built on an AG-UI framework.
+- Checked with real runs on a real window: the Claude API engine (Haiku and Opus), the Claude Code engine, the question card before a command, Claude Code connected as an outside agent over MCP, the OpenAI-compatible engine against a real server, and saving from the Keys window.
+- Not tried: an agent built on an AG-UI framework, a model that is not Claude, macOS, and the new cards on an Android device.
 - Text sent back to a model about a rejected line changed from Korean to the coded English form. A board saved by 0.3.0 loads unchanged.
 
 ## 0.3.0 (2026-11-16)
