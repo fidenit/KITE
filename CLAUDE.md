@@ -1,0 +1,47 @@
+# APERIT: notes for whoever works here next
+
+APERIT is an AI workspace with no chat window: the user talks, the AI builds and edits a board of cards. It was called KITE until version 0.3, and the local folder may still be named `KITE`. The language the AI writes is PATET (https://github.com/fidenit/patet), a separate repository. The owner reads Korean; write to them in Korean. Text in the repository and defaults in the app are English; the app has a language setting.
+
+## Layout
+
+| | |
+|---|---|
+| `src/` | The desktop app (Rust, egui): `main.rs` the app, `ui.rs` drawing, `chat.rs` the left panel and the Keys window, `agent.rs` / `openai.rs` / `cc.rs` / `agui.rs` / `mcp.rs` the engines, `prompt.md` / `worker.md` the instructions for the model (English; `*.ko.md` are older Korean ones) |
+| `protocol/` | **A copy of the PATET repository. Do not edit it here.** Change PATET, then run `python tools/vendor_patet.py` with the PATET repository beside this one |
+| `android/` | The Android app (Kotlin, Compose). `core/Board.kt` and `core/Lang.kt` are the Kotlin implementation of PATET, and are copied into PATET's `kotlin/` |
+| `docs/` | `DRIVING.md` (engines, settings), `DEVELOPING.md`, `COSTS.md` (tokens), `NEXT.md` (history and what is next, in Korean) |
+
+## Build and check
+
+Windows: Rust `stable-x86_64-pc-windows-gnu` and WinLibs MinGW on the PATH. `.\run.ps1` builds and starts; `.\run.ps1 test`; `.\run.ps1 pack` makes `portable\APERIT` (and moves an old `portable\KITE` there whole). macOS: `./run.sh`, same words. Never run `pack` just to test: it replaces the owner's installed copy.
+
+```sh
+cargo test --workspace
+node protocol/js/test.mjs
+cd android && ./gradlew testFreeDebugUnitTest      # needs JAVA_HOME (Android Studio's jbr) and ANDROID_HOME
+```
+
+Not in the repository, and needed to run with a real model: `key.txt` (a Claude API key) next to the program, or choose "Sign in with Claude" in the Keys window. `data/` (the board) and `vault/` (memory notes) are local too.
+
+## Testing a window without touching the owner's desktop
+
+Never send keys or the real mouse. Start a copy off screen and let it play a script:
+
+```sh
+APERIT_AUTOPLAY="plan a workshop|!set k2 chosen o2" APERIT_POS="-2800,-2400" APERIT_SIZE="1500,950" \
+APERIT_SHOT=shot.bmp APERIT_SHOT_AT=9000 APERIT_MODEL=claude-haiku-5-5 ./aperit
+```
+
+`!op` is a user gesture, `+!op` a gesture during a turn, `@click x y` and `@type text` drive the built-in pointer; `data/ops.log`, `data/rejects.log` and `data/timing.jsonl` say what happened. Settings are `APERIT_<NAME>` (the old `KITE_<NAME>` still works). Android without a key: on a debug build, `adb shell run-as com.fidenit.kite cp /data/local/tmp/board.txt files/board.txt` puts a board on screen.
+
+## Kept on purpose under the old name
+
+The Android package `com.fidenit.kite` and its stored settings (changing them makes it a different app), vault tags `kite/...`, worktree branches `kite/...`, the promo video's file name, the private server repository `kite-cloud`.
+
+## Where things stand (2026-11-19)
+
+- 0.4.0 is not released: no tag, no downloadable build. The owner's installed copy is still the old `portable\KITE`; `.\run.ps1 pack` moves it, and only the owner should run that.
+- Checked with real runs: the Claude API engine, the Claude Code engine, Claude Code as an outside agent over MCP, the OpenAI-compatible engine (against Anthropic's compatible address only), AG-UI with a Pydantic AI agent, the new cards on an Android emulator.
+- Not checked: any model that is not Claude; macOS; a real Android device; signing in when Claude Code is not yet signed in.
+- Next, in `docs/NEXT.md`: when lines of a turn are rejected, run one more turn at once (PATET's SPEC 10.1 recommends it; this app only reports them on the next turn). Then the release.
+- Open decisions for the owner: the app's license (the protocol stays Apache-2.0), the 0.4.0 release.
