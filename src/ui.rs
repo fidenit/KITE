@@ -1096,7 +1096,7 @@ pub fn board(
             }
             let Some(v) = view.cards.get_mut(&cid) else { continue };
             // 글 안의 {이름} 은 이름 붙은 값으로 바꿔서 그린다.
-            let c = if board.vars.is_empty() { v.snap.clone() } else { with_values(&v.snap, &board.vars) };
+            let c = with_values(&v.snap, &board.vars);
 
             // 등장: 아래에서 살짝 올라오며 나타남. 퇴장: 살짝 줄어들며 사라짐.
             let t_in = ease_out_cubic(unit(now, v.born, T_IN));
@@ -1725,6 +1725,8 @@ enum InputKind {
     Number,
     Date,
     Slider(f32, f32, String),
+    /// One of a few listed values (`choice A / B / C`).
+    Choice(Vec<String>),
 }
 
 fn input_kind(spec: &str) -> InputKind {
@@ -1733,6 +1735,12 @@ fn input_kind(spec: &str) -> InputKind {
         "date" | "날짜" => return InputKind::Date,
         "number" | "숫자" => return InputKind::Number,
         _ => {}
+    }
+    if let Some(rest) = s.strip_prefix("choice ") {
+        let options: Vec<String> = rest.split('/').map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect();
+        if options.len() >= 2 {
+            return InputKind::Choice(options);
+        }
     }
     if let Some(rest) = s.strip_prefix("slider") {
         let mut words = rest.split_whitespace();
@@ -1759,6 +1767,12 @@ fn with_values(card: &Card, vars: &std::collections::BTreeMap<String, String>) -
     };
     fill(&mut c.title);
     c.fields.values_mut().for_each(fill);
+    // In a field named `text`, the two characters \n are shown as a line break.
+    if let Some(t) = c.fields.get_mut("text") {
+        if t.contains("\\n") {
+            *t = t.replace("\\n", "\n");
+        }
+    }
     c.items.iter_mut().flat_map(|(_, cells)| cells.iter_mut()).for_each(fill);
     c
 }
@@ -1778,6 +1792,70 @@ fn input_lines(c: &Card, inputs: &HashMap<String, String>) -> Vec<String> {
         out.push(format!("set {} sent yes", c.id));
     }
     out
+}
+
+/// The column names and rows of a card that has them (a table, and a record with rows).
+/// Returns the height they took.
+fn table_rows(cx: &mut Ctx, p: &Painter, x: f32, top: f32, w: f32, c: &Card) -> f32 {
+    let now_cols = crate::lang::split_cells(c.field("cols"));
+    let cols: Vec<&str> = now_cols.iter().map(String::as_str).filter(|s| !s.is_empty()).collect();
+    let n = cols.len().max(c.items.iter().map(|(_, cells)| cells.len()).max().unwrap_or(1)).max(1);
+    // 열 너비는 내용 길이에 맞춘다. 다 들어가면 남는 폭을 고르게 나누고, 넘치면 긴 열부터 줄인다.
+    let mut want = vec![40.0_f32; n];
+    for (i, name) in cols.iter().enumerate() {
+        want[i] = want[i].max(p.layout_no_wrap(name.to_string(), font(11.0), FAINT()).size().x);
+    }
+    for (_, cells) in &c.items {
+        for (i, text) in cells.iter().enumerate().take(n) {
+            let f = if i == 0 { bold(13.5) } else { font(13.5) };
+            want[i] = want[i].max(p.layout_no_wrap(text.clone(), f, TEXT()).size().x);
+        }
+    }
+    let pad = 16.0;
+    let avail = (w - pad * (n as f32 - 1.0)).max(40.0);
+    let total: f32 = want.iter().sum();
+    let widths: Vec<f32> = if total <= avail {
+        let extra = (avail - total) / n as f32;
+        want.iter().map(|x| x + extra).collect()
+    } else {
+        // 평균보다 짧은 열은 그대로 두고, 긴 열들이 남은 폭을 비율대로 나눠 갖는다.
+        let fair = avail / n as f32;
+        let short: f32 = want.iter().filter(|x| **x <= fair).sum();
+        let long: f32 = want.iter().filter(|x| **x > fair).sum();
+        want.iter().map(|x| if *x <= fair { *x } else { x / long * (avail - short) }).collect()
+    };
+    let lefts: Vec<f32> = widths.iter().scan(x, |acc, wd| {
+        let l = *acc;
+        *acc += wd + pad;
+        Some(l)
+    }).collect();
+    let mut y = top;
+    let cell = |q: &Painter, col: usize, y: f32, text: &str, f: FontId, color: Color32| {
+        if col >= n {
+            return;
+        }
+        let r = Rect::from_min_size(pos2(lefts[col], y), vec2(widths[col], 28.0));
+        q.with_clip_rect(r.intersect(q.clip_rect())).text(pos2(r.left(), r.center().y), Align2::LEFT_CENTER, text, f, color);
+    };
+    if !cols.is_empty() {
+        for (i, name) in cols.iter().enumerate() {
+            cell(p, i, y - 4.0, name, font(11.0), FAINT());
+        }
+        y += 24.0;
+    }
+    // 첫 칸은 굵은 항목명, 나머지는 옅은 값
+    for (item, cells) in &c.items {
+        let (rp, dy) = cx.row(p, item);
+        for (i, text) in cells.iter().enumerate() {
+            if i == 0 {
+                cell(&rp, i, y + dy, text, bold(13.5), TEXT());
+            } else {
+                cell(&rp, i, y + dy, text, font(13.5), DIM());
+            }
+        }
+        y += 28.0;
+    }
+    y - top
 }
 
 /// 숫자를 군더더기 없이 적는다 (12.0 → 12, 12.5 → 12.5).
@@ -2222,66 +2300,7 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
             c.items.len() as f32 * rh
         }
 
-        Kind::Table => {
-            let cols: Vec<&str> = c.field("cols").split('|').map(str::trim).filter(|s| !s.is_empty()).collect();
-            let n = cols.len().max(c.items.iter().map(|(_, cells)| cells.len()).max().unwrap_or(1)).max(1);
-            // 열 너비는 내용 길이에 맞춘다. 다 들어가면 남는 폭을 고르게 나누고, 넘치면 긴 열부터 줄인다.
-            let mut want = vec![40.0_f32; n];
-            for (i, name) in cols.iter().enumerate() {
-                want[i] = want[i].max(p.layout_no_wrap(name.to_string(), font(11.0), FAINT()).size().x);
-            }
-            for (_, cells) in &c.items {
-                for (i, text) in cells.iter().enumerate().take(n) {
-                    let f = if i == 0 { bold(13.5) } else { font(13.5) };
-                    want[i] = want[i].max(p.layout_no_wrap(text.clone(), f, TEXT()).size().x);
-                }
-            }
-            let pad = 16.0;
-            let avail = (w - pad * (n as f32 - 1.0)).max(40.0);
-            let total: f32 = want.iter().sum();
-            let widths: Vec<f32> = if total <= avail {
-                let extra = (avail - total) / n as f32;
-                want.iter().map(|x| x + extra).collect()
-            } else {
-                // 평균보다 짧은 열은 그대로 두고, 긴 열들이 남은 폭을 비율대로 나눠 갖는다.
-                let fair = avail / n as f32;
-                let short: f32 = want.iter().filter(|x| **x <= fair).sum();
-                let long: f32 = want.iter().filter(|x| **x > fair).sum();
-                want.iter().map(|x| if *x <= fair { *x } else { x / long * (avail - short) }).collect()
-            };
-            let lefts: Vec<f32> = widths.iter().scan(x, |acc, wd| {
-                let l = *acc;
-                *acc += wd + pad;
-                Some(l)
-            }).collect();
-            let mut y = top;
-            let cell = |q: &Painter, col: usize, y: f32, text: &str, f: FontId, color: Color32| {
-                if col >= n {
-                    return;
-                }
-                let r = Rect::from_min_size(pos2(lefts[col], y), vec2(widths[col], 28.0));
-                q.with_clip_rect(r.intersect(q.clip_rect())).text(pos2(r.left(), r.center().y), Align2::LEFT_CENTER, text, f, color);
-            };
-            if !cols.is_empty() {
-                for (i, name) in cols.iter().enumerate() {
-                    cell(p, i, y - 4.0, name, font(11.0), FAINT());
-                }
-                y += 24.0;
-            }
-            // 첫 칸은 굵은 항목명, 나머지는 옅은 값
-            for (item, cells) in &c.items {
-                let (rp, dy) = cx.row(p, item);
-                for (i, text) in cells.iter().enumerate() {
-                    if i == 0 {
-                        cell(&rp, i, y + dy, text, bold(13.5), TEXT());
-                    } else {
-                        cell(&rp, i, y + dy, text, font(13.5), DIM());
-                    }
-                }
-                y += 28.0;
-            }
-            y - top
-        }
+        Kind::Table => table_rows(cx, p, x, top, w, c),
 
         Kind::Progress => {
             let pct = cx.num("pct", c.field("pct").parse().unwrap_or(0.0));
@@ -2460,12 +2479,35 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
                             extra = 46.0 + chh * rows as f32 + 8.0;
                         }
                     }
+                    InputKind::Choice(options) => {
+                        // A few known answers: one pill each, laid out in a row that wraps.
+                        let (mut px, mut py) = (r.left(), r.top() + 2.0);
+                        for o in &options {
+                            let tw = rp.layout_no_wrap(o.clone(), bold(12.5), TEXT()).size().x + 26.0;
+                            if px + tw > r.right() && px > r.left() {
+                                px = r.left();
+                                py += 36.0;
+                                extra += 36.0;
+                            }
+                            let pr = Rect::from_min_size(pos2(px, py), vec2(tw.min(w), 30.0));
+                            let on = value == *o;
+                            let resp = if editable { cx.click(pr, ("choice", &format!("{item}:{o}"))) } else { None };
+                            let hover = resp.as_ref().map(|h| h.hovered()).unwrap_or(false);
+                            rp.rect_filled(pr, 15.0, if on { SOFT() } else if hover { RAISED() } else { CARD() });
+                            rp.rect_stroke(pr, 15.0, Stroke::new(1.0, if on { SOFT() } else { BORDER() }), StrokeKind::Inside);
+                            rp.with_clip_rect(pr.shrink2(vec2(10.0, 0.0)).intersect(rp.clip_rect())).text(pr.center(), Align2::CENTER_CENTER, o, bold(12.5), if on { CARD() } else { TEXT() });
+                            if resp.map(|h| h.clicked()).unwrap_or(false) {
+                                cx.input_ops.push((item.clone(), o.clone()));
+                            }
+                            px += tw + 6.0;
+                        }
+                    }
                     kind => {
                         // 글 또는 숫자를 적는 칸
                         rp.rect_filled(r, 11.0, RAISED());
                         rp.rect_stroke(r, 11.0, Stroke::new(1.0, BORDER()), StrokeKind::Inside);
                         let numeric = matches!(kind, InputKind::Number);
-                        let hint = if numeric { crate::sys::tr("숫자", "Number").to_string() } else if spec == "-" { String::new() } else { spec.to_string() };
+                        let hint = if numeric { crate::sys::tr("숫자", "Number").to_string() } else if spec == "time" { "HH:MM".to_string() } else if spec == "-" { String::new() } else { spec.to_string() };
                         if !editable {
                             // 이미 보냈거나 멀리서 보는 중: 적힌 값만 보여 준다.
                             let inner = rp.with_clip_rect(r.shrink2(vec2(12.0, 0.0)).intersect(rp.clip_rect()));
@@ -2485,7 +2527,8 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
             if sent {
                 p.text(br.right_center(), Align2::RIGHT_CENTER, crate::sys::tr("보냈습니다", "Sent"), font(12.5), DIM());
             } else {
-                let ready = c.items.iter().any(|(i, _)| cx.inputs.get(i).map(|v| !v.trim().is_empty()).unwrap_or(false));
+                let filled = |i: &String| cx.inputs.get(i).map(|v| !v.trim().is_empty()).unwrap_or(false);
+                let ready = c.items.iter().any(|(i, _)| filled(i)) && c.items.iter().all(|(i, cells)| !cells[0].trim_end().ends_with('*') || filled(i));
                 let resp = cx.click(br, ("send", ""));
                 let hover = resp.as_ref().map(|r| r.hovered()).unwrap_or(false);
                 p.rect_filled(br, 17.0, if ready { mix(SOFT(), TEXT(), if hover { 1.0 } else { 0.0 }) } else { RAISED() });
@@ -2534,6 +2577,9 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
         Kind::Decision => {
             let mut y = top + wrapped(p, body.min, w, c.field("text"), 14.5, SOFT()) + 12.0;
             let chosen = c.field("chosen").to_string();
+            let multi = c.field("multi") == "yes";
+            let danger = c.field("tone") == "danger";
+            let answered = !chosen.is_empty();
             for (item, cells) in &c.items {
                 let (rp, dy) = cx.row(p, item);
                 let has_desc = cells.len() > 1 && !cells[1].is_empty();
@@ -2541,15 +2587,27 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
                 let r = Rect::from_min_size(pos2(x, y + dy), vec2(w, h));
                 let resp = cx.click(r, ("opt", item));
                 let hover = resp.as_ref().map(|r| r.hovered()).unwrap_or(false);
+                // With several answers a press only marks the option; the answer goes out with "Done".
+                let pick_key = format!("#pick:{item}");
+                let marked = multi && !answered && cx.inputs.get(&pick_key).map(|v| v == "1").unwrap_or(false);
                 if resp.map(|r| r.clicked()).unwrap_or(false) {
-                    cx.lines.push(format!("set {} chosen {}", c.id, item));
+                    if multi {
+                        if !answered {
+                            cx.input_ops.push((pick_key.clone(), if marked { "0".into() } else { "1".into() }));
+                        }
+                    } else {
+                        cx.lines.push(format!("set {} chosen {}", c.id, item));
+                    }
                 }
                 // 테두리만 있는 알약. 고르면 밝게 채워진다.
-                let on = cx.num(&format!("opt:{item}"), if chosen == *item { 1.0 } else { 0.0 });
+                let is_on = marked || chosen.split(',').any(|x| x == item);
+                let on = cx.num(&format!("opt:{item}"), if is_on { 1.0 } else { 0.0 });
                 let glow = cx.num(&format!("hov:{item}"), if hover { 1.0 } else { 0.0 });
                 let rad = if has_desc { 16.0 } else { 18.0 };
                 rp.rect_filled(r, rad, mix(mix(CARD(), RAISED(), glow), SOFT(), on));
-                rp.rect_stroke(r, rad, Stroke::new(1.0, mix(mix(BORDER(), EDGE(), glow), SOFT(), on)), StrokeKind::Inside);
+                // A choice that cannot be undone shows its edge in red when the pointer is on it.
+                let edge = if danger { mix(BORDER(), RED(), glow.max(0.35)) } else { mix(BORDER(), EDGE(), glow) };
+                rp.rect_stroke(r, rad, Stroke::new(1.0, mix(edge, SOFT(), on)), StrokeKind::Inside);
                 let inner = rp.with_clip_rect(r.shrink2(vec2(14.0, 0.0)).intersect(rp.clip_rect()));
                 let (c1, c2) = (mix(TEXT(), CARD(), on), mix(DIM(), RAISED(), on));
                 if has_desc {
@@ -2560,7 +2618,66 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
                 }
                 y += h + 8.0;
             }
+            if multi && !answered {
+                let picked: Vec<&str> = c.items.iter().filter(|(i, _)| cx.inputs.get(&format!("#pick:{i}")).map(|v| v == "1").unwrap_or(false)).map(|(i, _)| i.as_str()).collect();
+                let br = Rect::from_min_size(pos2(x + w - 92.0, y + 2.0), vec2(92.0, 34.0));
+                let ready = !picked.is_empty();
+                let resp = cx.click(br, ("done", ""));
+                let hover = resp.as_ref().map(|r| r.hovered()).unwrap_or(false);
+                p.rect_filled(br, 17.0, if ready { mix(SOFT(), TEXT(), if hover { 1.0 } else { 0.0 }) } else { RAISED() });
+                p.text(br.center(), Align2::CENTER_CENTER, crate::sys::tr("완료", "Done"), bold(13.5), if ready { CARD() } else { FAINT() });
+                p.text(pos2(x + 2.0, br.center().y), Align2::LEFT_CENTER, crate::sys::tr("여러 개를 고를 수 있습니다", "Pick as many as apply"), font(11.5), FAINT());
+                if ready && resp.map(|r| r.clicked()).unwrap_or(false) {
+                    cx.lines.push(format!("set {} chosen {}", c.id, picked.join(",")));
+                }
+                y += 44.0;
+            }
             y - 8.0 - top
+        }
+
+        Kind::Record => {
+            // One thing with named properties: the summary, then label and value per field, then its rows.
+            let mut y = top;
+            let text = c.field("text");
+            if !text.is_empty() {
+                y += wrapped(p, pos2(x, y), w, text, 13.5, SOFT()) + 10.0;
+            }
+            let fields: Vec<(&String, &String)> = c.fields.iter().filter(|(k, _)| k.as_str() != "text" && k.as_str() != "cols").collect();
+            let label_w = fields.iter().map(|(k, _)| p.layout_no_wrap((*k).clone(), font(11.5), FAINT()).size().x).fold(0.0_f32, f32::max).min(w * 0.42) + 8.0;
+            for (name, value) in fields {
+                p.with_clip_rect(Rect::from_min_size(pos2(x, y), vec2(label_w, 26.0)).intersect(p.clip_rect())).text(pos2(x + 2.0, y + 13.0), Align2::LEFT_CENTER, name.replace(['-', '_'], " "), font(11.5), FAINT());
+                p.with_clip_rect(Rect::from_min_max(pos2(x + label_w + 14.0, y), pos2(x + w, y + 26.0)).intersect(p.clip_rect())).text(pos2(x + label_w + 14.0, y + 13.0), Align2::LEFT_CENTER, value, bold(13.5), TEXT());
+                y += 26.0;
+            }
+            if !c.items.is_empty() {
+                y += 8.0;
+                y += table_rows(cx, p, x, y, w, c);
+            }
+            y - top
+        }
+
+        Kind::Doc => {
+            // Something that lives outside the board: its name, what it is, and a way to open it.
+            let src = c.field("src").to_string();
+            let name = src.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or("").to_string();
+            let mut y = top;
+            if !name.is_empty() {
+                p.with_clip_rect(Rect::from_min_size(pos2(x, y), vec2(w - 76.0, 24.0)).intersect(p.clip_rect())).text(pos2(x + 2.0, y + 12.0), Align2::LEFT_CENTER, &name, bold(14.0), TEXT());
+                let br = Rect::from_min_size(pos2(x + w - 68.0, y - 2.0), vec2(68.0, 28.0));
+                let resp = cx.click(br, ("open", ""));
+                let hover = resp.as_ref().map(|r| r.hovered()).unwrap_or(false);
+                p.rect_stroke(br, 14.0, Stroke::new(1.0, if hover { EDGE() } else { BORDER() }), StrokeKind::Inside);
+                p.text(br.center(), Align2::CENTER_CENTER, crate::sys::tr("열기", "Open"), bold(12.0), if hover { TEXT() } else { SOFT() });
+                if resp.map(|r| r.clicked()).unwrap_or(false) {
+                    cx.lines.push(format!("@open {}", c.id));
+                }
+                y += 32.0;
+            } else {
+                p.text(pos2(x + 2.0, y + 10.0), Align2::LEFT_CENTER, crate::sys::tr("가리키는 곳이 아직 없습니다", "Nothing to open yet"), font(12.0), FAINT());
+                y += 26.0;
+            }
+            y += wrapped(p, pos2(x, y), w, c.field("text"), 13.5, SOFT());
+            y - top
         }
 
         Kind::Timeline => {

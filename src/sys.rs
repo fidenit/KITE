@@ -215,6 +215,12 @@ pub fn open_note(vault: &std::path::Path, note: &std::path::Path) {
     }
 }
 
+/// Open a file or an address with whatever the system uses for it. Only ever called for a press of the user's.
+pub fn open_path(target: &str) {
+    let opener = if cfg!(windows) { "explorer.exe" } else if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let _ = std::process::Command::new(opener).arg(target).spawn();
+}
+
 /// data 폴더의 로그 파일에 한 줄 덧붙인다 (시각 포함).
 pub fn log(name: &str, text: &str) {
     use std::io::Write;

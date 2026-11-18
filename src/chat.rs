@@ -835,6 +835,19 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                     });
                 }
                 ui.add_space(12.0);
+                // What an agent outside may put on the board: cards that load or open something are off unless allowed.
+                let media = *self.media_pick.get_or_insert_with(crate::mcp::outside_media);
+                ui.horizontal(|ui| {
+                    let (r, p) = ui.allocate_painter(egui::vec2(34.0, 20.0), egui::Sense::click());
+                    p.rect_filled(r.rect, 10.0, if media { ui::ORANGE() } else { FIELD_EDGE() });
+                    p.circle_filled(egui::pos2(if media { r.rect.right() - 10.0 } else { r.rect.left() + 10.0 }, r.rect.center().y), 7.0, ui::TEXT());
+                    if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        self.media_pick = Some(!media);
+                    }
+                    ui.label(egui::RichText::new(crate::sys::tr("웹 페이지·그림·파일 카드를 만들게 허용", "Let it create web, image and file cards")).size(12.0).color(ui::TEXT()));
+                });
+                ui.label(egui::RichText::new(crate::sys::tr("이 카드들은 에이전트가 고른 주소나 이 컴퓨터의 파일을 불러옵니다. 믿는 에이전트에게만 켭니다.", "These cards load an address or a file on this computer that the agent chose. Turn it on only for an agent you trust.")).size(11.5).color(ui::FAINT()));
+                ui.add_space(12.0);
                 // AG-UI: KITE goes to the agent.
                 caption(ui, "AG-UI", crate::sys::tr("선택", "optional"), false);
                 field_as(ui, &mut self.agui_input, "http://localhost:8000/agent", false);
@@ -878,7 +891,7 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                 (url.starts_with("http://") || url.starts_with("https://")) && !model.is_empty() && (pick != current || jev_typed || !key.trim().is_empty() || self.cfg.openai.as_ref().map(|p| p.url != url || p.model != model).unwrap_or(true))
             } else if pick_agent {
                 let url = self.agui_input.trim();
-                (url.is_empty() || url.starts_with("http://") || url.starts_with("https://")) && (pick != current || jev_typed || self.cfg.agui.as_ref().map(|s| s.url.as_str()).unwrap_or("") != url)
+                (url.is_empty() || url.starts_with("http://") || url.starts_with("https://")) && (pick != current || jev_typed || self.media_pick.map(|m| m != crate::mcp::outside_media()).unwrap_or(false) || self.cfg.agui.as_ref().map(|s| s.url.as_str()).unwrap_or("") != url)
             } else {
                 self.key_input.trim().len() > 20 || (has_key && (jev_typed || pick != current))
             };
@@ -930,6 +943,9 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
             if let Some(l) = self.level_pick.take() {
                 let _ = std::fs::write(base.join("permission.txt"), l);
             }
+            if let Some(m) = self.media_pick.take() {
+                let _ = std::fs::write(base.join("outside-media.txt"), if m { "yes" } else { "no" });
+            }
             if !self.key_input.trim().is_empty() {
                 let _ = std::fs::write(base.join("key.txt"), self.key_input.trim());
             }
@@ -960,6 +976,7 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
             self.engine_pick = None;
             self.perm_pick = None;
             self.level_pick = None;
+            self.media_pick = None;
         }
     }
 }

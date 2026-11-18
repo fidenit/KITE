@@ -200,7 +200,7 @@ pub fn run(set: &Settings, turn: &Turn, send: &dyn Fn(Msg)) -> Result<Stats, Str
     let mut all_prose: Vec<String> = Vec::new();
 
     for _ in 0..MAX_ROUNDS {
-        state["kite"] = json!({ "version": crate::lang::VERSION, "board": turn.board, "events": events_for_state });
+        state["kite"] = json!({ "version": crate::lang::VERSION, "board": turn.board, "events": events_for_state, "renderer": crate::mcp::description() });
         events_for_state.clear(); // told once
         let body = json!({
             "threadId": thread,

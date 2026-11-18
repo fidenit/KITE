@@ -113,6 +113,8 @@ impl LineFeeder {
 pub trait Sink: Send + Sync {
     /// Try one op line. Returns the verdict: `ok`, `ok clipped <what> <limit>`, or `err <code> <message>`.
     fn line(&self, peer: &str, line: &str) -> String;
+    /// What this renderer supports, one line per entry (SPEC.md section 6).
+    fn hello(&self) -> Vec<String>;
     /// The board as protocol lines: all of it when `topic` is empty, else that topic. Err is `<code> <message>`.
     fn read(&self, topic: &str) -> Result<String, String>;
     /// Record a connection, a refusal, the start. A failure here never blocks the feed.
@@ -200,6 +202,15 @@ fn serve(conn: TcpStream, token: Option<&str>, sink: &dyn Sink, hub: &Arc<Hub>, 
                     let mut words = line.split_whitespace();
                     match (words.next().unwrap_or(""), words.next(), words.next()) {
                         ("auth", _, _) => "ok".to_string(),
+                        ("hello", None, None) => {
+                            let mut w = out.lock().unwrap_or_else(|e| e.into_inner());
+                            let sent = sink.hello().iter().all(|l| writeln!(w, "| {l}").is_ok());
+                            drop(w);
+                            if !sent {
+                                return;
+                            }
+                            "ok".to_string()
+                        }
                         ("read", topic, None) => match sink.read(topic.unwrap_or("")) {
                             Ok(text) => {
                                 // The board goes out as data lines, each behind `| `, and then the verdict.
@@ -243,7 +254,7 @@ fn serve(conn: TcpStream, token: Option<&str>, sink: &dyn Sink, hub: &Arc<Hub>, 
                             watch.store(WATCH_OFF, Ordering::SeqCst);
                             "ok".to_string()
                         }
-                        ("read" | "watch" | "unwatch", _, _) => "err bad-syntax expected: read [<topic>] | watch [all] | unwatch".to_string(),
+                        ("hello" | "read" | "watch" | "unwatch", _, _) => "err bad-syntax expected: hello | read [<topic>] | watch [all] | unwatch".to_string(),
                         _ => sink.line(&peer, &line),
                     }
                 }
@@ -380,6 +391,9 @@ mod tests {
             // A line with "bad" in it is rejected; the rest are applied.
             if line.contains("bad") { "err unknown-verb unknown verb 'bad'".into() } else { "ok".into() }
         }
+        fn hello(&self) -> Vec<String> {
+            vec!["kite-protocol 0.3".into(), "kinds note record".into()]
+        }
         fn read(&self, topic: &str) -> Result<String, String> {
             match topic {
                 "" => Ok("topic a A\ncard k1 note a 3x2 One\n".into()),
@@ -464,6 +478,7 @@ mod tests {
         assert_eq!(talk(port, b"read a\n", 2), vec!["| topic a A", "ok"]);
         assert_eq!(talk(port, b"read zz\n", 1), vec!["err no-such-topic no topic 'zz'"]);
         assert!(talk(port, b"read a b\n", 1)[0].starts_with("err bad-syntax "));
+        assert_eq!(talk(port, b"hello\n", 3), vec!["| kite-protocol 0.3", "| kinds note record", "ok"]);
         // Session commands never reach the board.
         assert!(sink.0.lock().unwrap().is_empty());
     }

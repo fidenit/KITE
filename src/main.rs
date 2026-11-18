@@ -110,6 +110,8 @@ struct App {
     approvals: std::collections::HashMap<String, (u64, Sender<String>)>,
     /// What is chosen in the keys window for KITE's own engines, not saved yet: ask, edits or all.
     level_pick: Option<String>,
+    /// The keys window, not saved yet: may an agent outside KITE create web, image and doc cards?
+    media_pick: Option<bool>,
     /// 최근 (사용자 입력, AI 의 한마디)
     recent: Vec<(String, String)>,
     /// 지난 턴 이후 사용자가 화면에서 직접 한 조작
@@ -536,6 +538,7 @@ impl App {
             pending: Default::default(),
             approvals: Default::default(),
             level_pick: None,
+            media_pick: None,
             recent: Vec::new(),
             events: Vec::new(),
             rejects: Vec::new(),
@@ -838,6 +841,19 @@ impl App {
     /// program) for those who follow the board from outside. A rejected line changes nothing.
     fn apply_op_line(&mut self, line: &str, by: Author, origin: &str) -> Result<(), kite_protocol::Reject> {
         let Some(op) = lang::parse(line)? else { return Ok(()) };
+        // A writer outside KITE may not make the board load or open things, unless the user turned that on.
+        let outside = !matches!(origin, "user" | "model") || (origin == "model" && self.cfg.agui.is_some());
+        if outside && !mcp::outside_media() {
+            let loads = |kind: &str| mcp::MEDIA_KINDS.contains(&kind);
+            let refused = match &op {
+                core::Op::Card { kind, .. } => loads(kind),
+                core::Op::Set { id, field, .. } => matches!(field.as_str(), "src" | "url") && self.board.card(id).map(|c| loads(c.kind.name())).unwrap_or(false),
+                _ => false,
+            };
+            if refused {
+                return Err(kite_protocol::Reject::new("not-allowed", "this board does not let outside agents create web, image or doc cards; the user can allow it under Keys"));
+            }
+        }
         self.board.apply(op, by)?;
         hub::hub().publish(if by == Author::User { "user" } else { "agent" }, origin, line);
         {
@@ -2237,6 +2253,9 @@ impl feed::Sink for FeedSink {
         sys::log("feed.log", &format!("{peer}  {}  → {verdict}", line.chars().take(300).collect::<String>()));
         verdict
     }
+    fn hello(&self) -> Vec<String> {
+        mcp::description()
+    }
     fn read(&self, topic: &str) -> Result<String, String> {
         ask_board(&self.tx, &self.wake, topic)
     }
@@ -2540,6 +2559,13 @@ impl eframe::App for App {
                     // 화면 쪽에만 해당하는 부탁 (보드를 바꾸는 조작이 아니다)
                     if let Some(id) = l.strip_prefix("@show ") {
                         self.view.show_card(id.to_string());
+                        continue;
+                    }
+                    // The user pressed "Open" on a document card: hand what it points at to the system.
+                    if let Some(id) = l.strip_prefix("@open ") {
+                        if let Some(src) = self.board.card(id).map(|c| c.field("src").to_string()).filter(|s| !s.trim().is_empty()) {
+                            sys::open_path(&src);
+                        }
                         continue;
                     }
                     self.apply_line(&l, Author::User);

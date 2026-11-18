@@ -27,6 +27,21 @@ const INSIDE: [&str; 18] = [
 /// The guide an outside agent reads to learn the board language and how to compose a good board.
 pub const GUIDE: &str = include_str!("../protocol/GUIDE.md");
 
+/// Kinds that make the renderer load or open something the writer chose.
+pub const MEDIA_KINDS: [&str; 3] = ["web", "image", "doc"];
+
+/// May a writer outside KITE create those? Off unless KITE_OUTSIDE_MEDIA is set or `outside-media.txt`
+/// next to the program says `yes` (the Keys window writes it).
+pub fn outside_media() -> bool {
+    crate::sys::var("OUTSIDE_MEDIA").ok().or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("outside-media.txt")).ok()).map(|v| matches!(v.trim(), "1" | "yes" | "true")).unwrap_or(false)
+}
+
+/// This renderer's description of itself (protocol/SPEC.md section 6), as told to a writer outside KITE.
+pub fn description() -> Vec<String> {
+    let kinds: Vec<&str> = crate::core::kind_names().into_iter().filter(|k| outside_media() || !MEDIA_KINDS.contains(k)).collect();
+    vec![format!("kite-protocol {}", crate::lang::VERSION), format!("renderer KITE {}", env!("CARGO_PKG_VERSION")), format!("kinds {}", kinds.join(" ")), "features tell".to_string()]
+}
+
 /// What an MCP client shows its model about this server (the `instructions` of `initialize`).
 const INSTRUCTIONS: &str = "KITE is a screen for an AI: a board of cards instead of a chat transcript. You do not answer the user in prose; you edit their board, and the board is the answer. \
 Write the board with the `screen` tool, one op per line (say, topic, card, set, add, upd, del, ...). Read what is on it with `board_read` before you change it, and change existing cards instead of adding new ones. \
@@ -199,7 +214,8 @@ fn outside_call(name: &str, input: &Value) -> (String, bool) {
             }
             (format!("{text}cursor {next}"), false)
         }
-        "guide" => (format!("{GUIDE}\n\n## Card types\n\n{}", crate::core::parts_table()), false),
+        // The guide carries the card type table itself; what follows it is what this renderer supports.
+        "guide" => (format!("{GUIDE}\n## This renderer\n\n```\n{}\n```\n", description().join("\n")), false),
         other => (format!("error: no tool named {other}"), true),
     }
 }
