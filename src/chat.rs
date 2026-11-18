@@ -105,7 +105,7 @@ impl App {
                             self.shelf_row(ui);
                             self.input_box(ui, ctx);
                             self.pics_row(ui);
-                            if self.cfg.demo() && std::env::var("LYBOARD_DEMO").is_err() {
+                            if self.cfg.demo() && crate::sys::var("DEMO").is_err() {
                                 self.demo_row(ui);
                             }
                             ui.add_space(8.0);

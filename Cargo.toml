@@ -5,7 +5,11 @@ edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/fidenit/KITE"
 
+[workspace]
+members = [".", "protocol/rust"]
+
 [dependencies]
+kite-protocol = { path = "protocol/rust" }
 cpal = "0.18.2"
 eframe = "0.37.0"
 raw-window-handle = "0.6"

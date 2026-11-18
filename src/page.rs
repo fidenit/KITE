@@ -122,10 +122,10 @@ impl Job {
     }
 }
 
-/// 확인용 기록 (LYBOARD_PAGE 로 시험할 때만)
+/// 확인용 기록 (KITE_PAGE 로 시험할 때만)
 fn trace(msg: &str) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *ON.get_or_init(|| std::env::var("LYBOARD_PAGE").is_ok()) {
+    if *ON.get_or_init(|| crate::sys::var("PAGE").is_ok()) {
         crate::sys::log("page.log", &format!("  · {msg}"));
     }
 }

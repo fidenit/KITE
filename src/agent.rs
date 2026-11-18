@@ -140,7 +140,7 @@ pub fn run_as(cfg: &Config, key: &str, role: &Role, turn_text: &str, images: &[(
                         // 화면은 화면 쪽 스레드가 고친다. 거부된 명령이 있으면 그 이유를 받아 온다.
                         let (rtx, rrx) = std::sync::mpsc::channel();
                         send(Msg::Screen { ops: input["ops"].as_str().unwrap_or("").to_string(), reply: rtx });
-                        (rrx.recv_timeout(Duration::from_secs(15)).unwrap_or_else(|_| "반영됨".into()), false)
+                        (rrx.recv_timeout(Duration::from_secs(15)).unwrap_or_else(|_| "applied".into()), false)
                     } else if name == "view_image" {
                         // 그림 파일을 열어 그림 그대로 모델에게 보여 준다.
                         send(Msg::Activity(crate::tools::describe(name, input)));
@@ -159,8 +159,9 @@ pub fn run_as(cfg: &Config, key: &str, role: &Role, turn_text: &str, images: &[(
                         let (rtx, rrx) = std::sync::mpsc::channel();
                         send(Msg::Board { topic: input["topic"].as_str().unwrap_or("").trim().to_string(), reply: rtx });
                         match rrx.recv_timeout(Duration::from_secs(15)) {
-                            Ok(out) => (out.clone(), out.starts_with("오류:")),
-                            Err(_) => ("오류: 보드를 읽지 못함".into(), true),
+                            Ok(Ok(out)) => (out, false),
+                            Ok(Err(e)) => (format!("error: {e}"), true),
+                            Err(_) => ("error: the board could not be read".into(), true),
                         }
                     } else if name.starts_with("page_") {
                         // 보이지 않는 브라우저도 화면 쪽 스레드에 있다.

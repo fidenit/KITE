@@ -344,7 +344,7 @@ pub fn relevant(input: &str, recent: &str, cands: &[(f32, usize, String)]) -> Ve
 pub fn addressed(key: &str, context: &str, asides: &str, text: &str) -> bool {
     const SYSTEM: &str = "너는 음성 비서가 대답해야 할지 판단한다. 사용자는 비서에게 잠깐 기다리라고 해 두고 다른 일(뭔가 읽기, 확인하기, 다른 사람과 얘기하기, 혼잣말)을 하는 중이다. 이때 마이크에 들린 말 하나를 받는다.\n- 비서를 부르거나, 비서에게 묻거나 시키는 말이거나, 기다리기 전의 대화로 돌아와 이어 가는 말이면 `예`.\n- 혼잣말, 무언가를 소리 내어 읽는 것, 다른 사람에게 하는 말, 비서와 상관없는 말이면 `아니오`.\n애매하면 `아니오`. `예` 또는 `아니오` 한 단어만 출력한다.";
     let user = format!("<기다리기 전 대화>\n{context}</기다리기 전 대화>\n<기다리는 동안 앞서 들린 말>{asides}</기다리는 동안 앞서 들린 말>\n<이번에 들린 말>{text}</이번에 들린 말>");
-    let model = std::env::var("LYBOARD_WAKE_MODEL").unwrap_or_else(|_| "claude-haiku-5-5".into());
+    let model = crate::sys::var("WAKE_MODEL").unwrap_or_else(|_| "claude-haiku-5-5".into());
     let t0 = std::time::Instant::now();
     let answer = crate::agent::ask(key, &model, SYSTEM, &user, 10);
     crate::sys::log("stt.log", &format!("부름 판단 {}ms: {:?} <- {text}", t0.elapsed().as_millis(), answer));

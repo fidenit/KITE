@@ -266,7 +266,7 @@ const TRIMMER: &str = "너는 개인 비서 프로그램의 장기 기억을 간
 static LOCK: Mutex<()> = Mutex::new(());
 
 fn model() -> String {
-    std::env::var("LYBOARD_MEMORY_MODEL").unwrap_or_else(|_| "claude-haiku-5-5".into())
+    crate::sys::var("MEMORY_MODEL").unwrap_or_else(|_| "claude-haiku-5-5".into())
 }
 
 /// 한 턴이 끝난 뒤 (뒤에서) 핵심 기억을 고친다.

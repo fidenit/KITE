@@ -1,17 +1,17 @@
-//! 화면 수정 언어. 한 줄이 조작 하나이고, 줄이 끝나는 순간 적용된다.
-//! 보드를 모델에게 보여줄 때도 같은 언어로 직렬화한다.
+//! The line language. One line is one op, applied the moment the line ends.
+//! A board is written back in the same language, so a writer can read what it is about to edit.
 
-use crate::core::{Board, Op};
+use crate::core::{Board, Op, Reject};
 
-/// 이 구현이 쓰고 읽는 프로토콜 버전 (docs/PROTOCOL.md 10장).
-pub const VERSION: &str = "0.1";
+/// The protocol version this implementation writes and reads (SPEC.md, Versioning).
+pub const VERSION: &str = "0.2";
 
-/// 저장하는 기록·씨앗 파일의 첫 줄. `#` 로 시작하므로 옛 파서는 주석으로 넘긴다.
+/// First line of a saved log or a stream. It starts with `#`, so a parser that predates it reads a comment.
 pub fn header() -> String {
     format!("# kite-protocol {VERSION}")
 }
 
-/// 머리글 줄이면 그 줄이 말하는 버전. 머리글이 아니면 None.
+/// The version a header line declares, or None when the line is not a header.
 pub fn declared_version(line: &str) -> Option<&str> {
     let rest = line.trim().strip_prefix('#')?.trim_start().strip_prefix("kite-protocol")?;
     if !rest.starts_with(char::is_whitespace) {
@@ -20,7 +20,7 @@ pub fn declared_version(line: &str) -> Option<&str> {
     rest.split_whitespace().next()
 }
 
-/// 이 버전을 읽을 수 있는가. 주 번호(첫 숫자)가 같으면 읽는다.
+/// Can this implementation read that version? Yes when the major number (the first one) is the same.
 pub fn can_read(version: &str) -> bool {
     let major = |v: &str| v.split('.').next().and_then(|m| m.parse::<u32>().ok());
     major(version).is_some() && major(version) == major(VERSION)
@@ -34,8 +34,8 @@ fn split1(s: &str) -> (&str, &str) {
     }
 }
 
-fn need<'a>(s: &'a str, what: &str) -> Result<&'a str, String> {
-    if s.is_empty() { Err(format!("{what} 누락")) } else { Ok(s) }
+fn need<'a>(s: &'a str, usage: &str) -> Result<&'a str, Reject> {
+    if s.is_empty() { Err(Reject::new("missing-argument", format!("expected: {usage}"))) } else { Ok(s) }
 }
 
 fn parse_size(s: &str) -> Option<(u8, u8)> {
@@ -47,36 +47,42 @@ fn cells(rest: &str) -> Vec<String> {
     rest.split('|').map(|c| c.trim().to_string()).collect()
 }
 
-/// 한 줄을 조작으로 해석한다. 빈 줄·주석·코드 울타리는 Ok(None).
-pub fn parse(line: &str) -> Result<Option<Op>, String> {
+/// Is this line skipped without a verdict? Blank lines, `#` comments and code fences are.
+pub fn is_blank(line: &str) -> bool {
     let line = line.trim();
-    if line.is_empty() || line.starts_with('#') || line.starts_with("```") {
+    line.is_empty() || line.starts_with('#') || line.starts_with("```")
+}
+
+/// Parse one line. Blank lines, comments and code fences are `Ok(None)`; so is `tell`, which changes no board.
+pub fn parse(line: &str) -> Result<Option<Op>, Reject> {
+    let line = line.trim();
+    if is_blank(line) {
         return Ok(None);
     }
     let (cmd, rest) = split1(line);
     let op = match cmd {
         "topic" => {
             let (id, name) = split1(rest);
-            Op::Topic { id: need(id, "주제 ID")?.into(), name: name.into() }
+            Op::Topic { id: need(id, "topic <id> <name>")?.into(), name: name.into() }
         }
         "group" => {
             let (id, name) = split1(rest);
-            Op::Group { id: need(id, "분류 ID")?.into(), name: name.into() }
+            Op::Group { id: need(id, "group <id> <name>")?.into(), name: name.into() }
         }
         "mv" => {
             let (card, topic) = split1(rest);
-            Op::Mv { card: need(card, "mv <카드ID> <주제ID>")?.into(), topic: need(topic, "mv <카드ID> <주제ID>")?.into() }
+            Op::Mv { card: need(card, "mv <card> <topic>")?.into(), topic: need(topic, "mv <card> <topic>")?.into() }
         }
         "put" => {
             let (topic, group) = split1(rest);
-            Op::Put { topic: need(topic, "put <주제ID> <분류ID>")?.into(), group: need(group, "put <주제ID> <분류ID>")?.into() }
+            Op::Put { topic: need(topic, "put <topic> <group>")?.into(), group: need(group, "put <topic> <group>")?.into() }
         }
         "card" => {
             let (id, rest) = split1(rest);
             let (kind, rest) = split1(rest);
             let (topic, rest) = split1(rest);
-            need(topic, "card <id> <종류> <주제>")?;
-            // 크기는 생략 가능
+            need(topic, "card <id> <kind> <topic> [<w>x<h>] <title>")?;
+            // The size is optional.
             let (maybe, after) = split1(rest);
             let (size, title) = match parse_size(maybe) {
                 Some(s) => (Some(s), after),
@@ -87,13 +93,14 @@ pub fn parse(line: &str) -> Result<Option<Op>, String> {
         "set" => {
             let (id, rest) = split1(rest);
             let (field, value) = split1(rest);
-            Op::Set { id: id.into(), field: need(field, "set <id> <필드>")?.into(), value: value.into() }
+            Op::Set { id: id.into(), field: need(field, "set <id> <field> <value>")?.into(), value: value.into() }
         }
         "add" | "upd" => {
+            let usage = if cmd == "add" { "add <id> <item> <cell> | <cell> ..." } else { "upd <id> <item> <cell> | <cell> ..." };
             let (id, rest) = split1(rest);
             let (item, rest) = split1(rest);
-            need(item, "항목 ID")?;
-            let c = cells(need(rest, "항목 내용")?);
+            need(item, usage)?;
+            let c = cells(need(rest, usage)?);
             if cmd == "add" {
                 Op::Add { id: id.into(), item: item.into(), cells: c }
             } else {
@@ -102,11 +109,11 @@ pub fn parse(line: &str) -> Result<Option<Op>, String> {
         }
         "del" => {
             let (id, item) = split1(rest);
-            Op::Del { id: need(id, "ID")?.into(), item: if item.is_empty() { None } else { Some(item.into()) } }
+            Op::Del { id: need(id, "del <id> [<item>]")?.into(), item: if item.is_empty() { None } else { Some(item.into()) } }
         }
         "size" => {
             let (id, s) = split1(rest);
-            let (w, h) = parse_size(s).ok_or("size <id> <가로>x<세로>")?;
+            let (w, h) = parse_size(s).ok_or_else(|| Reject::new("bad-syntax", "expected: size <id> <w>x<h>"))?;
             Op::Size { id: id.into(), w, h }
         }
         "move" => {
@@ -114,32 +121,33 @@ pub fn parse(line: &str) -> Result<Option<Op>, String> {
             let (c, r) = split1(rest);
             match (c.parse(), r.parse()) {
                 (Ok(col), Ok(row)) => Op::Move { id: id.into(), col, row },
-                _ => return Err("move <id> <열> <행>".into()),
+                _ => return Err(Reject::new("bad-syntax", "expected: move <id> <col> <row>")),
             }
         }
         "let" => {
             let (name, value) = split1(rest);
-            Op::Let { name: need(name, "let <이름> <값>")?.into(), value: value.into() }
+            Op::Let { name: need(name, "let <name> <value>")?.into(), value: value.into() }
         }
-        "archive" => Op::Archive { topic: need(rest, "archive <주제ID>")?.into() },
-        "restore" => Op::Restore { topic: need(rest, "restore <주제ID>")?.into() },
-        "pin" | "unpin" => Op::Pin { id: need(rest, "ID")?.into(), on: cmd == "pin" },
-        "focus" => Op::Focus { id: need(rest, "ID")?.into() },
+        "archive" => Op::Archive { topic: need(rest, "archive <topic>")?.into() },
+        "restore" => Op::Restore { topic: need(rest, "restore <topic>")?.into() },
+        "pin" | "unpin" => Op::Pin { id: need(rest, "pin <id>")?.into(), on: cmd == "pin" },
+        "focus" => Op::Focus { id: need(rest, "focus <id>")?.into() },
         "say" => Op::Say { text: rest.into() },
-        // 소리 내어 읽는 문장. 보드를 바꾸지 않으므로 조작이 아니다 (음성 재생 쪽에서 따로 처리한다).
+        // A sentence to read aloud. It changes no board, so it is not an op (a renderer with a voice handles it).
         "tell" => return Ok(None),
-        _ => return Err(format!("모르는 명령 '{cmd}'")),
+        _ => return Err(Reject::new("unknown-verb", format!("unknown verb '{cmd}'"))),
     };
     Ok(Some(op))
 }
 
-/// 보드 전체를 수정 언어로 적는다 (모델 입력용). 이 줄들을 빈 보드에 적용하면 같은 보드가 된다.
+/// Write the whole board in the line language. Applying these lines to an empty board gives the same board.
 pub fn serialize(b: &Board) -> String {
     serialize_with(b, &|_| 2)
 }
 
-/// 주제마다 얼마나 자세히 적을지 정해서 적는다. 2 = 전부, 1 = 카드 제목만, 0 = 주제 이름과 카드 수만.
-/// 보드가 아주 커졌을 때, 지금 이야기와 먼 주제는 줄여서 모델에게 보낸다. 줄인 주제에는 `#` 로 시작하는 안내 줄이 붙는다.
+/// Write the board with a level of detail per topic: 2 = everything, 1 = card titles only, 0 = the topic
+/// name and its card count. A renderer uses this to shorten a very large board for a model; a shortened
+/// topic carries a `#` note line, which a reader must treat as a note and never as data.
 pub fn serialize_with(b: &Board, level: &dyn Fn(&str) -> u8) -> String {
     let mut s = String::new();
     for (name, value) in &b.vars {
@@ -155,8 +163,8 @@ pub fn serialize_with(b: &Board, level: &dyn Fn(&str) -> u8) -> String {
         }
         let n = b.cards.iter().filter(|c| c.topic == t.id).count();
         match level(&t.id) {
-            0 => s += &format!("# 주제 {}: 카드 {n}장 (전부 생략됨. 필요하면 board_read 로 읽는다)\n", t.id),
-            1 => s += &format!("# 주제 {}: 카드 {n}장의 제목만 적음 (내용은 board_read 로 읽는다)\n", t.id),
+            0 => s += &format!("# topic {}: {n} cards, all omitted here (read them with board_read)\n", t.id),
+            1 => s += &format!("# topic {}: {n} cards, titles only here (read the contents with board_read)\n", t.id),
             _ => {}
         }
     }
@@ -185,14 +193,27 @@ pub fn serialize_with(b: &Board, level: &dyn Fn(&str) -> u8) -> String {
     s
 }
 
+/// Write one topic in full: its `topic` line and its cards, without groups, named values or notes.
+/// None when there is no such topic.
+pub fn serialize_topic(b: &Board, topic: &str) -> Option<String> {
+    if !b.topics.iter().any(|t| t.id == topic) {
+        return None;
+    }
+    let text = serialize_with(b, &|t| if t == topic { 2 } else { 0 });
+    let keep = |l: &&str| {
+        !l.starts_with("group ") && !l.starts_with("put ") && !l.starts_with("let ") && !l.starts_with('#') && (!l.starts_with("topic ") || l.split_whitespace().nth(1) == Some(topic))
+    };
+    Some(text.lines().filter(keep).map(|l| format!("{l}\n")).collect())
+}
+
 pub enum Chunk {
-    /// 완성된 한 줄
+    /// A finished line.
     Line(String),
-    /// 아직 끝나지 않은 현재 줄 (지금까지 받은 부분)
+    /// The current line, not finished yet (what has arrived so far).
     Partial(String),
 }
 
-/// 토큰 스트림을 줄 단위로 끊는다.
+/// Cuts a token stream into lines.
 #[derive(Default)]
 pub struct LineStream {
     buf: String,
@@ -217,8 +238,8 @@ impl LineStream {
     }
 }
 
-/// 진행 중인 줄이 긴 글을 쓰는 중이면 (카드 ID, 필드, 지금까지의 값).
-/// `say` 는 카드 ID 가 빈 문자열.
+/// When the unfinished line is writing a long text: (card id, field, value so far).
+/// For `say` the card id is empty.
 pub fn partial_text(partial: &str) -> Option<(String, String, String)> {
     let (cmd, rest) = split1(partial);
     match cmd {
@@ -241,7 +262,7 @@ mod tests {
     use super::*;
     use crate::core::{Author, Board};
 
-    fn run(b: &mut Board, src: &str, by: Author) -> Vec<String> {
+    fn run(b: &mut Board, src: &str, by: Author) -> Vec<Reject> {
         let mut errs = Vec::new();
         for l in src.lines() {
             match parse(l) {
@@ -270,19 +291,19 @@ mod tests {
         let mut b2 = Board::default();
         assert!(run(&mut b2, &text, Author::User).is_empty());
         assert_eq!(serialize(&b2), text);
-        assert_eq!(b.card("k2").unwrap().w, 2); // 기본 크기
+        assert_eq!(b.card("k2").unwrap().w, 2); // default size
     }
 
     #[test]
     fn version_header() {
-        assert_eq!(header(), "# kite-protocol 0.1");
+        assert_eq!(header(), format!("# kite-protocol {VERSION}"));
         assert_eq!(declared_version("# kite-protocol 0.1"), Some("0.1"));
         assert_eq!(declared_version("  #kite-protocol 0.2  "), Some("0.2"));
         assert_eq!(declared_version("# kite-protocolX 0.1"), None);
         assert_eq!(declared_version("# note"), None);
         assert_eq!(declared_version("say # kite-protocol 0.1"), None);
         assert!(can_read("0.1") && can_read("0.9") && !can_read("1.0") && !can_read("x"));
-        // 머리글은 주석이라 보드를 바꾸지 않는다
+        // The header is a comment: it changes no board.
         assert!(matches!(parse(&header()), Ok(None)));
     }
 
@@ -294,7 +315,8 @@ mod tests {
             "card k1 note t9 제목\ntopic t1 a\ncard k1 note t1 제목\ncard k1 note t1 또\nset k1 state ok\nadd k1 i1 x\nfoo bar\nset k9 text x",
             Author::Ai,
         );
-        assert_eq!(errs.len(), 6, "{errs:?}");
+        let codes: Vec<&str> = errs.iter().map(|e| e.code).collect();
+        assert_eq!(codes, ["no-such-topic", "exists", "unknown-field", "no-items", "unknown-verb", "no-such-card"]);
         assert_eq!(b.cards.len(), 1);
     }
 
@@ -314,7 +336,15 @@ mod tests {
         let long = "가".repeat(300);
         run(&mut b, &format!("topic t a\ncard k note t x\nset k text {long}"), Author::Ai);
         assert_eq!(b.card("k").unwrap().field("text").chars().count(), 240);
-        assert_eq!(b.notes.len(), 1);
+        assert_eq!(b.notes, ["clipped k.text 240"]);
+    }
+
+    #[test]
+    fn one_topic() {
+        let mut b = Board::default();
+        run(&mut b, "let n 3\ngroup g G\ntopic a A\nput a g\ntopic b B\ncard k1 note a One\nset k1 text x\ncard k2 note b Two", Author::Ai);
+        assert_eq!(serialize_topic(&b, "a").as_deref(), Some("topic a A\ncard k1 note a 3x2 One\nset k1 text x\n"));
+        assert_eq!(serialize_topic(&b, "zz"), None);
     }
 
     #[test]

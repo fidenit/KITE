@@ -1,39 +1,43 @@
-//! 실행 중인 보드에 다른 프로그램이 프로토콜 줄을 넣는 통로 (docs/PROTOCOL.md 11장).
-//! 기본은 꺼져 있다. 환경 변수 KITE_PROTOCOL_PORT 가 있을 때만 127.0.0.1 에서 듣는다.
-//! 표준 라이브러리만 쓰므로 윈도우·맥·리눅스에서 같다.
+//! The protocol socket: another program on this computer drives the running board with protocol lines
+//! (protocol/SPEC.md, "Line session"). Off by default; it listens on 127.0.0.1 only when
+//! KITE_PROTOCOL_PORT is set. Standard library only, so it is the same on Windows, macOS and Linux.
 //!
-//! 받은 줄은 모델이 낸 줄과 같은 문(`App::apply_line`)을 지나간다. 이 모듈은 줄을 끊고, 크기와 속도를 제한하고,
-//! 줄마다 답 한 줄(`ok`, `ok <알림>`, `err <이유>`)을 돌려주는 일만 한다.
+//! A received op goes through the same door as a model's line (`App::apply_op_line`). This module cuts
+//! bytes into lines, limits size and rate, answers each line with one verdict (`ok`, `ok clipped ...`,
+//! `err <code> <message>`), and serves the session commands: `auth`, `read`, `watch`, `unwatch`.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// 한 줄의 최대 바이트 수. 보드의 가장 긴 값(600자 주소)도 한글로 넉넉히 들어간다.
+use crate::hub::Hub;
+
+/// Longest line in bytes. The longest board value (a 600-character address) fits with room to spare.
 pub const MAX_LINE: usize = 4096;
-/// 한 연결이 초당 보낼 수 있는 줄 수(채우는 속도)와, 한꺼번에 몰아 보낼 수 있는 줄 수.
+/// Lines a connection may send per second (the refill rate), and how many it may send in one burst.
 pub const LINES_PER_SEC: f64 = 50.0;
 pub const BURST: f64 = 100.0;
-/// 동시에 열어 둘 수 있는 연결 수.
+/// Connections open at once.
 pub const MAX_CONNS: usize = 4;
-/// 아무것도 보내지 않는 연결을 끊는 시간.
+/// A connection that sends nothing for this long is closed, unless it is watching.
 pub const IDLE: Duration = Duration::from_secs(600);
 
-/// 한 줄에 대한 판정. 이 모듈이 받아 준 줄만 `Line` 이다.
+/// The verdict on one received line. Only lines this module accepts become `Line`.
 #[derive(Debug, PartialEq)]
 pub enum Item {
-    /// 보드에 적용해 볼 줄 (빈 줄·주석은 여기까지 오지 않는다)
+    /// A line to try (blank lines and comments never get this far).
     Line(String),
-    /// 적용하지 않고 돌려보낼 이유
+    /// Not tried; the reason goes back to the sender as `err <code> <message>`.
     Reject(String),
-    /// 더 받지 않고 연결을 닫는다: 지원하지 않는 프로토콜 버전을 선언했거나, HTTP 요청이 왔다.
+    /// Stop reading and close: an unsupported protocol version was declared, or an HTTP request arrived.
     Close(String),
 }
 
-/// HTTP 요청의 첫 줄(`POST / HTTP/1.1`)처럼 생겼는가. 브라우저 안의 아무 웹페이지나 127.0.0.1 로 요청을 보낼 수 있고,
-/// 그대로 두면 요청 본문의 줄이 프로토콜 줄로 읽혀 보드에 적힌다. 프로토콜 명령은 모두 소문자라 헷갈리지 않는다.
+/// Does this look like the first line of an HTTP request (`POST / HTTP/1.1`)? Any web page open in a browser
+/// can send a request to 127.0.0.1; left alone, the lines of its body would be read as protocol lines and
+/// written to the board. Protocol verbs are all lower case, so there is no confusion.
 fn looks_like_http(line: &str) -> bool {
     let mut parts = line.split_whitespace();
     let (Some(method), Some(_target), Some(version), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
@@ -42,7 +46,7 @@ fn looks_like_http(line: &str) -> bool {
     method.bytes().all(|b| b.is_ascii_uppercase()) && version.starts_with("HTTP/")
 }
 
-/// 바이트 조각을 줄로 끊는 부분. 소켓과 시계를 모르므로 그대로 시험할 수 있다.
+/// Cuts byte pieces into lines. It knows nothing of sockets or clocks, so it can be tested as it is.
 pub struct LineFeeder {
     buf: Vec<u8>,
     skipping: bool,
@@ -55,7 +59,7 @@ impl LineFeeder {
         LineFeeder { buf: Vec::new(), skipping: false, tokens: BURST, last: now }
     }
 
-    /// 받은 바이트를 넣고, 끝난 줄마다 판정을 돌려받는다. 끝나지 않은 줄은 다음 조각을 기다린다.
+    /// Push received bytes; get a verdict for every line that ended. An unfinished line waits for the next piece.
     pub fn push(&mut self, bytes: &[u8], now: Instant) -> Vec<Item> {
         let mut out = Vec::new();
         for &b in bytes {
@@ -69,11 +73,11 @@ impl LineFeeder {
                     }
                 }
             } else if self.skipping {
-                // 너무 긴 줄의 나머지는 줄이 끝날 때까지 버린다
+                // The rest of a line that was too long is dropped until the line ends.
             } else if self.buf.len() >= MAX_LINE {
                 self.skipping = true;
                 self.buf.clear();
-                out.push(Item::Reject(format!("줄이 {MAX_LINE}바이트를 넘음")));
+                out.push(Item::Reject(format!("line-too-long a line is longer than {MAX_LINE} bytes")));
             } else {
                 self.buf.push(b);
             }
@@ -83,51 +87,56 @@ impl LineFeeder {
 
     fn finish(&mut self, raw: &[u8], now: Instant) -> Option<Item> {
         let Ok(text) = std::str::from_utf8(raw) else {
-            return Some(Item::Reject("UTF-8 이 아님".into()));
+            return Some(Item::Reject("bad-utf8 the line is not UTF-8".into()));
         };
         let line = text.trim();
         if let Some(v) = crate::lang::declared_version(line) {
-            return if crate::lang::can_read(v) { None } else { Some(Item::Close(format!("프로토콜 {v} 은 읽을 수 없음 (이 프로그램은 {})", crate::lang::VERSION))) };
+            return if crate::lang::can_read(v) { None } else { Some(Item::Close(format!("unsupported-version cannot read protocol {v} (this program speaks {})", crate::lang::VERSION))) };
         }
         if looks_like_http(line) {
-            return Some(Item::Close("HTTP 요청은 받지 않음 (웹페이지가 보낸 요청일 수 있음)".into()));
+            return Some(Item::Close("http-refused HTTP requests are not accepted here (a web page may have sent this)".into()));
         }
-        if line.is_empty() || line.starts_with('#') || line.starts_with("```") {
+        if crate::lang::is_blank(line) {
             return None;
         }
         self.tokens = (self.tokens + now.saturating_duration_since(self.last).as_secs_f64() * LINES_PER_SEC).min(BURST);
         self.last = now;
         if self.tokens < 1.0 {
-            return Some(Item::Reject(format!("너무 빠름 (초당 {LINES_PER_SEC:.0}줄까지)")));
+            return Some(Item::Reject(format!("rate-limited too fast (up to {LINES_PER_SEC:.0} lines a second)")));
         }
         self.tokens -= 1.0;
         Some(Item::Line(line.to_string()))
     }
 }
 
-/// 줄을 받아 보드에 적용하는 쪽. `line` 은 판정 한 줄(`ok` / `ok <알림>` / `err <이유>`)을 돌려준다.
+/// The side that applies lines to the board.
 pub trait Sink: Send + Sync {
+    /// Try one op line. Returns the verdict: `ok`, `ok clipped <what> <limit>`, or `err <code> <message>`.
     fn line(&self, peer: &str, line: &str) -> String;
-    /// 연결·거부·시작 같은 일을 기록한다. 실패해도 기능을 막지 않는다.
+    /// The board as protocol lines: all of it when `topic` is empty, else that topic. Err is `<code> <message>`.
+    fn read(&self, topic: &str) -> Result<String, String>;
+    /// Record a connection, a refusal, the start. A failure here never blocks the feed.
     fn note(&self, text: &str);
 }
 
-/// 127.0.0.1:port 에서 듣기 시작한다. 이미 쓰이는 포트면 이유를 돌려준다.
-pub fn start(port: u16, token: Option<String>, sink: Arc<dyn Sink>) -> Result<(), String> {
-    let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|e| format!("127.0.0.1:{port} 에서 들을 수 없음: {e}"))?;
-    sink.note(&format!("듣기 시작 127.0.0.1:{port} 프로토콜 {} 암호 {}", crate::lang::VERSION, if token.is_some() { "있음" } else { "없음" }));
+/// Start listening on 127.0.0.1:port. Returns the reason when the port cannot be used.
+pub fn start(port: u16, token: Option<String>, sink: Arc<dyn Sink>, hub: Arc<Hub>) -> Result<(), String> {
+    let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|e| format!("cannot listen on 127.0.0.1:{port}: {e}"))?;
+    sink.note(&format!("listening on 127.0.0.1:{port}, protocol {}, token {}", crate::lang::VERSION, if token.is_some() { "set" } else { "not set" }));
     let open = Arc::new(AtomicUsize::new(0));
     std::thread::spawn(move || {
         for conn in listener.incoming().flatten() {
             if open.fetch_add(1, Ordering::SeqCst) >= MAX_CONNS {
                 open.fetch_sub(1, Ordering::SeqCst);
-                sink.note("연결 거부: 동시 연결이 너무 많음");
-                let _ = (&conn).write_all(b"err too many connections\n");
+                sink.note("connection refused: too many connections");
+                let _ = (&conn).write_all(b"err too-many-connections try again later\n");
                 continue;
             }
-            let (sink, open, token) = (sink.clone(), open.clone(), token.clone());
+            let (sink, open, token, hub) = (sink.clone(), open.clone(), token.clone(), hub.clone());
             std::thread::spawn(move || {
-                serve(conn, token.as_deref(), &*sink);
+                let closed = Arc::new(AtomicBool::new(false));
+                serve(conn, token.as_deref(), &*sink, &hub, &closed);
+                closed.store(true, Ordering::SeqCst);
                 open.fetch_sub(1, Ordering::SeqCst);
             });
         }
@@ -135,27 +144,43 @@ pub fn start(port: u16, token: Option<String>, sink: Arc<dyn Sink>) -> Result<()
     Ok(())
 }
 
-fn serve(conn: TcpStream, token: Option<&str>, sink: &dyn Sink) {
+/// What a connection asked to be told: nothing, what the user does, or everything other writers do too.
+const WATCH_OFF: u8 = 0;
+const WATCH_USER: u8 = 1;
+const WATCH_ALL: u8 = 2;
+
+fn serve(conn: TcpStream, token: Option<&str>, sink: &dyn Sink, hub: &Arc<Hub>, closed: &Arc<AtomicBool>) {
     let peer = conn.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "?".into());
-    // 같은 컴퓨터가 아니면 받지 않는다 (127.0.0.1 에만 묶여 있어 일어나지 않아야 한다).
+    // Only this computer (the listener is bound to 127.0.0.1, so this should never trigger).
     if !conn.peer_addr().map(|a| a.ip().is_loopback()).unwrap_or(false) {
-        sink.note(&format!("{peer} 연결 거부: 이 컴퓨터가 아님"));
+        sink.note(&format!("{peer} refused: not this computer"));
         return;
     }
     let _ = conn.set_read_timeout(Some(IDLE));
     let _ = conn.set_write_timeout(Some(Duration::from_secs(10)));
-    sink.note(&format!("{peer} 연결"));
-    let mut out = &conn;
+    sink.note(&format!("{peer} connected"));
+    // Verdicts and pushed events are written from two threads; one lock keeps their lines whole.
+    let Ok(writer) = conn.try_clone() else { return };
+    let out = Arc::new(Mutex::new(writer));
+    let say = |text: &str| -> bool {
+        let mut w = out.lock().unwrap_or_else(|e| e.into_inner());
+        writeln!(w, "{}", text.replace('\n', " / ")).is_ok()
+    };
+    let watch = Arc::new(AtomicU8::new(WATCH_OFF));
+    let mut watcher_started = false;
     let mut reader = BufReader::new(&conn);
     let mut authed = token.is_none();
     let mut feeder = LineFeeder::new(Instant::now());
     let mut chunk = Vec::new();
     loop {
         chunk.clear();
-        // 줄바꿈 없이 끝없이 보내는 상대에게 메모리를 내주지 않는다: 한 번에 MAX_LINE+1 바이트까지만 읽는다.
+        // Never hand memory to a sender that sends without a line break: read MAX_LINE+1 bytes at most.
         match (&mut reader).take(MAX_LINE as u64 + 1).read_until(b'\n', &mut chunk) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
             Ok(_) => {}
+            // A watching connection may stay silent as long as it likes.
+            Err(e) if watch.load(Ordering::SeqCst) != WATCH_OFF && matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => continue,
+            Err(_) => break,
         }
         for item in feeder.push(&chunk, Instant::now()) {
             let reply = match item {
@@ -165,30 +190,80 @@ fn serve(conn: TcpStream, token: Option<&str>, sink: &dyn Sink) {
                         "ok".to_string()
                     }
                     _ => {
-                        sink.note(&format!("{peer} 암호가 맞지 않음, 연결을 닫음"));
-                        let _ = out.write_all(b"err auth required\n");
+                        sink.note(&format!("{peer} wrong or missing token, closed"));
+                        say("err auth-required send 'auth <token>' as the first line");
                         let _ = conn.shutdown(Shutdown::Both);
                         return;
                     }
                 },
-                Item::Line(line) => sink.line(&peer, &line),
+                Item::Line(line) => {
+                    let mut words = line.split_whitespace();
+                    match (words.next().unwrap_or(""), words.next(), words.next()) {
+                        ("auth", _, _) => "ok".to_string(),
+                        ("read", topic, None) => match sink.read(topic.unwrap_or("")) {
+                            Ok(text) => {
+                                // The board goes out as data lines, each behind `| `, and then the verdict.
+                                let mut w = out.lock().unwrap_or_else(|e| e.into_inner());
+                                let sent = text.lines().all(|l| writeln!(w, "| {l}").is_ok());
+                                drop(w);
+                                if !sent {
+                                    return;
+                                }
+                                "ok".to_string()
+                            }
+                            Err(why) => format!("err {why}"),
+                        },
+                        ("watch", mode @ (None | Some("all")), None) => {
+                            watch.store(if mode.is_some() { WATCH_ALL } else { WATCH_USER }, Ordering::SeqCst);
+                            if !std::mem::replace(&mut watcher_started, true) {
+                                let (hub, out, watch, closed, me) = (hub.clone(), out.clone(), watch.clone(), closed.clone(), peer.clone());
+                                let mut after = hub.cursor();
+                                std::thread::spawn(move || {
+                                    while !closed.load(Ordering::SeqCst) {
+                                        // The mode is read per event, so a change of mode applies to whatever is published after it.
+                                        let want = |e: &crate::hub::Event| match watch.load(Ordering::SeqCst) {
+                                            WATCH_USER => e.kind != "agent",
+                                            WATCH_ALL => e.origin != me,
+                                            _ => false,
+                                        };
+                                        let (events, next) = hub.wait(after, Duration::from_millis(500), &want);
+                                        after = next;
+                                        let mut w = out.lock().unwrap_or_else(|e| e.into_inner());
+                                        for e in events {
+                                            if writeln!(w, "event {}", e.line()).is_err() {
+                                                return;
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                            "ok".to_string()
+                        }
+                        ("unwatch", None, None) => {
+                            watch.store(WATCH_OFF, Ordering::SeqCst);
+                            "ok".to_string()
+                        }
+                        ("read" | "watch" | "unwatch", _, _) => "err bad-syntax expected: read [<topic>] | watch [all] | unwatch".to_string(),
+                        _ => sink.line(&peer, &line),
+                    }
+                }
                 Item::Reject(why) => {
-                    sink.note(&format!("{peer} 거부: {why}"));
+                    sink.note(&format!("{peer} rejected: {why}"));
                     format!("err {why}")
                 }
                 Item::Close(why) => {
-                    sink.note(&format!("{peer} 연결을 닫음: {why}"));
-                    let _ = writeln!(out, "err {why}");
+                    sink.note(&format!("{peer} closed: {why}"));
+                    say(&format!("err {why}"));
                     let _ = conn.shutdown(Shutdown::Both);
                     return;
                 }
             };
-            if writeln!(out, "{}", reply.replace('\n', " / ")).is_err() {
+            if !say(&reply) {
                 return;
             }
         }
     }
-    sink.note(&format!("{peer} 연결 끝"));
+    sink.note(&format!("{peer} disconnected"));
 }
 
 #[cfg(test)]
@@ -226,7 +301,7 @@ mod tests {
         let t = Instant::now();
         let mut f = LineFeeder::new(t);
         let b = "say 안녕\n".as_bytes();
-        assert!(f.push(&b[..5], t).is_empty()); // 글자 한가운데서 끊김
+        assert!(f.push(&b[..5], t).is_empty()); // cut in the middle of a character
         assert_eq!(f.push(&b[5..], t), vec![l("say 안녕")]);
     }
 
@@ -237,9 +312,9 @@ mod tests {
         let long = "x".repeat(MAX_LINE * 3);
         let out = f.push(format!("say {long}\nsay ok\n").as_bytes(), t);
         assert_eq!(out.len(), 2);
-        assert!(matches!(&out[0], Item::Reject(m) if m.contains("4096")));
+        assert!(matches!(&out[0], Item::Reject(m) if m.starts_with("line-too-long ")));
         assert_eq!(out[1], l("say ok"));
-        // 길이가 한도 안이면 받는다
+        // Within the limit it is taken.
         let fine = "y".repeat(MAX_LINE - 4);
         assert_eq!(f.push(format!("say {fine}\n").as_bytes(), t).len(), 1);
     }
@@ -249,7 +324,7 @@ mod tests {
         let t = Instant::now();
         let mut f = LineFeeder::new(t);
         let out = f.push(b"say \xff\xfe\nsay ok\n", t);
-        assert!(matches!(&out[0], Item::Reject(m) if m.contains("UTF-8")));
+        assert!(matches!(&out[0], Item::Reject(m) if m.starts_with("bad-utf8 ")));
         assert_eq!(out[1], l("say ok"));
     }
 
@@ -261,12 +336,12 @@ mod tests {
         let many: String = (0..n + 5).map(|i| format!("say {i}\n")).collect();
         let out = f.push(many.as_bytes(), t);
         assert_eq!(out.iter().filter(|i| matches!(i, Item::Line(_))).count(), n);
-        assert_eq!(out.iter().filter(|i| matches!(i, Item::Reject(_))).count(), 5);
-        // 1초 뒤에는 초당 한도만큼 다시 받는다
+        assert_eq!(out.iter().filter(|i| matches!(i, Item::Reject(m) if m.starts_with("rate-limited "))).count(), 5);
+        // A second later it takes the per-second amount again.
         let later = t + Duration::from_secs(1);
         let out = f.push(many.as_bytes(), later);
         assert_eq!(out.iter().filter(|i| matches!(i, Item::Line(_))).count(), LINES_PER_SEC as usize);
-        // 빈 줄과 주석은 한도를 쓰지 않는다
+        // Blank lines and comments do not use the allowance.
         let mut g = LineFeeder::new(t);
         let blank = "\n# c\n".repeat(1000);
         assert!(g.push(blank.as_bytes(), t).is_empty());
@@ -280,7 +355,7 @@ mod tests {
         assert_eq!(f.push(b"# kite-protocol 0.1\nsay a\n", t), vec![l("say a")]);
         assert_eq!(f.push(b"# kite-protocol 0.7\n", t), vec![]);
         let out = f.push(b"# kite-protocol 1.0\nsay b\n", t);
-        assert!(matches!(&out[0], Item::Close(m) if m.contains("1.0")));
+        assert!(matches!(&out[0], Item::Close(m) if m.starts_with("unsupported-version ") && m.contains("1.0")));
     }
 
     #[test]
@@ -288,11 +363,11 @@ mod tests {
         let t = Instant::now();
         let mut f = LineFeeder::new(t);
         let out = f.push(b"POST / HTTP/1.1\r\nsay pwned\n", t);
-        assert!(matches!(&out[0], Item::Close(m) if m.contains("HTTP")));
+        assert!(matches!(&out[0], Item::Close(m) if m.starts_with("http-refused ")));
         for req in ["GET /x?y=1 HTTP/1.1", "PUT / HTTP/1.0", "PRI * HTTP/2.0", "OPTIONS * HTTP/1.1"] {
             assert!(looks_like_http(req), "{req}");
         }
-        // 프로토콜 줄은 HTTP 요청으로 오인하지 않는다
+        // A protocol line is never taken for an HTTP request.
         for op in ["say GET / HTTP/1.1", "topic http HTTP/1", "set k1 text HTTP/1.1", "GET / HTTP"] {
             assert!(!looks_like_http(op), "{op}");
         }
@@ -302,65 +377,119 @@ mod tests {
     impl Sink for Fake {
         fn line(&self, _peer: &str, line: &str) -> String {
             self.0.lock().unwrap().push(line.to_string());
-            // 줄에 "bad" 가 있으면 거부, 나머지는 반영
-            if line.contains("bad") { "err 모르는 명령".into() } else { "ok".into() }
+            // A line with "bad" in it is rejected; the rest are applied.
+            if line.contains("bad") { "err unknown-verb unknown verb 'bad'".into() } else { "ok".into() }
+        }
+        fn read(&self, topic: &str) -> Result<String, String> {
+            match topic {
+                "" => Ok("topic a A\ncard k1 note a 3x2 One\n".into()),
+                "a" => Ok("topic a A\n".into()),
+                _ => Err(format!("no-such-topic no topic '{topic}'")),
+            }
         }
         fn note(&self, _text: &str) {}
     }
 
-    fn talk(port: u16, send: &[u8], want: usize) -> Vec<String> {
-        let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    fn open(port: u16) -> (TcpStream, BufReader<TcpStream>) {
+        let c = TcpStream::connect(("127.0.0.1", port)).unwrap();
         c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let r = BufReader::new(c.try_clone().unwrap());
+        (c, r)
+    }
+
+    fn next(r: &mut BufReader<TcpStream>) -> String {
+        let mut s = String::new();
+        r.read_line(&mut s).unwrap();
+        s.trim_end().to_string()
+    }
+
+    fn talk(port: u16, send: &[u8], want: usize) -> Vec<String> {
+        let (mut c, mut r) = open(port);
         c.write_all(send).unwrap();
-        let mut r = BufReader::new(c);
-        (0..want).map(|_| { let mut s = String::new(); r.read_line(&mut s).unwrap(); s.trim_end().to_string() }).collect()
+        (0..want).map(|_| next(&mut r)).collect()
     }
 
     fn free_port() -> u16 {
         TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port()
     }
 
+    fn serve_fake(token: Option<&str>) -> (u16, Arc<Fake>, Arc<Hub>) {
+        let sink = Arc::new(Fake(Mutex::new(Vec::new())));
+        let hub = Arc::new(Hub::default());
+        let port = free_port();
+        start(port, token.map(str::to_string), sink.clone(), hub.clone()).unwrap();
+        (port, sink, hub)
+    }
+
     #[test]
     fn tcp_round_trip_one_reply_per_op_line() {
-        let sink = Arc::new(Fake(Mutex::new(Vec::new())));
-        let port = free_port();
-        start(port, None, sink.clone()).unwrap();
-        let got = talk(port, b"# kite-protocol 0.1\ntopic a A\n\nbad line\nsay hi\n", 3);
-        assert_eq!(got, vec!["ok", "err 모르는 명령", "ok"]);
+        let (port, sink, _) = serve_fake(None);
+        let got = talk(port, b"# kite-protocol 0.2\ntopic a A\n\nbad line\nsay hi\n", 3);
+        assert_eq!(got, vec!["ok", "err unknown-verb unknown verb 'bad'", "ok"]);
         assert_eq!(*sink.0.lock().unwrap(), vec!["topic a A", "bad line", "say hi"]);
     }
 
     #[test]
     fn tcp_token_required_when_set() {
-        let sink = Arc::new(Fake(Mutex::new(Vec::new())));
-        let port = free_port();
-        start(port, Some("s3".into()), sink.clone()).unwrap();
+        let (port, sink, _) = serve_fake(Some("s3"));
         assert_eq!(talk(port, b"auth s3\nsay a\n", 2), vec!["ok", "ok"]);
-        assert_eq!(talk(port, b"say a\n", 1), vec!["err auth required"]);
-        assert_eq!(talk(port, b"auth nope\nsay b\n", 1), vec!["err auth required"]);
+        assert!(talk(port, b"say a\n", 1)[0].starts_with("err auth-required "));
+        assert!(talk(port, b"auth nope\nsay b\n", 1)[0].starts_with("err auth-required "));
         assert_eq!(*sink.0.lock().unwrap(), vec!["say a"]);
     }
 
     #[test]
     fn tcp_refuses_unknown_major_and_port_in_use() {
-        let sink = Arc::new(Fake(Mutex::new(Vec::new())));
-        let port = free_port();
-        start(port, None, sink.clone()).unwrap();
+        let (port, sink, hub) = serve_fake(None);
         let got = talk(port, b"# kite-protocol 2.0\nsay a\n", 1);
-        assert!(got[0].starts_with("err ") && got[0].contains("2.0"));
+        assert!(got[0].starts_with("err unsupported-version ") && got[0].contains("2.0"));
         assert!(sink.0.lock().unwrap().is_empty());
-        assert!(start(port, None, sink).is_err());
+        assert!(start(port, None, sink, hub).is_err());
     }
 
     #[test]
     fn tcp_browser_request_writes_nothing() {
-        // 웹페이지의 fetch(..., {mode: "no-cors", body}) 가 보내는 모양: 요청 줄, 머리글, 빈 줄, 본문
-        let sink = Arc::new(Fake(Mutex::new(Vec::new())));
-        let port = free_port();
-        start(port, None, sink.clone()).unwrap();
+        // What a page's fetch(..., {mode: "no-cors", body}) sends: request line, headers, blank line, body.
+        let (port, sink, _) = serve_fake(None);
         let req = b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: text/plain\r\nOrigin: https://evil.example\r\n\r\nsay pwned\ncard w1 metric a 2x2 X\n";
         let got = talk(port, req, 1);
-        assert!(got[0].starts_with("err ") && got[0].contains("HTTP"), "{got:?}");
+        assert!(got[0].starts_with("err http-refused "), "{got:?}");
         assert!(sink.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn tcp_read_sends_the_board_as_data_lines() {
+        let (port, sink, _) = serve_fake(None);
+        assert_eq!(talk(port, b"read\n", 3), vec!["| topic a A", "| card k1 note a 3x2 One", "ok"]);
+        assert_eq!(talk(port, b"read a\n", 2), vec!["| topic a A", "ok"]);
+        assert_eq!(talk(port, b"read zz\n", 1), vec!["err no-such-topic no topic 'zz'"]);
+        assert!(talk(port, b"read a b\n", 1)[0].starts_with("err bad-syntax "));
+        // Session commands never reach the board.
+        assert!(sink.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn tcp_watch_pushes_what_the_user_does() {
+        let (port, _, hub) = serve_fake(None);
+        let (mut c, mut r) = open(port);
+        hub.publish("user", "user", "set k0 chosen before");
+        c.write_all(b"watch\n").unwrap();
+        assert_eq!(next(&mut r), "ok");
+        hub.publish("agent", "model", "say not for a user watcher");
+        hub.publish("user", "user", "set k2 chosen o1");
+        hub.publish("input", "user", "book the second one");
+        assert_eq!(next(&mut r), "event user set k2 chosen o1");
+        assert_eq!(next(&mut r), "event input book the second one");
+        // `watch all` adds what other writers do, but never the connection's own lines.
+        c.write_all(b"watch all\n").unwrap();
+        assert_eq!(next(&mut r), "ok");
+        let me = c.local_addr().unwrap().to_string();
+        hub.publish("agent", &me, "say mine");
+        hub.publish("agent", "model", "say theirs");
+        assert_eq!(next(&mut r), "event agent say theirs");
+        c.write_all(b"unwatch\nsay x\n").unwrap();
+        assert_eq!(next(&mut r), "ok");
+        hub.publish("user", "user", "set k2 chosen o2");
+        assert_eq!(next(&mut r), "ok");
     }
 }

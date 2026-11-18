@@ -1,17 +1,20 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// The protocol (board, parser, serializer) lives in its own crate: protocol/rust.
+use kite_protocol::{core, lang};
+
 mod agent;
 mod cc;
 mod audio;
 mod chat;
-mod core;
 mod decide;
 mod eleven;
 mod feed;
+mod hub;
 mod jev;
 mod jobs;
-mod lang;
 mod llm;
+mod mcp;
 mod memory;
 mod page;
 mod phone;
@@ -34,11 +37,11 @@ use crate::core::{Author, Board};
 const TITLE: &str = "KITE";
 
 /// 창의 이름. 확인용으로 띄운 창은 사용자가 실제 창과 헷갈리지 않게 이름을 다르게 한다.
-/// 확인용 창 크기 바꾸기 순서 (LYBOARD_RESIZE)
+/// 확인용 창 크기 바꾸기 순서 (KITE_RESIZE)
 static RESIZE: std::sync::OnceLock<Option<Vec<egui::Vec2>>> = std::sync::OnceLock::new();
 
 fn title() -> &'static str {
-    if std::env::var("LYBOARD_AUTOPLAY").is_ok() { "KITE 시험용 (쓰지 마세요)" } else { TITLE }
+    if crate::sys::var("AUTOPLAY").is_ok() { "KITE 시험용 (쓰지 마세요)" } else { TITLE }
 }
 /// 이 크기보다 큰 소리가 들어오면 말하는 중으로 본다.
 const MIC_THRESHOLD: f32 = 0.02;
@@ -58,8 +61,8 @@ fn days_of(date: &str) -> i64 {
 }
 
 fn recent_count() -> usize {
-    // 확인용: LYBOARD_RECENT=2 처럼 줄이면 오래된 대화를 찾아오는 동작을 짧은 대화로도 시험할 수 있다.
-    std::env::var("LYBOARD_RECENT").ok().and_then(|v| v.parse().ok()).unwrap_or(RECENT)
+    // 확인용: KITE_RECENT=2 처럼 줄이면 오래된 대화를 찾아오는 동작을 짧은 대화로도 시험할 수 있다.
+    crate::sys::var("RECENT").ok().and_then(|v| v.parse().ok()).unwrap_or(RECENT)
 }
 
 fn log_path() -> std::path::PathBuf {
@@ -105,7 +108,7 @@ struct App {
     error: Option<String>,
     log: Option<std::fs::File>,
     focus_input: bool,
-    /// 확인용 자동 입력 (환경 변수 LYBOARD_AUTOPLAY="입력1|입력2"). 키보드를 건드리지 않고 장면을 재생한다.
+    /// 확인용 자동 입력 (환경 변수 KITE_AUTOPLAY="입력1|입력2"). 키보드를 건드리지 않고 장면을 재생한다.
     autoplay: std::collections::VecDeque<String>,
     idle_since: std::time::Instant,
     /// 음성 켬/끔. 꺼져 있으면 지금까지처럼 글로만 동작한다.
@@ -185,7 +188,7 @@ struct App {
     replay_date: Option<String>,
     /// 이번 턴에 쓸 옛 대화 후보
     recall_cands: Vec<(f32, usize, String)>,
-    /// 확인용 입력 대본: 프레임마다 넣을 마우스 사건 (LYBOARD_INPUT). 실제 마우스를 건드리지 않고 끌기와 휠을 시험한다.
+    /// 확인용 입력 대본: 프레임마다 넣을 마우스 사건 (KITE_INPUT). 실제 마우스를 건드리지 않고 끌기와 휠을 시험한다.
     fake_input: std::collections::VecDeque<Vec<egui::Event>>,
     fake_marks: std::collections::VecDeque<(usize, String)>,
     fake_frame: usize,
@@ -238,7 +241,7 @@ struct Probe {
     best: String,
 }
 
-/// 확인·소개용 녹화: 화면을 일정 간격으로 찍어 GIF 로 만든다 (LYBOARD_GIF=파일.gif).
+/// 확인·소개용 녹화: 화면을 일정 간격으로 찍어 GIF 로 만든다 (KITE_GIF=파일.gif).
 /// 찍은 그림은 바로 뒤쪽 스레드로 보내 한 장씩 GIF 에 적는다 (메모리에 쌓아 두지 않는다).
 struct Gif {
     tx: Option<Sender<(f64, usize, usize, Vec<u8>)>>,
@@ -290,7 +293,7 @@ fn gif_writer(path: String, width: u32) -> Sender<(f64, usize, usize, Vec<u8>)> 
     tx
 }
 
-/// 소개 영상 녹화 (LYBOARD_VIDEO=파일.mp4). 프레임마다 화면을 찍어 ffmpeg 에 넘기고,
+/// 소개 영상 녹화 (KITE_VIDEO=파일.mp4). 프레임마다 화면을 찍어 ffmpeg 에 넘기고,
 /// "파일.mp4.jsonl" 에 프레임마다 카드 자리와 마우스 자리를 적는다 (편집할 때 어디를 확대할지 정하는 데 쓴다).
 struct Video {
     tx: Option<std::sync::mpsc::SyncSender<(f64, usize, usize, Vec<u8>)>>,
@@ -350,9 +353,9 @@ fn video_writer(path: String, fps: f64) -> std::sync::mpsc::SyncSender<(f64, usi
     tx
 }
 
-/// 소개 영상용 장면 (LYBOARD_PROMO=로고 그림 파일). 실제 화면 위에 여는 장면과 닫는 장면을 덧그린다.
+/// 소개 영상용 장면 (KITE_PROMO=로고 그림 파일). 실제 화면 위에 여는 장면과 닫는 장면을 덧그린다.
 /// 여는 장면: 글자의 벽 → 한 문장 → 로고. 그 뒤 실제 화면이 드러나 시연이 돈다. 시연이 끝나면 닫는 장면.
-/// LYBOARD_PROMO_MODE=intro 면 여는 장면만, outro 면 닫는 장면만 그린다 (영상을 여러 토막으로 찍을 때).
+/// KITE_PROMO_MODE=intro 면 여는 장면만, outro 면 닫는 장면만 그린다 (영상을 여러 토막으로 찍을 때).
 struct Promo {
     logo: String,
     began: std::time::Instant,
@@ -524,11 +527,11 @@ impl App {
             error: None,
             log: None,
             focus_input: true,
-            autoplay: std::env::var("LYBOARD_AUTOPLAY")
+            autoplay: crate::sys::var("AUTOPLAY")
                 .map(|v| v.split('|').map(str::to_string).filter(|s| !s.is_empty()).collect())
                 .unwrap_or_default(),
             idle_since: std::time::Instant::now(),
-            voice: std::env::var("LYBOARD_VOICE").is_ok()
+            voice: crate::sys::var("VOICE").is_ok()
                 || std::fs::read_to_string(voice_path()).map(|s| s.trim() == "on").unwrap_or(false),
             tts: tts::Tts::new(move || wake.request_repaint()),
             speech: Default::default(),
@@ -539,10 +542,10 @@ impl App {
             turn_spoken: Vec::new(),
             turn_events: String::new(),
             titlebar_done: false,
-            shot: std::env::var("LYBOARD_SHOT").ok(),
+            shot: crate::sys::var("SHOT").ok(),
             shot_from: std::time::Instant::now(),
             shot_sent: None,
-            shot_delay: std::env::var("LYBOARD_SHOT_AT").ok().and_then(|v| v.parse().ok()).unwrap_or(3500),
+            shot_delay: crate::sys::var("SHOT_AT").ok().and_then(|v| v.parse().ok()).unwrap_or(3500),
             got_output: false,
             sent_at: std::time::Instant::now(),
             pre: None,
@@ -580,16 +583,16 @@ impl App {
             reset_armed: None,
             probe: None,
             page: page::Page::default(),
-            promo: std::env::var("LYBOARD_PROMO").ok().map(|logo| {
-                let mode = std::env::var("LYBOARD_PROMO_MODE").unwrap_or_default();
+            promo: crate::sys::var("PROMO").ok().map(|logo| {
+                let mode = crate::sys::var("PROMO_MODE").unwrap_or_default();
                 let now = std::time::Instant::now();
                 // 닫는 장면만 쓸 때는 여는 장면이 이미 끝난 것으로 친다.
                 let began = if mode == "outro" { now.checked_sub(std::time::Duration::from_secs_f32(PROMO_INTRO + 0.5)).unwrap_or(now) } else { now };
                 Promo { logo, began, outro: None, outro_on: mode != "intro" }
             }),
-            video: std::env::var("LYBOARD_VIDEO").ok().map(|path| {
+            video: crate::sys::var("VIDEO").ok().map(|path| {
                 let now = std::time::Instant::now();
-                let fps = std::env::var("LYBOARD_VIDEO_FPS").ok().and_then(|v| v.parse().ok()).unwrap_or(60.0);
+                let fps = crate::sys::var("VIDEO_FPS").ok().and_then(|v| v.parse().ok()).unwrap_or(60.0);
                 let side = std::fs::File::create(format!("{path}.jsonl")).ok().map(std::io::BufWriter::new);
                 Video { tx: Some(video_writer(path, fps)), side, began: now, busy_at: now, fps, slot: -1, hand: -1 }
             }),
@@ -597,9 +600,9 @@ impl App {
             fake_at: egui::pos2(900.0, 520.0),
             cursor: None,
             cursor_down: false,
-            gif: std::env::var("LYBOARD_GIF").ok().map(|path| {
+            gif: crate::sys::var("GIF").ok().map(|path| {
                 let now = std::time::Instant::now();
-                let width = std::env::var("LYBOARD_GIF_WIDTH").ok().and_then(|v| v.parse().ok()).unwrap_or(900);
+                let width = crate::sys::var("GIF_WIDTH").ok().and_then(|v| v.parse().ok()).unwrap_or(900);
                 Gif { tx: Some(gif_writer(path, width)), began: now, last: now, busy_at: now, sig: (0, 0, 0, 0, false), hot_until: now }
             }),
             stop: Default::default(),
@@ -608,7 +611,7 @@ impl App {
             fake_input: Default::default(),
             fake_marks: Default::default(),
             fake_frame: 0,
-            show_shelf: std::env::var("LYBOARD_SHELF").is_ok(), // 확인용: 보관함 목록을 펼친 채로 시작
+            show_shelf: crate::sys::var("SHELF").is_ok(), // 확인용: 보관함 목록을 펼친 채로 시작
             job_news: Vec::new(),
             job_turn: None,
             tidy_rest: 0,
@@ -618,9 +621,15 @@ impl App {
             jobs::init(app.tx.clone(), move || wake.request_repaint());
         }
         start_feed(&app.tx, ctx);
+        // The MCP door for agents outside KITE: open when a port is set, and always with the outside-agent engine.
+        if let Some(port) = mcp::outside_port_setting().or(app.cfg.external.then_some(mcp::DEFAULT_PORT)) {
+            if let Err(e) = mcp::start_outside(port) {
+                sys::log("mcp.log", &format!("not started: {e}"));
+            }
+        }
         sys::register_obsidian_vault(&vault::root()); // 보관함 폴더를 만들고 옵시디언에 등록해 둔다
         // 확인용: 사람이 말하지 않아도 받아쓰기와 마이크를 시험할 수 있게 한다. 결과는 data\stt.log 에 남는다.
-        if let Ok(path) = std::env::var("LYBOARD_STT_FILE") {
+        if let Ok(path) = crate::sys::var("STT_FILE") {
             // 16kHz·16비트·한 채널 소리 파일을 받아쓴다.
             std::thread::spawn(move || {
                 let bytes = std::fs::read(&path).unwrap_or_default();
@@ -630,7 +639,7 @@ impl App {
                 }
             });
         }
-        if std::env::var("LYBOARD_MIC_TEST").is_ok() {
+        if crate::sys::var("MIC_TEST").is_ok() {
             // 마이크를 2초 열어 소리가 들어오는지 본다.
             std::thread::spawn(|| {
                 let mic = audio::Mic::start();
@@ -641,9 +650,9 @@ impl App {
             });
         }
         // 시연 모드는 매번 빈 보드에서 시작한다. 실제 모드는 조작 기록을 재생해 보드를 되살린다.
-        app.key_popup = app.cfg.demo() && std::env::var("LYBOARD_DEMO").is_err() && std::env::var("LYBOARD_NO_KEY_WINDOW").is_err();
-        // 소개 영상용: 시연 모드에서도 LYBOARD_DEMO_SEED 의 조작 기록으로 보드를 채워 두고 시작한다 (이미 몇 주째 진행 중인 프로젝트 등).
-        if let Some(text) = std::env::var("LYBOARD_DEMO_SEED").ok().filter(|_| app.cfg.demo()).and_then(|p| std::fs::read_to_string(p).ok()) {
+        app.key_popup = app.cfg.demo() && crate::sys::var("DEMO").is_err() && crate::sys::var("NO_KEY_WINDOW").is_err();
+        // 소개 영상용: 시연 모드에서도 KITE_DEMO_SEED 의 조작 기록으로 보드를 채워 두고 시작한다 (이미 몇 주째 진행 중인 프로젝트 등).
+        if let Some(text) = crate::sys::var("DEMO_SEED").ok().filter(|_| app.cfg.demo()).and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in text.lines() {
                 let Some((who, line)) = l.split_once('\t') else { continue };
                 if who == "T" {
@@ -666,7 +675,7 @@ impl App {
             app.start_real_mode();
         }
         // 확인용: 지금 보드의 구성을 판단 모델에게 한 번 물어보고 결과를 data\jev.log 에 남긴다.
-        if std::env::var("LYBOARD_STRUCT").is_ok() {
+        if crate::sys::var("STRUCT").is_ok() {
             let topics: Vec<(String, String, String, String)> = app
                 .board
                 .topics
@@ -683,9 +692,9 @@ impl App {
                 sys::log("jev.log", &format!("구성 시험 결과: {hints:?}"));
             });
         }
-        // 확인용: LYBOARD_INPUT="drag 700 400 -900 0;wheel 700 400 -600;drag …" 처럼 주면 그 마우스 동작을 프로그램 안에서 흉내 낸다.
+        // 확인용: KITE_INPUT="drag 700 400 -900 0;wheel 700 400 -600;drag …" 처럼 주면 그 마우스 동작을 프로그램 안에서 흉내 낸다.
         // 동작 하나가 끝나고 화면이 가라앉을 때마다 보는 범위를 data\view.log 에 남긴다.
-        if let Ok(script) = std::env::var("LYBOARD_INPUT") {
+        if let Ok(script) = crate::sys::var("INPUT") {
             let idle = |q: &mut std::collections::VecDeque<Vec<egui::Event>>, n: usize| (0..n).for_each(|_| q.push_back(Vec::new()));
             idle(&mut app.fake_input, 120);
             app.fake_marks.push_back((app.fake_input.len(), "시작".into()));
@@ -694,21 +703,21 @@ impl App {
                 app.fake_marks.push_back((app.fake_input.len(), format!("{step} (손 뗀 뒤)")));
             }
         }
-        // 확인용: LYBOARD_PROBE=주소 로 주면 그 페이지를 보이지 않는 창으로 읽어 data\probe.log 에 남긴다.
-        if let Ok(url) = std::env::var("LYBOARD_PROBE") {
+        // 확인용: KITE_PROBE=주소 로 주면 그 페이지를 보이지 않는 창으로 읽어 data\probe.log 에 남긴다.
+        if let Ok(url) = crate::sys::var("PROBE") {
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 let (tx, rx) = channel();
-                let script = std::env::var("LYBOARD_PROBE_JS").unwrap_or_else(|_| route::PAGE_TEXT.to_string());
-                let needle = std::env::var("LYBOARD_PROBE_NEEDLE").unwrap_or_default();
+                let script = crate::sys::var("PROBE_JS").unwrap_or_else(|_| route::PAGE_TEXT.to_string());
+                let needle = crate::sys::var("PROBE_NEEDLE").unwrap_or_default();
                 jobs::to_ui(llm::Msg::Probe { url, script, needle, reply: tx });
                 let text = rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap_or_else(|_| "응답 없음".into());
                 sys::log("probe.log", &format!("읽은 값: {:?}\n{text}", route::read_summary(&text)));
             });
         }
-        // 확인용: LYBOARD_PAGE="open 주소;;run 스크립트;;read;;show 이유;;wait 3" 처럼 주면, AI 대신 보이지 않는 브라우저 도구를
+        // 확인용: KITE_PAGE="open 주소;;run 스크립트;;read;;show 이유;;wait 3" 처럼 주면, AI 대신 보이지 않는 브라우저 도구를
         // 차례로 불러 결과를 data\page.log 에 남긴다 (실제 엔진이 부르는 것과 같은 길을 탄다).
-        if let Ok(script) = std::env::var("LYBOARD_PAGE") {
+        if let Ok(script) = crate::sys::var("PAGE") {
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 for step in script.split(";;").map(str::trim).filter(|s| !s.is_empty()) {
@@ -732,7 +741,7 @@ impl App {
             });
         }
         // 확인용: 시작하자마자 이 주제 쪽으로 날아간다.
-        if let Ok(g) = std::env::var("LYBOARD_GOTO") {
+        if let Ok(g) = crate::sys::var("GOTO") {
             app.view.want_topic(g);
         }
         app
@@ -746,7 +755,7 @@ impl App {
             for l in text.lines() {
                 // 첫 줄 머리글(`# kite-protocol 0.1`)은 주석이다. 모르는 주 버전이면 알리고 그래도 재생한다 (실패하는 줄은 건너뛴다).
                 if let Some(v) = lang::declared_version(l).filter(|v| !lang::can_read(v)) {
-                    sys::log("feed.log", &format!("ops.log 가 프로토콜 {v} 을 선언함 (이 프로그램은 {})", lang::VERSION));
+                    sys::log("feed.log", &format!("ops.log declares protocol {v} (this program speaks {})", lang::VERSION));
                 }
                 if let Some((who, line)) = l.split_once('\t') {
                     if who == "T" {
@@ -794,13 +803,23 @@ impl App {
 
     /// 모든 변화가 지나가는 단 하나의 문. AI 와 사용자의 조작이 같은 형식으로 여기를 통과한다.
     fn apply_line(&mut self, line: &str, by: Author) {
-        let result = match lang::parse(line) {
-            Ok(Some(op)) => self.board.apply(op, by),
-            Ok(None) => return,
-            Err(e) => Err(e),
-        };
-        match result {
-            Ok(()) => {
+        if let Err(e) = self.apply_op_line(line, by, if by == Author::User { "user" } else { "model" }) {
+            // A model is told what was rejected on its next turn. A user's gesture that fails is dropped.
+            if by == Author::Ai {
+                debug_log("rejects.log", &format!("{} → {e}\n", line.trim()));
+                self.rejects.push(format!("{} → {e}", line.trim()));
+            }
+        }
+    }
+
+    /// Check one line and apply it. `origin` says who wrote it (`user`, `model`, or the address of an outside
+    /// program) for those who follow the board from outside. A rejected line changes nothing.
+    fn apply_op_line(&mut self, line: &str, by: Author, origin: &str) -> Result<(), kite_protocol::Reject> {
+        let Some(op) = lang::parse(line)? else { return Ok(()) };
+        self.board.apply(op, by)?;
+        hub::hub().publish(if by == Author::User { "user" } else { "agent" }, origin, line);
+        {
+            {
                 self.touch(line);
                 let today = sys::now_local().0;
                 if let Some(f) = &mut self.log {
@@ -814,6 +833,12 @@ impl App {
                 if by == Author::Ai {
                     if line.trim_start().starts_with("say ") {
                         self.turn_said = true;
+                        // With an outside agent, its `say` is the reply to the last thing the user typed.
+                        if self.cfg.external {
+                            if let Some(last) = self.recent.last_mut() {
+                                last.1 = self.board.say.clone();
+                            }
+                        }
                     }
                     let mut words = line.split_whitespace();
                     let (cmd, id) = (words.next().unwrap_or(""), words.next().unwrap_or(""));
@@ -859,12 +884,8 @@ impl App {
                     }
                 }
             }
-            Err(e) if by == Author::Ai => {
-                debug_log("rejects.log", &format!("{} → {e}\n", line.trim()));
-                self.rejects.push(format!("{} → {e}", line.trim()));
-            }
-            Err(_) => {}
         }
+        Ok(())
     }
 
     /// 사용자가 화면에서 한 조작을 대화 기록에 남길 짧은 말로 바꾼다 (명령어 그대로는 읽기 어렵다).
@@ -1053,12 +1074,15 @@ impl App {
         for path in dropped {
             self.add_pic(ctx, pics::from_file(&path.display().to_string()));
         }
-        // 확인용: LYBOARD_PIC=파일 경로 로 주면 시작할 때 그 그림을 붙인 것으로 친다.
-        if let Ok(path) = std::env::var("LYBOARD_PIC") {
+        // 확인용: KITE_PIC=파일 경로 로 주면 시작할 때 그 그림을 붙인 것으로 친다.
+        if let Ok(path) = crate::sys::var("PIC") {
             if self.turn_no == 0 && self.pics.is_empty() && !self.busy {
                 self.add_pic(ctx, pics::from_file(&path));
                 // SAFETY: 확인용으로 한 번만 쓰고 지운다. 다른 스레드가 이 변수를 읽지 않는다.
-                unsafe { std::env::remove_var("LYBOARD_PIC") };
+                unsafe {
+                    std::env::remove_var("KITE_PIC");
+                    std::env::remove_var("LYBOARD_PIC");
+                }
             }
         }
     }
@@ -1128,7 +1152,7 @@ impl App {
     /// 나머지는 카드 제목만 또는 주제 이름만 보낸다 (사람이 화면을 축소해서 보는 것과 같다). 모델은 필요하면 board_read 로 더 읽는다.
     fn board_text(&self, input: &str) -> String {
         let full = lang::serialize(&self.board);
-        let limit = std::env::var("LYBOARD_BOARD_FULL").ok().and_then(|v| v.parse().ok()).unwrap_or(BOARD_FULL);
+        let limit = crate::sys::var("BOARD_FULL").ok().and_then(|v| v.parse().ok()).unwrap_or(BOARD_FULL);
         if full.chars().count() <= limit {
             return format!("<board>\n{full}</board>\n");
         }
@@ -1154,7 +1178,7 @@ impl App {
             }
         }
         let text = lang::serialize_with(&self.board, &|t| level.get(t).copied().unwrap_or(0));
-        format!("<board detail=\"일부만\">\n{text}</board>\n")
+        format!("<board detail=\"partial\">\n{text}</board>\n")
     }
 
     fn turn_text(&mut self, input: &str) -> String {
@@ -1279,6 +1303,22 @@ impl App {
 
     /// 한 턴을 시작한다. `input` 이 비어 있으면 화면 조작만으로 시작된 턴이다.
     fn start_turn(&mut self, ctx: &egui::Context, input: String) {
+        if self.cfg.external {
+            // An agent outside KITE drives this board. What the user typed goes out to it as an event;
+            // gestures on the board went out when they happened. Nothing is run here.
+            if !input.is_empty() {
+                hub::hub().publish("input", "user", &input);
+                self.recent.push((input, String::new()));
+            }
+            self.events.clear();
+            self.pics.clear();
+            self.react_at = None;
+            self.pending.clear();
+            return;
+        }
+        if !input.is_empty() {
+            hub::hub().publish("input", "user", &input);
+        }
         self.flush_speech(); // 말하는 중에 새로 말을 걸면 하던 말을 멈춘다
         self.hush = false;
         self.turn_events = self.events.join(" / ");
@@ -1302,7 +1342,7 @@ impl App {
             text += &format!("\n<images>\n사용자가 이번 말에 사진 {}장을 붙였다 (이 메시지 앞에 들어 있다). 저장된 곳:\n{}\n</images>", images.len(), saved.join("\n"));
         }
         let pics_note = if images.is_empty() { String::new() } else { if sys::english() { format!("({} pictures) ", images.len()) } else { format!("(사진 {}장) ", images.len()) } };
-        if std::env::var("LYBOARD_DEBUG").is_ok() {
+        if crate::sys::var("DEBUG").is_ok() {
             debug_log("turn.log", &format!("{text}\n=====\n")); // 확인용: 모델에게 보낸 것 그대로
         }
         self.react_at = None;
@@ -1488,7 +1528,7 @@ impl App {
         // 메인 모델이 화면을 고친 뒤: 판단 모델이 화면만 보고 카드마다 "무엇인지 분명한가", "얼마나 중요한가"를 본다.
         if !self.cfg.demo() && !self.board.cards.is_empty() {
             // 오래 손대지 않은 주제: 보관하자고 짚는다 (답을 기다리는 결정이 있는 주제는 빼고).
-            let limit = std::env::var("LYBOARD_STALE_DAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(STALE_DAYS);
+            let limit = crate::sys::var("STALE_DAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(STALE_DAYS);
             let today = days_of(&sys::now_local().0);
             let mut stale: Vec<(i64, String)> = self
                 .board
@@ -1682,14 +1722,18 @@ impl App {
                     self.hush = false; // 덧붙인 말에 대한 답은 다시 소리로 듣는다
                 }
                 llm::Msg::Board { topic, reply } => {
-                    let found = self.board.topics.iter().any(|t| t.id == topic);
-                    let _ = reply.send(if found {
-                        self.touch_seq += 1;
-                        self.touched.insert(topic.clone(), self.touch_seq);
-                        lang::serialize_with(&self.board, &|t| if t == topic { 2 } else { 0 }).lines().filter(|l| !l.starts_with("group ") && !l.starts_with("put ") && !l.starts_with('#') && (!l.starts_with("topic ") || l.split_whitespace().nth(1) == Some(topic.as_str()))).collect::<Vec<_>>().join("
-")
+                    // The whole board when no topic is named, else that topic in full.
+                    let _ = reply.send(if topic.is_empty() {
+                        Ok(lang::serialize(&self.board))
                     } else {
-                        format!("오류: '{topic}' 라는 주제가 없음")
+                        match lang::serialize_topic(&self.board, &topic) {
+                            Some(text) => {
+                                self.touch_seq += 1;
+                                self.touched.insert(topic.clone(), self.touch_seq);
+                                Ok(text)
+                            }
+                            None => Err(format!("no-such-topic no topic '{topic}'")),
+                        }
                     });
                 }
                 llm::Msg::Tidy(hints) => {
@@ -1731,21 +1775,32 @@ impl App {
                     let new: Vec<String> = self.rejects.drain(before..).collect();
                     let mut notes = std::mem::take(&mut self.board.notes);
                     notes.extend(new);
-                    let _ = reply.send(if notes.is_empty() { "반영됨".to_string() } else { format!("일부 거부되거나 잘림:\n{}", notes.join("\n")) });
+                    let _ = reply.send(if notes.is_empty() { "applied".to_string() } else { format!("some lines were rejected or clipped:\n{}", notes.join("\n")) });
                 }
-                llm::Msg::Feed { line, reply } => {
-                    // 바깥 프로그램이 보낸 줄: 모델의 줄과 같은 문으로 들어가되, 거부와 잘림은 모델이 아니라 보낸 쪽에 돌려준다.
-                    let (rejects_before, notes_before) = (self.rejects.len(), self.board.notes.len());
-                    self.apply_line(&line, Author::Ai);
-                    let rejected: Vec<String> = self.rejects.drain(rejects_before..).collect();
-                    let notes: Vec<String> = self.board.notes.drain(notes_before..).collect();
-                    let _ = reply.send(if !rejected.is_empty() {
-                        format!("err {}", rejected.join(" / "))
-                    } else if notes.is_empty() {
-                        "ok".to_string()
-                    } else {
-                        format!("ok {}", notes.join(" / "))
-                    });
+                llm::Msg::Feed { peer, line, reply } => {
+                    // A line from an outside program: through the same door as a model's line, but the verdict
+                    // goes back to the sender, not into the model's next turn.
+                    let notes_before = self.board.notes.len();
+                    let verdict = match self.apply_op_line(&line, Author::Ai, &peer) {
+                        Err(e) => format!("err {e}"),
+                        Ok(()) => {
+                            let notes: Vec<String> = self.board.notes.drain(notes_before..).collect();
+                            if notes.is_empty() { "ok".to_string() } else { format!("ok {}", notes.join("; ")) }
+                        }
+                    };
+                    let _ = reply.send(verdict);
+                }
+                llm::Msg::Write { peer, ops, reply } => {
+                    // Several lines from an outside agent (the MCP tool `screen`). One answer for all of them.
+                    let notes_before = self.board.notes.len();
+                    let mut problems: Vec<String> = Vec::new();
+                    for l in ops.lines() {
+                        if let Err(e) = self.apply_op_line(l, Author::Ai, &peer) {
+                            problems.push(format!("{} → {e}", l.trim()));
+                        }
+                    }
+                    problems.extend(self.board.notes.drain(notes_before..));
+                    let _ = reply.send(if problems.is_empty() { "applied".to_string() } else { format!("some lines were rejected or clipped:\n{}", problems.join("\n")) });
                 }
                 llm::Msg::Delta(d) => {
                     if !d.trim().is_empty() {
@@ -2049,7 +2104,7 @@ impl App {
         }
         let mut parts = Vec::new();
         if self.cfg.demo() && self.promo.is_none() {
-            parts.push(if std::env::var("LYBOARD_DEMO").is_ok() { sys::tr("시연 모드 · 무엇을 입력해도 준비된 장면이 재생됩니다", "Demo mode · any input plays the prepared scenes") } else { sys::tr("데모 · API 키 없음", "Demo · no API key") }.to_string());
+            parts.push(if crate::sys::var("DEMO").is_ok() { sys::tr("시연 모드 · 무엇을 입력해도 준비된 장면이 재생됩니다", "Demo mode · any input plays the prepared scenes") } else { sys::tr("데모 · API 키 없음", "Demo · no API key") }.to_string());
         }
         if let Some(s) = self.stats.as_ref().filter(|_| self.promo.is_none()) {
             parts.push(s.model.clone());
@@ -2092,7 +2147,8 @@ fn debug_log(name: &str, text: &str) {
     }
 }
 
-/// 바깥 프로그램이 줄을 넣는 통로의 쪽: 화면 쪽 스레드로 줄을 보내고 판정을 기다린다. 기록은 data\\feed.log.
+/// The protocol socket's side of the app: hands a line to the screen thread and waits for the verdict.
+/// What it does is recorded in data/feed.log.
 struct FeedSink {
     tx: Sender<llm::Msg>,
     wake: egui::Context,
@@ -2101,32 +2157,46 @@ struct FeedSink {
 impl feed::Sink for FeedSink {
     fn line(&self, peer: &str, line: &str) -> String {
         let (reply, got) = channel();
-        let verdict = if self.tx.send(llm::Msg::Feed { line: line.to_string(), reply }).is_err() {
-            "err 프로그램이 닫히는 중".to_string()
+        let verdict = if self.tx.send(llm::Msg::Feed { peer: peer.to_string(), line: line.to_string(), reply }).is_err() {
+            "err unavailable the program is closing".to_string()
         } else {
             self.wake.request_repaint();
-            got.recv_timeout(std::time::Duration::from_secs(10)).unwrap_or_else(|_| "err 화면이 응답하지 않음".to_string())
+            got.recv_timeout(std::time::Duration::from_secs(10)).unwrap_or_else(|_| "err unavailable the screen did not answer".to_string())
         };
         sys::log("feed.log", &format!("{peer}  {}  → {verdict}", line.chars().take(300).collect::<String>()));
         verdict
+    }
+    fn read(&self, topic: &str) -> Result<String, String> {
+        ask_board(&self.tx, &self.wake, topic)
     }
     fn note(&self, text: &str) {
         sys::log("feed.log", text);
     }
 }
 
-/// KITE_PROTOCOL_PORT 가 있으면 127.0.0.1 에서 줄을 받기 시작한다 (기본은 꺼짐). KITE_PROTOCOL_TOKEN 이 있으면 첫 줄이 `auth <암호>` 여야 한다.
+/// Ask the screen thread for the board as protocol lines (all of it when `topic` is empty).
+fn ask_board(tx: &Sender<llm::Msg>, wake: &egui::Context, topic: &str) -> Result<String, String> {
+    let (reply, got) = channel();
+    if tx.send(llm::Msg::Board { topic: topic.to_string(), reply }).is_err() {
+        return Err("unavailable the program is closing".into());
+    }
+    wake.request_repaint();
+    got.recv_timeout(std::time::Duration::from_secs(10)).unwrap_or_else(|_| Err("unavailable the screen did not answer".into()))
+}
+
+/// With KITE_PROTOCOL_PORT set, start taking lines on 127.0.0.1 (off by default).
+/// With KITE_PROTOCOL_TOKEN set, the first line of a connection must be `auth <token>`.
 fn start_feed(tx: &Sender<llm::Msg>, ctx: &egui::Context) {
-    let Ok(v) = std::env::var("KITE_PROTOCOL_PORT") else { return };
-    let token = std::env::var("KITE_PROTOCOL_TOKEN").ok().filter(|t| !t.trim().is_empty());
+    let Ok(v) = crate::sys::var("PROTOCOL_PORT") else { return };
+    let token = crate::sys::var("PROTOCOL_TOKEN").ok().filter(|t| !t.trim().is_empty());
     match v.trim().parse::<u16>() {
         Ok(port) if port >= 1024 => {
             let sink = Arc::new(FeedSink { tx: tx.clone(), wake: ctx.clone() });
-            if let Err(e) = feed::start(port, token, sink) {
-                sys::log("feed.log", &format!("시작 못 함: {e}"));
+            if let Err(e) = feed::start(port, token, sink, hub::hub()) {
+                sys::log("feed.log", &format!("not started: {e}"));
             }
         }
-        _ => sys::log("feed.log", &format!("KITE_PROTOCOL_PORT '{v}' 는 1024~65535 의 숫자여야 함. 꺼 둠")),
+        _ => sys::log("feed.log", &format!("KITE_PROTOCOL_PORT '{v}' must be a number from 1024 to 65535; the socket stays off")),
     }
 }
 
@@ -2184,10 +2254,10 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        // 확인용: LYBOARD_RESIZE="1560,920;900,700;1400,900" 처럼 주면 3초 뒤부터 0.8초마다 다음 크기로 창을 천천히 바꾼다
+        // 확인용: KITE_RESIZE="1560,920;900,700;1400,900" 처럼 주면 3초 뒤부터 0.8초마다 다음 크기로 창을 천천히 바꾼다
         // (사람이 창 끝을 끄는 것처럼 매 프레임 조금씩). 창 크기를 바꿀 때의 움직임을 시험한다.
         if let Some(steps) = RESIZE.get_or_init(|| {
-            std::env::var("LYBOARD_RESIZE").ok().map(|v| {
+            crate::sys::var("RESIZE").ok().map(|v| {
                 v.split(';').filter_map(|s| s.split_once(',').and_then(|(w, h)| Some(egui::vec2(w.trim().parse().ok()?, h.trim().parse().ok()?)))).collect::<Vec<_>>()
             })
         }) {
@@ -2200,7 +2270,7 @@ impl eframe::App for App {
             }
             ui.ctx().request_repaint();
         }
-        // 확인용: LYBOARD_SHOT=파일.bmp 가 있으면 잠시 뒤 화면을 그 파일로 저장한다 (PC 가 잠겨 있어도 된다).
+        // 확인용: KITE_SHOT=파일.bmp 가 있으면 잠시 뒤 화면을 그 파일로 저장한다 (PC 가 잠겨 있어도 된다).
         if let Some(path) = self.shot.clone() {
             if self.shot_from.elapsed().as_millis() as u64 > self.shot_delay {
                 self.shot = None;
@@ -2230,7 +2300,7 @@ impl eframe::App for App {
                     g.sig = sig;
                     g.hot_until = std::time::Instant::now() + std::time::Duration::from_millis(1600);
                 }
-                let gap = if std::time::Instant::now() < g.hot_until || !self.fake_input.is_empty() || promo_moving { std::env::var("LYBOARD_GIF_GAP").ok().and_then(|v| v.parse().ok()).unwrap_or(66) } else { 1500 };
+                let gap = if std::time::Instant::now() < g.hot_until || !self.fake_input.is_empty() || promo_moving { crate::sys::var("GIF_GAP").ok().and_then(|v| v.parse().ok()).unwrap_or(66) } else { 1500 };
                 g.last.elapsed().as_millis() >= gap
             } {
                 g.last = std::time::Instant::now();
@@ -2436,8 +2506,8 @@ impl App {
         if busy {
             v.busy_at = std::time::Instant::now();
         }
-        let tail: u128 = std::env::var("LYBOARD_VIDEO_TAIL").ok().and_then(|x| x.parse().ok()).unwrap_or(2500);
-        let max: u64 = std::env::var("LYBOARD_VIDEO_MAX").ok().and_then(|x| x.parse().ok()).unwrap_or(300);
+        let tail: u128 = crate::sys::var("VIDEO_TAIL").ok().and_then(|x| x.parse().ok()).unwrap_or(2500);
+        let max: u64 = crate::sys::var("VIDEO_MAX").ok().and_then(|x| x.parse().ok()).unwrap_or(300);
         let age = v.began.elapsed();
         if age.as_secs() > max || (age.as_secs() >= 4 && v.busy_at.elapsed().as_millis() > tail) {
             v.tx = None; // 보내는 쪽을 닫으면 적는 스레드가 영상을 마무리한다
@@ -2528,20 +2598,20 @@ fn setup_fonts(ctx: &egui::Context) {
 
 fn main() -> eframe::Result {
     // 자동 재생으로 띄울 때는 사용자가 쓰던 창의 입력을 가로채지 않도록 포커스를 가져오지 않는다.
-    let quiet = std::env::var("LYBOARD_AUTOPLAY").is_ok();
+    let quiet = crate::sys::var("AUTOPLAY").is_ok();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(title())
-            // 확인용: 창의 크기 (LYBOARD_SIZE="가로,세로")
-            .with_inner_size(std::env::var("LYBOARD_SIZE").ok().and_then(|v| v.split_once(',').and_then(|(w, h)| Some([w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?]))).unwrap_or([1560.0, 920.0]))
+            // 확인용: 창의 크기 (KITE_SIZE="가로,세로")
+            .with_inner_size(crate::sys::var("SIZE").ok().and_then(|v| v.split_once(',').and_then(|(w, h)| Some([w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?]))).unwrap_or([1560.0, 920.0]))
             .with_active(!quiet)
-            // 확인용: 창을 띄울 위치 (LYBOARD_POS="x,y")
-            .with_position(std::env::var("LYBOARD_POS").ok().and_then(|v| v.split_once(',').and_then(|(x, y)| Some([x.trim().parse::<f32>().ok()?, y.trim().parse::<f32>().ok()?]))).unwrap_or([80.0, 60.0])),
+            // 확인용: 창을 띄울 위치 (KITE_POS="x,y")
+            .with_position(crate::sys::var("POS").ok().and_then(|v| v.split_once(',').and_then(|(x, y)| Some([x.trim().parse::<f32>().ok()?, y.trim().parse::<f32>().ok()?]))).unwrap_or([80.0, 60.0])),
         ..Default::default()
     };
     // 영상을 찍을 때는 화면 주기에 맞춰 기다리지 않는다 (한 프레임을 찍는 데 시간이 걸려 주기를 놓치면 초당 30장으로 떨어진다).
     let mut options = options;
-    if std::env::var("LYBOARD_VIDEO").is_ok() {
+    if crate::sys::var("VIDEO").is_ok() {
         options.wgpu_options.surface.present_mode = eframe::egui_wgpu::wgpu::PresentMode::AutoNoVsync;
     }
     eframe::run_native(
@@ -2557,8 +2627,8 @@ fn main() -> eframe::Result {
                 _ => cc.egui_ctx.system_theme() == Some(egui::Theme::Light),
             };
             set_theme(&cc.egui_ctx, light, false);
-            // 확인·소개용: 화면 배율 (LYBOARD_SCALE=1.35 면 같은 배치를 1.35배 촘촘한 화소로 그린다. 영상을 선명하게 찍는 데 쓴다).
-            if let Some(z) = std::env::var("LYBOARD_SCALE").ok().and_then(|v| v.parse::<f32>().ok()) {
+            // 확인·소개용: 화면 배율 (KITE_SCALE=1.35 면 같은 배치를 1.35배 촘촘한 화소로 그린다. 영상을 선명하게 찍는 데 쓴다).
+            if let Some(z) = crate::sys::var("SCALE").ok().and_then(|v| v.parse::<f32>().ok()) {
                 cc.egui_ctx.set_zoom_factor(z);
             }
             Ok(Box::new(App::new(&cc.egui_ctx)))

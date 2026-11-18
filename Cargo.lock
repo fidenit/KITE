@@ -2473,6 +2473,7 @@ dependencies = [
  "cpal",
  "eframe",
  "image",
+ "kite-protocol",
  "raw-window-handle",
  "rfd",
  "serde",
@@ -2480,6 +2481,10 @@ dependencies = [
  "ureq",
  "wry",
 ]
+
+[[package]]
+name = "kite-protocol"
+version = "0.2.0"
 
 [[package]]
 name = "kurbo"

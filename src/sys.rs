@@ -31,10 +31,16 @@ pub fn base_dir() -> PathBuf {
     dir
 }
 
-/// 대화 언어가 영어인가. 처음에는 한국어, 바꾸면 data/lang.txt 에 남는다.
-static ENGLISH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// A setting given through the environment: `KITE_<name>`. The names from before the rename
+/// (`KITE_<name>`) are still read, so old scripts keep working.
+pub fn var(name: &str) -> Result<String, std::env::VarError> {
+    std::env::var(format!("KITE_{name}")).or_else(|_| std::env::var(format!("KITE_{name}")))
+}
 
-/// 화면의 글자를 고른다: 대화 언어가 영어이면 영어, 아니면 한국어.
+/// Is the language English? English is the default; a choice made in the app is kept in data/lang.txt.
+static ENGLISH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Pick the text for the screen: English, or Korean when the user chose Korean.
 pub fn tr(ko: &'static str, en: &'static str) -> &'static str {
     if english() { en } else { ko }
 }
@@ -51,10 +57,10 @@ pub fn set_english(on: bool, save: bool) {
     }
 }
 
-/// 저장해 둔 대화 언어를 읽는다.
+/// Read the saved language. Without a saved choice: KITE_LANG (`en` or `ko`) if set, else English.
 pub fn load_language() {
-    let en = std::fs::read_to_string(data_dir().join("lang.txt")).map(|s| s.trim() == "en").unwrap_or(false);
-    set_english(en, false);
+    let saved = std::fs::read_to_string(data_dir().join("lang.txt")).ok().or_else(|| var("LANG").ok());
+    set_english(saved.map(|s| s.trim() != "ko").unwrap_or(true), false);
 }
 
 pub fn data_dir() -> PathBuf {

@@ -12,7 +12,9 @@ pub enum Msg {
     /// 일하는 도중에 화면을 고쳐 달라는 요청. 거부된 명령의 이유를 `reply` 로 돌려준다.
     Screen { ops: String, reply: Sender<String> },
     /// 다른 프로그램이 소켓(`feed.rs`)으로 보낸 프로토콜 줄 하나. 판정 한 줄(`ok` / `err <이유>`)을 `reply` 로 돌려준다.
-    Feed { line: String, reply: Sender<String> },
+    Feed { peer: String, line: String, reply: Sender<String> },
+    /// Several protocol lines from an outside agent (the MCP tool `screen`). One answer for all: `applied`, or what was rejected.
+    Write { peer: String, ops: String, reply: Sender<String> },
     /// 웹 카드 안의 페이지에서 스크립트를 실행해 달라는 요청. 결과를 `reply` 로 돌려준다.
     Browser { card: String, script: String, reply: Sender<String> },
     /// 판단 모델이 메인 모델보다 먼저 내린 결정 (요청의 종류, 주제 등)
@@ -24,7 +26,7 @@ pub enum Msg {
     /// 맡긴 작업의 소식 (시작, 진행, 끝)
     Job(crate::jobs::Event),
     /// 보드에서 주제 하나의 내용을 전부 읽어 달라는 요청 (보드가 커서 줄여 보냈을 때)
-    Board { topic: String, reply: Sender<String> },
+    Board { topic: String, reply: Sender<Result<String, String>> },
     /// 보이지 않는 창으로 이 주소의 페이지를 열어, `ready` 가 들어 있는 글이 나오면 그 화면의 글을 돌려 달라는 요청
     /// (지도 서비스에서 경로의 거리·시간을 읽어 올 때 쓴다)
     /// `script` 의 결과에 `needle` 이 들어 있으면 그 결과를 돌려준다 (needle 이 비어 있으면 경로의 거리·시간이 읽힐 때).
@@ -59,29 +61,34 @@ pub struct Config {
     pub effort: String,
     /// Claude Code 엔진을 쓰는가 (API 를 직접 부르지 않고 이 컴퓨터의 Claude Code 에 맡긴다)
     pub cc: bool,
+    /// No model inside KITE: an agent outside drives the board (MCP or the protocol socket),
+    /// and what the user types or does goes out to it as events.
+    pub external: bool,
 }
 
 impl Config {
     pub fn load() -> Self {
-        let env = |k: &str| std::env::var(k).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-        let key = env("ANTHROPIC_API_KEY").or_else(|| {
+        let env = |k: &str| crate::sys::var(k).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        let key = std::env::var("ANTHROPIC_API_KEY").ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).or_else(|| {
             std::fs::read_to_string(crate::sys::base_dir().join("key.txt")).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
         });
-        // LYBOARD_DEMO 가 있으면 키가 있어도 시연 대본으로 돈다 (화면 확인용, API 비용 없음).
-        let key = if env("LYBOARD_DEMO").is_some() { None } else { key };
+        // KITE_DEMO 가 있으면 키가 있어도 시연 대본으로 돈다 (화면 확인용, API 비용 없음).
+        let key = if env("DEMO").is_some() { None } else { key };
         // 엔진: 프로그램 폴더의 engine.txt 에 claude-code 라고 적혀 있으면 Claude Code 에 맡긴다.
-        let engine = env("LYBOARD_ENGINE").or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("engine.txt")).ok().map(|s| s.trim().to_string()));
-        let cc = engine.as_deref() == Some("claude-code") && env("LYBOARD_DEMO").is_none();
+        let engine = env("ENGINE").or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("engine.txt")).ok().map(|s| s.trim().to_string()));
+        let cc = engine.as_deref() == Some("claude-code") && env("DEMO").is_none();
+        let external = engine.as_deref() == Some("external") && env("DEMO").is_none();
         Config {
             cc,
+            external,
             key,
-            model: env("LYBOARD_MODEL").unwrap_or_else(|| "claude-opus-5-5".into()),
+            model: env("MODEL").unwrap_or_else(|| "claude-opus-5-5".into()),
             // 화면 반응 속도가 중요해서 기본은 low. 형태 선택 품질이 아쉬우면 medium 으로 올린다.
-            effort: env("LYBOARD_EFFORT").unwrap_or_else(|| "low".into()),
+            effort: env("EFFORT").unwrap_or_else(|| "low".into()),
         }
     }
     pub fn demo(&self) -> bool {
-        self.key.is_none() && !self.cc
+        self.key.is_none() && !self.cc && !self.external
     }
 }
 
@@ -142,6 +149,8 @@ pub fn run_turn(cfg: Config, turn_text: String, images: Vec<(String, String)>, q
             }
         }
         let result = match &cfg.key {
+            // An outside agent answers on its own time; there is no turn to run here.
+            _ if cfg.external => Ok(Stats { model: "external agent".into(), ..Default::default() }),
             _ if cfg.cc => crate::cc::run(&cfg.effort, &turn_text, &images, &stop, &send),
             Some(key) => {
                 // 답하는 중에 사용자가 더 적은 말: 도구를 쓰는 사이사이에 꺼내서 모델에게 전한다.
@@ -319,8 +328,8 @@ focus n3
 
 fn demo(turn_no: usize, send: &dyn Fn(Msg)) -> Result<Stats, String> {
     let started = Instant::now();
-    // 확인·소개용: LYBOARD_DEMO_FILE 이 있으면 그 파일의 장면들(=== 줄로 나눔)을 쓴다.
-    let custom: Vec<String> = std::env::var("LYBOARD_DEMO_FILE")
+    // 확인·소개용: KITE_DEMO_FILE 이 있으면 그 파일의 장면들(=== 줄로 나눔)을 쓴다.
+    let custom: Vec<String> = crate::sys::var("DEMO_FILE")
         .ok()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .map(|t| t.replace("\r\n", "\n").split("\n===\n").map(|s| s.trim().to_string() + "\n").collect())
@@ -330,8 +339,8 @@ fn demo(turn_no: usize, send: &dyn Fn(Msg)) -> Result<Stats, String> {
     std::thread::sleep(Duration::from_millis(500));
     let first_ms = started.elapsed().as_millis() as u64;
     let chars: Vec<char> = script.chars().collect();
-    // 소개 영상용: LYBOARD_DEMO_LINE_MS 를 주면 줄마다 그만큼 쉬어서, 카드가 한 줄씩 채워지는 모습이 보이게 한다.
-    let line_ms: u64 = std::env::var("LYBOARD_DEMO_LINE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    // 소개 영상용: KITE_DEMO_LINE_MS 를 주면 줄마다 그만큼 쉬어서, 카드가 한 줄씩 채워지는 모습이 보이게 한다.
+    let line_ms: u64 = crate::sys::var("DEMO_LINE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     for piece in chars.chunks(3) {
         send(Msg::Delta(piece.iter().collect()));
         std::thread::sleep(Duration::from_millis(if piece.contains(&'\n') { 9 + line_ms } else { 9 }));
