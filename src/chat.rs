@@ -613,6 +613,13 @@ impl App {
         let (mut save, mut close) = (false, false);
         egui::Modal::new(egui::Id::unique("key-window")).frame(frame).backdrop_color(egui::Color32::from_black_alpha(170)).show(ctx, |ui| {
             ui.set_width(420.0);
+            // Some choices have more to fill in than a small window is tall: the content scrolls inside the window.
+            let room = (ctx.content_rect().height() - 110.0).max(300.0);
+            // The buttons stay below it, always in view.
+            let room = room - 150.0;
+            ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
+            let (pick, current, has_key, pick_cc, pick_openai, pick_agent) = egui::ScrollArea::vertical().max_height(room).min_scrolled_height(room).auto_shrink([false, true]).show(ui, |ui| {
+            ui.set_width(420.0);
             let has_key = self.cfg.key.is_some();
             let has_jev = crate::jev::key().is_some();
             ui.label(egui::RichText::new(if !self.cfg.demo() { crate::sys::tr("엔진과 키", "Engine and keys") } else { crate::sys::tr("KITE에 오신 것을 환영합니다", "Welcome to KITE") }).font(ui::bold(21.0)).color(ui::TEXT()));
@@ -880,7 +887,9 @@ Files, commands and the web go through Claude Code's tools; KITE's own features 
                 .color(ui::FAINT()),
             );
             }
-            ui.add_space(16.0);
+            (pick, current, has_key, pick_cc, pick_openai, pick_agent)
+            }).inner;
+            ui.add_space(12.0);
             let jev_typed = self.jev_input.trim().len() > 8 || self.level_pick.as_deref().map(|l| l != crate::permit::level().name()).unwrap_or(false);
             let ready = if pick_cc {
                 pick != current || jev_typed || self.perm_pick.as_deref().map(|p| p != crate::cc::permission()).unwrap_or(false)
