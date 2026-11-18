@@ -41,7 +41,7 @@ pub enum Msg {
     Error(String),
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct Stats {
     pub model: String,
     pub input_tokens: u64,
@@ -64,6 +64,8 @@ pub struct Config {
     /// No model inside KITE: an agent outside drives the board (MCP or the protocol socket),
     /// and what the user types or does goes out to it as events.
     pub external: bool,
+    /// The agent is an AG-UI server at this address (`agui.rs`).
+    pub agui: Option<crate::agui::Settings>,
 }
 
 impl Config {
@@ -78,9 +80,11 @@ impl Config {
         let engine = env("ENGINE").or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("engine.txt")).ok().map(|s| s.trim().to_string()));
         let cc = engine.as_deref() == Some("claude-code") && env("DEMO").is_none();
         let external = engine.as_deref() == Some("external") && env("DEMO").is_none();
+        let agui = crate::agui::settings().filter(|_| engine.as_deref() == Some("ag-ui") && env("DEMO").is_none());
         Config {
             cc,
             external,
+            agui,
             key,
             model: env("MODEL").unwrap_or_else(|| "claude-opus-5-5".into()),
             // 화면 반응 속도가 중요해서 기본은 low. 형태 선택 품질이 아쉬우면 medium 으로 올린다.
@@ -88,7 +92,7 @@ impl Config {
         }
     }
     pub fn demo(&self) -> bool {
-        self.key.is_none() && !self.cc && !self.external
+        self.key.is_none() && !self.cc && !self.external && self.agui.is_none()
     }
 }
 
@@ -109,7 +113,7 @@ pub struct PreInput {
 }
 
 /// 한 턴을 별도 스레드에서 실행한다. `wake` 는 화면을 다시 그리게 깨우는 함수.
-pub fn run_turn(cfg: Config, turn_text: String, images: Vec<(String, String)>, queue: std::sync::Arc<std::sync::Mutex<Vec<String>>>, stop: std::sync::Arc<std::sync::atomic::AtomicBool>, pre: PreInput, turn_no: usize, tx: Sender<Msg>, wake: impl Fn() + Send + 'static) {
+pub fn run_turn(cfg: Config, turn_text: String, outside: Option<crate::agui::Turn>, images: Vec<(String, String)>, queue: std::sync::Arc<std::sync::Mutex<Vec<String>>>, stop: std::sync::Arc<std::sync::atomic::AtomicBool>, pre: PreInput, turn_no: usize, tx: Sender<Msg>, wake: impl Fn() + Send + 'static) {
     std::thread::spawn(move || {
         let send = |m: Msg| {
             let _ = tx.send(m);
@@ -151,6 +155,7 @@ pub fn run_turn(cfg: Config, turn_text: String, images: Vec<(String, String)>, q
         let result = match &cfg.key {
             // An outside agent answers on its own time; there is no turn to run here.
             _ if cfg.external => Ok(Stats { model: "external agent".into(), ..Default::default() }),
+            _ if cfg.agui.is_some() => crate::agui::run(cfg.agui.as_ref().unwrap(), &outside.unwrap_or_default(), &send),
             _ if cfg.cc => crate::cc::run(&cfg.effort, &turn_text, &images, &stop, &send),
             Some(key) => {
                 // 답하는 중에 사용자가 더 적은 말: 도구를 쓰는 사이사이에 꺼내서 모델에게 전한다.

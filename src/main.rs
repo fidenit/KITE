@@ -4,6 +4,7 @@
 use kite_protocol::{core, lang};
 
 mod agent;
+mod agui;
 mod cc;
 mod audio;
 mod chat;
@@ -915,6 +916,7 @@ impl App {
 
     /// 초기화: 화면, 대화, 기억, 기록을 전부 지우고 처음 상태로 돌아간다. API 키와 음성 설정만 남는다. 되돌릴 수 없다.
     pub fn reset_all(&mut self) {
+        agui::reset();
         if self.busy || jobs::running() > 0 {
             self.error = Some(sys::tr("답하는 중이거나 작업자가 일하는 중에는 초기화할 수 없습니다. 끝난 뒤에 다시 눌러 주세요.", "Cannot reset while it is answering or a worker is running. Try again when they finish.").into());
             return;
@@ -1322,6 +1324,12 @@ impl App {
         self.flush_speech(); // 말하는 중에 새로 말을 걸면 하던 말을 멈춘다
         self.hush = false;
         self.turn_events = self.events.join(" / ");
+        // For an AG-UI agent the turn goes out in the protocol's own shape (SPEC.md 10.5), not KITE's own envelope.
+        let outside = self.cfg.agui.is_some().then(|| {
+            let mut rejected = self.rejects.clone();
+            rejected.extend(self.board.notes.iter().cloned());
+            agui::Turn { board: lang::serialize(&self.board), events: self.events.iter().map(|e| format!("user {e}")).collect(), rejected, input: input.clone() }
+        });
         let mut text = self.turn_text(&input);
         // 붙여 둔 사진: 이번 말과 함께 보내고, 나중에 다시 볼 수 있게 보관함에도 남긴다.
         let mut images = Vec::new();
@@ -1381,7 +1389,7 @@ impl App {
         let ctx = ctx.clone();
         self.stop = Default::default();
         self.turn_said = false;
-        llm::run_turn(self.cfg.clone(), text, images, self.queue.clone(), self.stop.clone(), pre, self.turn_no, self.tx.clone(), move || ctx.request_repaint());
+        llm::run_turn(self.cfg.clone(), text, outside, images, self.queue.clone(), self.stop.clone(), pre, self.turn_no, self.tx.clone(), move || ctx.request_repaint());
         self.turn_no += 1;
     }
 
