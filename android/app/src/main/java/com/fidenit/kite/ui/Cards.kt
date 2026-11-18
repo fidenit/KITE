@@ -81,7 +81,8 @@ private fun Body(s: String, color: Color = C.text) = Text(s, color = color, font
 @Composable
 fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: Int) {
     val b = vm.board
-    fun f(name: String) = b.show(card.field(name))
+    // In a field named `text`, the two characters \n are shown as a line break (protocol 0.3).
+    fun f(name: String) = b.show(card.field(name)).let { if (name == "text") it.replace("\\n", "\n") else it }
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(C.card).padding(16.dp)) {
         if (card.title.isNotEmpty()) {
             Text(b.show(card.title), color = C.text, fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -107,7 +108,7 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
             }
             Kind.Chart -> Chart(vm, card)
             Kind.Table -> {
-                val cols = f("cols").split('|').map { it.trim() }.filter { it.isNotEmpty() }
+                val cols = com.fidenit.kite.core.Lang.splitCells(f("cols")).filter { it.isNotEmpty() }
                 if (cols.isNotEmpty()) {
                     Row(Modifier.fillMaxWidth().padding(bottom = 6.dp)) { cols.forEach { Text(it, color = C.dim, fontSize = 13.sp, modifier = Modifier.weight(1f).padding(end = 8.dp)) } }
                 }
@@ -150,16 +151,56 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                     Body(f("text"))
                     Spacer(Modifier.height(10.dp))
                 }
-                val chosen = card.field("chosen")
+                val chosen = card.field("chosen").split(',')
+                val multi = card.field("multi") == "yes"
+                val danger = card.field("tone") == "danger"
+                val answered = card.field("chosen").isNotEmpty()
+                // With several answers a tap only marks the option; the answer goes out with "Done".
+                val marks = remember(card.id) { mutableStateMapOf<String, String>() }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (item in card.items) {
-                        val on = chosen == item.id
+                        val on = item.id in chosen || (multi && !answered && marks.containsKey(item.id))
                         Column(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(if (on) C.accent.copy(alpha = 0.18f) else Color.Transparent)
-                                .border(1.dp, if (on) C.accent else C.line, RoundedCornerShape(16.dp)).clickable { vm.choose(card, item) }.padding(14.dp),
+                                .border(1.dp, if (on) C.accent else if (danger) C.red.copy(alpha = 0.6f) else C.line, RoundedCornerShape(16.dp))
+                                .clickable {
+                                    if (!multi) {
+                                        vm.choose(card, item)
+                                    } else if (!answered) {
+                                        if (marks.containsKey(item.id)) marks.remove(item.id) else marks[item.id] = "1"
+                                    }
+                                }
+                                .padding(14.dp),
                         ) {
                             Text(b.show(item.cells[0]), color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                             item.cells.getOrNull(1)?.takeIf { it.isNotEmpty() }?.let { Text(b.show(it), color = C.dim, fontSize = 14.sp, lineHeight = 20.sp) }
+                        }
+                    }
+                    if (multi && !answered && marks.isNotEmpty()) Pill("완료") { vm.chooseMany(card, marks.keys.toSet()) }
+                }
+            }
+            Kind.Record -> {
+                // One thing with named properties: the summary, label and value per field, then its rows.
+                if (f("text").isNotEmpty()) {
+                    Body(f("text"), C.dim)
+                    Spacer(Modifier.height(8.dp))
+                }
+                for ((name, value) in card.fields) {
+                    if (name == "text" || name == "cols") continue
+                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Text(name.replace('-', ' ').replace('_', ' '), color = C.dim, fontSize = 13.sp, modifier = Modifier.width(104.dp))
+                        Text(b.show(value), color = C.text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                val cols = com.fidenit.kite.core.Lang.splitCells(card.field("cols")).filter { it.isNotEmpty() }
+                if (card.items.isNotEmpty() && cols.isNotEmpty()) {
+                    Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp)) { cols.forEach { Text(it, color = C.dim, fontSize = 13.sp, modifier = Modifier.weight(1f).padding(end = 8.dp)) } }
+                }
+                for (item in card.items) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
+                    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        item.cells.forEachIndexed { i, cell ->
+                            Text(b.show(cell), color = C.text, fontSize = 15.sp, lineHeight = 21.sp, fontWeight = if (i == 0) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f).padding(end = 8.dp))
                         }
                     }
                 }
@@ -189,9 +230,9 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                 Drawing(card)
                 if (f("text").isNotEmpty()) Body(f("text"), C.dim)
             }
-            Kind.Image, Kind.Web -> {
+            Kind.Image, Kind.Web, Kind.Doc -> {
                 val uri = LocalUriHandler.current
-                val target = card.field(if (card.kind == Kind.Image) "src" else "url")
+                val target = card.field(if (card.kind == Kind.Web) "url" else "src")
                 if (f("text").isNotEmpty()) Body(f("text"))
                 Text(target, color = C.dim, fontSize = 13.sp, maxLines = 2)
                 if (target.startsWith("http")) {

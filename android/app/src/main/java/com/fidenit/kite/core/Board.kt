@@ -6,7 +6,7 @@ package com.fidenit.kite.core
 import java.util.TreeMap
 
 enum class Kind {
-    Note, Status, Progress, Decision, Input, Checklist, Table, Metric, Chart, Timeline, Route, Draw, Image, Web;
+    Note, Status, Progress, Decision, Input, Checklist, Table, Metric, Chart, Timeline, Route, Draw, Image, Web, Record, Doc;
 
     val part: Part get() = PARTS.first { it.kind == this }
     val label: String get() = part.name
@@ -18,7 +18,9 @@ enum class Kind {
     /** 필드별 글자 수 한도. 이 종류에 없는 필드면 null. */
     fun fieldLimit(field: String): Int? {
         if (field == "title") return 40
-        return part.fields.firstOrNull { it.name == field }?.limit
+        part.fields.firstOrNull { it.name == field }?.let { return it.limit }
+        // A record takes any field name that is a valid id.
+        return if (this == Record && validId(field)) RECORD_FIELD_LIMIT else null
     }
 
     companion object {
@@ -42,12 +44,17 @@ val PARTS: List<Part> = listOf(
     Part(Kind.Table, "table", 4, 3, "a comparison or a list with several attributes", listOf(Field("cols", 200, "cols: column | column ...")), "cell | cell ... (up to 6 cells)"),
     Part(Kind.Progress, "progress", 3, 3, "work in progress", listOf(Field("pct", 3, "pct(0-100)"), Field("text", 60, "text(60)")), "done/run/todo/fail | step name"),
     Part(Kind.Checklist, "checklist", 3, 3, "things to do (the user can tick them)", listOf(), "done/todo | text"),
-    Part(Kind.Decision, "decision", 3, 3, "something the user has to decide (pick one)", listOf(Field("text", 120, "text(the question, 120)"), Field("chosen", 24, "")), "option name | one-line description"),
-    Part(Kind.Input, "input", 3, 3, "values the user has to give (fill in): a date, a name, a number, an address", listOf(Field("text", 120, "text(what is asked and why, 120)"), Field("sent", 8, "")), "box name | hint (an example) or the kind of box: date / number / slider 0~100 unit"),
+    Part(Kind.Decision, "decision", 3, 3, "something the user has to decide (pick one)", listOf(Field("text", 120, "text(the question, 120)"), Field("multi", 8, "multi: yes when several may be picked"), Field("tone", 8, "tone: danger when the choice cannot be undone"), Field("chosen", 120, "")), "option name | one-line description"),
+    Part(Kind.Input, "input", 3, 3, "values the user has to give (fill in): a date, a name, a number, an address", listOf(Field("text", 120, "text(what is asked and why, 120)"), Field("sent", 8, "")), "box name (end it with * when it must be filled) | hint (an example) or the kind of box: date / time / number / slider 0~100 unit / choice A / B / C"),
     Part(Kind.Timeline, "timeline", 3, 3, "things in order of time", listOf(), "when | text | done/run/todo (optional)"),
     Part(Kind.Note, "note", 3, 2, "a short text that fits none of the above", listOf(Field("text", 240, "text(240)")), ""),
     Part(Kind.Web, "web", 6, 5, "a web page or an HTML file shown as it is, in a small browser", listOf(Field("url", 600, "url: a web address, or the absolute path of a file on this computer")), ""),
+    Part(Kind.Record, "record", 3, 3, "one thing with named properties that no other type fits: an invoice, a contact, a ticket, a setting", listOf(Field("text", 240, "any field name of your choosing, shown as label and value (80 each, up to 12), text(240)"), Field("cols", 200, "cols: column | column ... (when it has rows)")), "cell | cell ... (up to 6 cells, optional)"),
+    Part(Kind.Doc, "doc", 3, 2, "a document, file or link that is too long for the board: shown by name with a summary, opened by the user", listOf(Field("src", 600, "src: absolute path of the file, or a web address"), Field("text", 240, "text(what it is and what it says, 240)")), ""),
 )
+
+/** Is this the name of an extension kind (`x-` and then an id)? Every renderer accepts one and treats it as a record. */
+fun isExtensionKind(name: String): Boolean = name.startsWith("x-") && validId(name.substring(2)) && chars(name) <= 24
 
 /** 모델에게 줄 부품 표 (마크다운). 등록된 내용에서 만든다. */
 fun partsTable(): String {
@@ -65,6 +72,8 @@ const val MAX_CELLS = 6
 const val CELL_LIMIT = 60
 const val MAX_W = 8
 const val MAX_H = 8
+const val RECORD_FIELD_LIMIT = 80
+const val MAX_RECORD_FIELDS = 12
 
 enum class Author { Ai, User }
 
@@ -99,7 +108,12 @@ class Card(
     var title: String,
     var w: Int,
     var h: Int,
+    /** The name of the extension kind (`x-...`) when the card was created as one. Its kind is then Record. */
+    val ext: String? = null,
 ) {
+    /** The kind as the writer named it. */
+    val kindName: String get() = ext ?: kind.label
+
     val fields: TreeMap<String, String> = TreeMap()
     val items: MutableList<Item> = mutableListOf()
     var grid: Pair<Int, Int>? = null
@@ -131,7 +145,7 @@ fun clip(s: String, limit: Int): String {
     return s.substring(0, s.offsetByCodePoints(0, keep)) + "…"
 }
 
-private fun validId(id: String): Boolean =
+internal fun validId(id: String): Boolean =
     id.isNotEmpty() && chars(id) <= 24 && id.codePoints().allMatch { Character.isLetterOrDigit(it) || it == '_'.code || it == '-'.code }
 
 class Board {
@@ -194,15 +208,26 @@ class Board {
                 if (shelf.any { s -> s.cards.any { it.id == op.id } }) throw Rejected("shelved", "card id '${op.id}' belongs to a card on the shelf; use another id")
                 if (!validId(op.id)) throw Rejected("bad-id", "card id '${op.id}' is not valid (1 to 24 letters, digits, _ or -)")
                 if (card(op.id) != null) throw Rejected("exists", "card '${op.id}' already exists; change it with set/add/upd instead of creating it again")
-                val k = Kind.parse(op.kind) ?: throw Rejected("unknown-kind", "no card type '${op.kind}'")
+                val known = Kind.parse(op.kind)
+                if (known == null && !isExtensionKind(op.kind)) throw Rejected("unknown-kind", "no card type '${op.kind}'")
+                val k = known ?: Kind.Record
                 if (topics.none { it.id == op.topic }) throw Rejected("no-such-topic", "no topic '${op.topic}'; create it first with: topic ${op.topic} <name>")
                 val (w, h) = op.size ?: (k.part.w to k.part.h)
                 if (chars(op.title) > 40) notes.add("clipped ${op.id}.title 40")
-                cards.add(Card(op.id, k, op.topic, clip(op.title, 40), w.coerceIn(1, MAX_W), h.coerceIn(1, MAX_H)))
+                cards.add(Card(op.id, k, op.topic, clip(op.title, 40), w.coerceIn(1, MAX_W), h.coerceIn(1, MAX_H), if (known == null) op.kind else null))
             }
             is Op.Set -> {
                 val c = cardMut(op.id)
-                val limit = c.kind.fieldLimit(op.field) ?: throw Rejected("unknown-field", "${c.kind.label} has no field '${op.field}'")
+                val limit = c.kind.fieldLimit(op.field) ?: throw Rejected("unknown-field", "${c.kindName} has no field '${op.field}'")
+                if (c.kind == Kind.Record && op.field != "title" && !c.fields.containsKey(op.field) && c.fields.size >= MAX_RECORD_FIELDS) {
+                    throw Rejected("limit", "card '${op.id}' already has $MAX_RECORD_FIELDS fields")
+                }
+                if (c.kind == Kind.Decision && op.field == "multi" && op.value !in listOf("yes", "no")) {
+                    throw Rejected("bad-value", "decision.multi is yes or no (got '${op.value}')")
+                }
+                if (c.kind == Kind.Decision && op.field == "tone" && op.value !in listOf("normal", "danger")) {
+                    throw Rejected("bad-value", "decision.tone is normal or danger (got '${op.value}')")
+                }
                 if (c.kind == Kind.Status && op.field == "state" && op.value !in listOf("ok", "run", "wait", "fail", "idle")) {
                     throw Rejected("bad-value", "status.state is one of ok|run|wait|fail|idle (got '${op.value}')")
                 }
@@ -300,7 +325,7 @@ class Board {
 
     private fun putItem(id: String, item: String, cells: List<String>, update: Boolean) {
         val c = cardMut(id)
-        if (!c.kind.hasItems) throw Rejected("no-items", "${c.kind.label} takes no items")
+        if (!c.kind.hasItems) throw Rejected("no-items", "${c.kindName} takes no items")
         if (!validId(item)) throw Rejected("bad-id", "item id '$item' is not valid (1 to 24 letters, digits, _ or -)")
         if (cells.isEmpty() || cells.size > MAX_CELLS) throw Rejected("cell-count", "an item has 1 to $MAX_CELLS cells")
         val states = when (c.kind) {

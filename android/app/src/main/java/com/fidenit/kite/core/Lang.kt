@@ -19,7 +19,34 @@ object Lang {
         return w to h
     }
 
-    private fun cells(rest: String): List<String> = rest.split('|').map { it.trim() }
+    /** Split a value into cells at `|`. Inside a cell, `\\|` is a `|` that does not split. */
+    fun splitCells(rest: String): List<String> {
+        val out = mutableListOf<String>()
+        val cur = StringBuilder()
+        var i = 0
+        while (i < rest.length) {
+            val c = rest[i]
+            if (c == '\\' && i + 1 < rest.length && rest[i + 1] == '|') {
+                cur.append('|')
+                i += 2
+                continue
+            }
+            if (c == '|') {
+                out.add(cur.toString().trim())
+                cur.setLength(0)
+            } else {
+                cur.append(c)
+            }
+            i++
+        }
+        out.add(cur.toString().trim())
+        return out
+    }
+
+    /** Write cells back as one value: joined by ` | `, a `|` inside a cell written as `\\|`. */
+    fun joinCells(cells: List<String>): String = cells.joinToString(" | ") { it.replace("|", "\\|") }
+
+    private fun cells(rest: String): List<String> = splitCells(rest)
 
     /** 한 줄을 조작으로 해석한다. 빈 줄·주석·코드 울타리·tell 은 null. 잘못된 줄이면 Rejected 를 던진다. */
     fun parse(raw: String): Op? {
@@ -90,9 +117,9 @@ object Lang {
             t.group?.let { s.append("put ${t.id} $it\n") }
         }
         for (c in b.cards) {
-            s.append("card ${c.id} ${c.kind.label} ${c.topic} ${c.w}x${c.h} ${c.title}\n")
+            s.append("card ${c.id} ${c.kindName} ${c.topic} ${c.w}x${c.h} ${c.title}\n")
             for ((f, v) in c.fields) s.append("set ${c.id} $f $v\n")
-            for (i in c.items) s.append("add ${c.id} ${i.id} ${i.cells.joinToString(" | ")}\n")
+            for (i in c.items) s.append("add ${c.id} ${i.id} ${joinCells(i.cells)}\n")
             c.grid?.let { s.append("move ${c.id} ${it.first} ${it.second}\n") }
             if (c.pinned) s.append("pin ${c.id}\n")
         }

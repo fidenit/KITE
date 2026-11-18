@@ -718,6 +718,14 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         send("")
     }
 
+    /** Several answers to a decision card that takes them (`multi yes`), in item order. */
+    fun chooseMany(card: Card, picked: Set<String>) {
+        val ids = card.items.map { it.id }.filter { it in picked }
+        if (ids.isEmpty()) return
+        userLine("set ${card.id} chosen ${ids.joinToString(",")}")
+        send("")
+    }
+
     /** 입력 카드에 적은 값을 보낸다 (항목 ID → 값). */
     fun submit(card: Card, values: Map<String, String>) {
         for (item in card.items) {
