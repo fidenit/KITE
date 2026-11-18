@@ -150,7 +150,7 @@ fn start(input: &Value) -> Result<String, String> {
     }
     let mut cfg = Config::load();
     // 작업자는 지금 엔진으로 돈다: Claude Code 엔진이면 Claude Code 로, 아니면 API 키로.
-    if cfg.key.is_none() && !cfg.cc {
+    if cfg.key.is_none() && !cfg.cc && cfg.openai.is_none() {
         return Err("API 키가 없어 작업자를 띄울 수 없음".into());
     }
     let key = cfg.key.clone().unwrap_or_default();
@@ -252,7 +252,10 @@ fn start(input: &Value) -> Result<String, String> {
             crate::cc::worker(&id, WORKER, &jdir, &cfg.effort, &first, &stop, &shown)
         } else {
             let role = agent::Role { system: WORKER, tools: tools::definitions(true), max_steps: MAX_STEPS, check: &check, tool: &tool };
-            agent::run_as(&cfg, &key, &role, &first, &[], &send)
+            match &cfg.openai {
+                Some(p) => crate::openai::run_as(p, &role, &first, &[], &send),
+                None => agent::run_as(&cfg, &key, &role, &first, &[], &send),
+            }
         };
         let secs = started.elapsed().as_secs();
         let (state, ok, report) = match result {

@@ -66,6 +66,8 @@ pub struct Config {
     pub external: bool,
     /// The agent is an AG-UI server at this address (`agui.rs`).
     pub agui: Option<crate::agui::Settings>,
+    /// KITE's own loop, with a model behind an OpenAI-compatible API (`openai.rs`).
+    pub openai: Option<crate::openai::Provider>,
 }
 
 impl Config {
@@ -81,10 +83,12 @@ impl Config {
         let cc = engine.as_deref() == Some("claude-code") && env("DEMO").is_none();
         let external = engine.as_deref() == Some("external") && env("DEMO").is_none();
         let agui = crate::agui::settings().filter(|_| engine.as_deref() == Some("ag-ui") && env("DEMO").is_none());
+        let openai = crate::openai::settings().filter(|_| engine.as_deref() == Some("openai") && env("DEMO").is_none());
         Config {
             cc,
             external,
             agui,
+            openai,
             key,
             model: env("MODEL").unwrap_or_else(|| "claude-opus-5-5".into()),
             // 화면 반응 속도가 중요해서 기본은 low. 형태 선택 품질이 아쉬우면 medium 으로 올린다.
@@ -92,7 +96,7 @@ impl Config {
         }
     }
     pub fn demo(&self) -> bool {
-        self.key.is_none() && !self.cc && !self.external && self.agui.is_none()
+        self.key.is_none() && !self.cc && !self.external && self.agui.is_none() && self.openai.is_none()
     }
 }
 
@@ -156,6 +160,21 @@ pub fn run_turn(cfg: Config, turn_text: String, outside: Option<crate::agui::Tur
             // An outside agent answers on its own time; there is no turn to run here.
             _ if cfg.external => Ok(Stats { model: "external agent".into(), ..Default::default() }),
             _ if cfg.agui.is_some() => crate::agui::run(cfg.agui.as_ref().unwrap(), &outside.unwrap_or_default(), &send),
+            _ if cfg.openai.is_some() => {
+                let added = || {
+                    if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Err(crate::agent::STOPPED.to_string());
+                    }
+                    let said: Vec<String> = queue.lock().unwrap_or_else(|e| e.into_inner()).drain(..).collect();
+                    if said.is_empty() {
+                        return Ok(None);
+                    }
+                    let text = format!("<added>\n{}\n</added>", said.join("\n"));
+                    send(Msg::Added(said));
+                    Ok(Some(text))
+                };
+                crate::openai::run(cfg.openai.as_ref().unwrap(), &turn_text, &images, &added, &send)
+            }
             _ if cfg.cc => crate::cc::run(&cfg.effort, &turn_text, &images, &stop, &send),
             Some(key) => {
                 // 답하는 중에 사용자가 더 적은 말: 도구를 쓰는 사이사이에 꺼내서 모델에게 전한다.

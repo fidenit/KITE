@@ -49,6 +49,11 @@ pub fn ask(key: &str, model: &str, system: &str, user: &str, max_tokens: u32) ->
     if key == crate::cc::VIA {
         return crate::cc::ask(system, user);
     }
+    // Only an OpenAI-compatible provider is set up: ask its model.
+    if key == crate::openai::VIA {
+        let p = crate::openai::settings().ok_or("no provider is set up")?;
+        return crate::openai::ask(&p, system, user, max_tokens);
+    }
     let body = json!({ "model": model, "max_tokens": max_tokens, "system": system, "messages": [{ "role": "user", "content": user }] }).to_string();
     let mut resp = http()
         .post(URL)
@@ -88,6 +93,60 @@ fn body(cfg: &Config, role: &Role, messages: &[Value], fallbacks: bool, drop_blo
         v["fallbacks"] = "default".into();
     }
     v.to_string()
+}
+
+/// What a tool gave back.
+pub enum ToolOut {
+    /// (text, is it an error)
+    Text(String, bool),
+    Picture(crate::pics::Pic),
+}
+
+/// Run one tool the model asked for. Tools that live on the screen side (the board, browser cards, the unseen
+/// browser) are asked of the screen thread through `send`. Shared by every engine that runs KITE's own loop.
+pub fn use_tool(role: &Role, name: &str, input: &Value, send: &dyn Fn(Msg)) -> ToolOut {
+    let text = |t: (String, bool)| ToolOut::Text(t.0, t.1);
+    if let Some(raw) = input["__invalid_json"].as_str() {
+        return ToolOut::Text(json!({ "INVALID_JSON": raw }).to_string(), true);
+    }
+    if name == "screen" {
+        // The screen thread edits the screen. Rejected lines come back with their reasons.
+        let (rtx, rrx) = std::sync::mpsc::channel();
+        send(Msg::Screen { ops: input["ops"].as_str().unwrap_or("").to_string(), reply: rtx });
+        return ToolOut::Text(rrx.recv_timeout(Duration::from_secs(15)).unwrap_or_else(|_| "applied".into()), false);
+    }
+    send(Msg::Activity(crate::tools::describe(name, input)));
+    match name {
+        // Opens a picture file and shows it to the model as a picture.
+        "view_image" => match crate::pics::from_file(input["path"].as_str().unwrap_or("")) {
+            Ok(pic) => ToolOut::Picture(pic),
+            Err(e) => ToolOut::Text(e, true),
+        },
+        "board_read" => {
+            let (rtx, rrx) = std::sync::mpsc::channel();
+            send(Msg::Board { topic: input["topic"].as_str().unwrap_or("").trim().to_string(), reply: rtx });
+            text(match rrx.recv_timeout(Duration::from_secs(15)) {
+                Ok(Ok(out)) => (out, false),
+                Ok(Err(e)) => (format!("error: {e}"), true),
+                Err(_) => ("error: the board could not be read".into(), true),
+            })
+        }
+        "browser_text" | "browser_eval" => {
+            let script = if name == "browser_text" {
+                "document.title + '\\n' + location.href + '\\n\\n' + (document.body ? document.body.innerText : '').slice(0, 30000)".to_string()
+            } else {
+                input["script"].as_str().unwrap_or("").to_string()
+            };
+            let (rtx, rrx) = std::sync::mpsc::channel();
+            send(Msg::Browser { card: input["card"].as_str().unwrap_or("").to_string(), script, reply: rtx });
+            text(match rrx.recv_timeout(Duration::from_secs(20)) {
+                Ok(out) => (out.clone(), out.starts_with("오류:")),
+                Err(_) => ("error: the page did not answer within 20 seconds".into(), true),
+            })
+        }
+        n if n.starts_with("page_") => text(crate::page::call(name, input)),
+        _ => text((role.tool)(name, input).unwrap_or_else(|| crate::tools::execute(name, input))),
+    }
 }
 
 /// 한 번의 응답에서 받은 것.
@@ -134,56 +193,16 @@ pub fn run_as(cfg: &Config, key: &str, role: &Role, turn_text: &str, images: &[(
                 for b in reply.blocks.iter().filter(|b| b["type"] == "tool_use") {
                     let name = b["name"].as_str().unwrap_or("");
                     let input = &b["input"];
-                    let (out, is_error) = if let Some(raw) = input["__invalid_json"].as_str() {
-                        (json!({ "INVALID_JSON": raw }).to_string(), true)
-                    } else if name == "screen" {
-                        // 화면은 화면 쪽 스레드가 고친다. 거부된 명령이 있으면 그 이유를 받아 온다.
-                        let (rtx, rrx) = std::sync::mpsc::channel();
-                        send(Msg::Screen { ops: input["ops"].as_str().unwrap_or("").to_string(), reply: rtx });
-                        (rrx.recv_timeout(Duration::from_secs(15)).unwrap_or_else(|_| "applied".into()), false)
-                    } else if name == "view_image" {
-                        // 그림 파일을 열어 그림 그대로 모델에게 보여 준다.
-                        send(Msg::Activity(crate::tools::describe(name, input)));
-                        match crate::pics::from_file(input["path"].as_str().unwrap_or("")) {
-                            Ok(pic) => {
-                                results.push(json!({ "type": "tool_result", "tool_use_id": b["id"], "content": [
-                                    { "type": "image", "source": { "type": "base64", "media_type": pic.media, "data": pic.b64() } },
-                                    { "type": "text", "text": format!("{}x{} 픽셀로 보냄", pic.w, pic.h) },
-                                ] }));
-                                continue;
-                            }
-                            Err(e) => (e, true),
+                    let (out, is_error) = match use_tool(role, name, input, send) {
+                        ToolOut::Text(out, is_error) => (out, is_error),
+                        // A picture goes back as a picture.
+                        ToolOut::Picture(pic) => {
+                            results.push(json!({ "type": "tool_result", "tool_use_id": b["id"], "content": [
+                                { "type": "image", "source": { "type": "base64", "media_type": pic.media, "data": pic.b64() } },
+                                { "type": "text", "text": format!("sent at {}x{} pixels", pic.w, pic.h) },
+                            ] }));
+                            continue;
                         }
-                    } else if name == "board_read" {
-                        send(Msg::Activity(crate::tools::describe(name, input)));
-                        let (rtx, rrx) = std::sync::mpsc::channel();
-                        send(Msg::Board { topic: input["topic"].as_str().unwrap_or("").trim().to_string(), reply: rtx });
-                        match rrx.recv_timeout(Duration::from_secs(15)) {
-                            Ok(Ok(out)) => (out, false),
-                            Ok(Err(e)) => (format!("error: {e}"), true),
-                            Err(_) => ("error: the board could not be read".into(), true),
-                        }
-                    } else if name.starts_with("page_") {
-                        // 보이지 않는 브라우저도 화면 쪽 스레드에 있다.
-                        send(Msg::Activity(crate::tools::describe(name, input)));
-                        crate::page::call(name, input)
-                    } else if name == "browser_text" || name == "browser_eval" {
-                        // 브라우저 화면도 화면 쪽 스레드에 있다. 스크립트를 넘기고 결과를 기다린다.
-                        send(Msg::Activity(crate::tools::describe(name, input)));
-                        let script = if name == "browser_text" {
-                            "document.title + '\\n' + location.href + '\\n\\n' + (document.body ? document.body.innerText : '').slice(0, 30000)".to_string()
-                        } else {
-                            input["script"].as_str().unwrap_or("").to_string()
-                        };
-                        let (rtx, rrx) = std::sync::mpsc::channel();
-                        send(Msg::Browser { card: input["card"].as_str().unwrap_or("").to_string(), script, reply: rtx });
-                        match rrx.recv_timeout(Duration::from_secs(20)) {
-                            Ok(out) => (out.clone(), out.starts_with("오류:")),
-                            Err(_) => ("오류: 20초 안에 페이지에서 답이 오지 않음".into(), true),
-                        }
-                    } else {
-                        send(Msg::Activity(crate::tools::describe(name, input)));
-                        (role.tool)(name, input).unwrap_or_else(|| crate::tools::execute(name, input))
                     };
                     results.push(json!({ "type": "tool_result", "tool_use_id": b["id"], "content": out, "is_error": is_error }));
                 }
