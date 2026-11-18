@@ -78,7 +78,10 @@ fn body(cfg: &Config, role: &Role, messages: &[Value], fallbacks: bool, drop_blo
         "stream": true,
         "output_config": { "effort": cfg.effort },
         // 지시문은 매 턴 같으므로 여기까지를 캐시한다.
-        "system": [{ "type": "text", "text": role.system, "cache_control": { "type": "ephemeral" } }],
+        // The instructions and the tools are the same on every turn and are most of what is sent (about 25,000
+        // tokens). They are cached for an hour: on a board, the next turn often comes more than five minutes later,
+        // and with the default five-minute cache every such turn would pay for all of it again.
+        "system": [{ "type": "text", "text": role.system, "cache_control": if LONG_CACHE.load(std::sync::atomic::Ordering::Relaxed) { json!({ "type": "ephemeral", "ttl": "1h" }) } else { json!({ "type": "ephemeral" }) } }],
         "tools": role.tools,
         // 한 턴 안에서 도구를 여러 번 쓰는 동안 쌓이는 내용도 캐시한다.
         "cache_control": { "type": "ephemeral" },
@@ -154,6 +157,9 @@ pub fn use_tool(role: &Role, name: &str, input: &Value, send: &dyn Fn(Msg)) -> T
         }
     }
 }
+
+/// Ask for the one-hour cache on the instructions. Turned off for the rest of the run if the API refuses it.
+static LONG_CACHE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// 한 번의 응답에서 받은 것.
 struct Reply {
@@ -260,7 +266,7 @@ fn stream_once(
         req.send(body(cfg, role, messages, fallbacks, drop_block)).map_err(|e| format!("{}: {e}", crate::sys::tr("연결 실패", "Could not connect")))
     };
     let mut resp = post(*fallbacks, *drop_block)?;
-    for _ in 0..2 {
+    for _ in 0..3 {
         if resp.status().as_u16() != 400 {
             break;
         }
@@ -271,6 +277,10 @@ fn stream_once(
             crate::sys::log("api.log", &format!("생각 블록 거부, 버리고 다시 보냄: {}", api_error(400, &text)));
             let _ = std::fs::write(crate::sys::data_dir().join("bind-error.json"), json!({ "error": text, "messages": messages }).to_string());
             *drop_block = true;
+        } else if LONG_CACHE.load(std::sync::atomic::Ordering::Relaxed) && (text.contains("ttl") || text.contains("cache_control")) {
+            // The one-hour cache was not accepted here: go back to the default and send again.
+            crate::sys::log("api.log", &format!("one-hour cache refused, using the default: {}", api_error(400, &text)));
+            LONG_CACHE.store(false, std::sync::atomic::Ordering::Relaxed);
         } else if *fallbacks && text.contains("fallback") {
             *fallbacks = false; // 이 계정·모델에서 fallbacks 가 안 받아들여지면 빼고 다시 보낸다
         } else {
@@ -299,9 +309,10 @@ fn stream_once(
         match v["type"].as_str().unwrap_or("") {
             "message_start" => {
                 let u = &v["message"]["usage"];
-                stats.cached_tokens = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
-                stats.input_tokens =
-                    u["input_tokens"].as_u64().unwrap_or(0) + stats.cached_tokens + u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                // A turn that uses tools sends everything again for each step: add every request up.
+                let read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                stats.cached_tokens += read;
+                stats.input_tokens += u["input_tokens"].as_u64().unwrap_or(0) + read + u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
                 if let Some(m) = v["message"]["model"].as_str() {
                     stats.model = m.to_string();
                 }
