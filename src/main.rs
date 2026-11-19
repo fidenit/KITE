@@ -69,6 +69,15 @@ fn days_of(date: &str) -> i64 {
     365 * y + y / 4 - y / 100 + y / 400 + (153 * (m - 3) + 2) / 5 + d
 }
 
+/// A key in what the user typed (Claude, OpenAI, Gemini, ...): a word that starts the way a known service's keys
+/// start and is long enough to be one.
+fn pasted_key(text: &str) -> Option<String> {
+    text.split_whitespace()
+        .map(|w| w.trim_matches(|c: char| "\"'`,.;:()[]<>".contains(c)))
+        .find(|w| w.len() >= 20 && crate::openai::recognize(w).is_some())
+        .map(str::to_string)
+}
+
 fn recent_count() -> usize {
     // 확인용: APERIT_RECENT=2 처럼 줄이면 오래된 대화를 찾아오는 동작을 짧은 대화로도 시험할 수 있다.
     crate::sys::var("RECENT").ok().and_then(|v| v.parse().ok()).unwrap_or(RECENT)
@@ -1369,6 +1378,15 @@ impl App {
     fn send(&mut self, ctx: &egui::Context) {
         self.standby = false; // 글로 쓰거나 다시 부르면 기다리기를 끝낸다
         let input = self.input.trim().to_string();
+        // A key pasted into the conversation is not sent anywhere: it goes into the Settings window, to be saved
+        // there (encrypted), and nothing of the message reaches the model or the conversation log.
+        if let Some(key) = pasted_key(&input) {
+            self.input.clear();
+            self.open_settings(Some("api"));
+            self.key_input = key;
+            self.error = Some(sys::tr("키는 대화로 보내지 않았습니다. 설정 창에 넣어 두었으니 확인하고 저장을 누르세요.", "The key was not sent anywhere. It is in the Settings window: check it and press Save.").into());
+            return;
+        }
         if self.busy {
             // 답하는 중에도 받는다. 줄을 세워 두면 하던 일 사이에 전해지거나, 끝나자마자 이어서 처리된다.
             if !input.is_empty() {
@@ -1812,6 +1830,11 @@ impl App {
                         self.cur_input += &format!("\n+ {s}");
                     }
                     self.hush = false; // 덧붙인 말에 대한 답은 다시 소리로 듣는다
+                }
+                llm::Msg::Settings { change, value, reply } => {
+                    let said = self.settings_request(&change, &value);
+                    sys::log("settings.log", &format!("{change} {value} -> {said}"));
+                    let _ = reply.send(said);
                 }
                 llm::Msg::Board { topic, reply } => {
                     // The whole board when no topic is named, else that topic in full.
@@ -2938,6 +2961,23 @@ fn save_bmp(path: &str, img: &egui::ColorImage) {
         out.resize(start + row, 0);
     }
     let _ = std::fs::write(path, out);
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::pasted_key;
+
+    #[test]
+    fn a_key_in_the_conversation_is_caught() {
+        let k = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        assert_eq!(pasted_key(k).as_deref(), Some(k));
+        assert_eq!(pasted_key(&format!("my key is {k}, use it")).as_deref(), Some(k));
+        assert!(pasted_key("AIzaSyBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB").is_some());
+        // Ordinary talk, and words that only start like a key, are not keys.
+        assert_eq!(pasted_key("plan the workshop for next week"), None);
+        assert_eq!(pasted_key("the sk-ant- prefix"), None);
+        assert_eq!(pasted_key("sk-short"), None);
+    }
 }
 
 #[cfg(test)]

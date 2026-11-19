@@ -206,6 +206,13 @@ pub fn use_tool(role: &Role, name: &str, input: &Value, send: &dyn Fn(Msg)) -> T
                 Err(_) => ("error: the board could not be read".into(), true),
             })
         }
+        "settings" => {
+            let (rtx, rrx) = std::sync::mpsc::channel();
+            send(Msg::Settings { change: input["change"].as_str().unwrap_or("").to_string(), value: input["value"].as_str().unwrap_or("").to_string(), reply: rtx });
+            let out = rrx.recv_timeout(Duration::from_secs(10)).unwrap_or_else(|_| "error: the screen did not answer".into());
+            let failed = out.starts_with("error");
+            ToolOut::Text(out, failed)
+        }
         "browser_text" | "browser_eval" => {
             let script = if name == "browser_text" {
                 "document.title + '\\n' + location.href + '\\n\\n' + (document.body ? document.body.innerText : '').slice(0, 30000)".to_string()

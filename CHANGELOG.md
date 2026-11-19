@@ -24,6 +24,7 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 ### The Settings window on one screen
 
 - **Keys** is now **Settings**, at the bottom left.
+- Settings can be asked for in the conversation. The language, light or dark, the model and a lower daily limit change at once; the engine, what may be done without asking, and a higher or no limit open **Settings** with the change made, for you to save. A key pasted into the conversation is not sent anywhere: **Settings** opens with it filled in.
 - One wide window with everything in view: the ways in on the left, what the chosen one needs in the middle, spending and the optional keys on the right. Nothing to unfold, nothing to scroll, and the window keeps its size when you switch.
 - **Model**: Opus 5.5 (the default), Sonnet 5.5 or Haiku 5.5 for the Claude API engine, each with what a turn roughly costs. Saved in `model.txt`; `APERIT_MODEL` still wins.
 - **Spending**: what your Claude API key has spent today and this month, estimated from the tokens each response reports (`data/usage.json`). An optional **daily limit** (`spend-limit.txt`, `APERIT_DAILY_LIMIT`): at the limit no new turn, worker or background request starts that day, and the app says why.

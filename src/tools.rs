@@ -197,6 +197,15 @@ pub fn definitions(worker: bool) -> Value {
         ),
         tool("job_list", "See the state of the delegated jobs.", json!({}), &[]),
         tool(
+            "settings",
+            "Change a setting of APERIT when the user asks you to. `language`, `theme`, `model`, and a daily limit lower than the one set, change at once. `engine` (who answers, or which saved server), `permission` (what may be done without asking), a higher or no daily limit, and keys are never changed by you: the Settings window opens with the change already made, and it takes effect when the user presses Save there; say so in `say`. Keys and passwords never go through the conversation: if the user wants to give one, use `open` and tell them to paste it in the window.",
+            json!({
+                "change": { "type": "string", "enum": ["language", "theme", "model", "daily_limit", "engine", "permission", "open"] },
+                "value": { "type": "string", "description": "language: ko or en. theme: light or dark. model: opus, sonnet or haiku. daily_limit: dollars a day, or none. engine: api, claude-code, local, agent, or the name of a saved server. permission: ask, edits or all. open: nothing" },
+            }),
+            &["change"],
+        ),
+        tool(
             "contact_find",
             "Find a person and their phone numbers in the Contacts app by (part of) a name (Mac).",
             json!({ "query": { "type": "string", "description": "A name, or part of one" } }),
@@ -254,7 +263,7 @@ pub fn definitions(worker: bool) -> Value {
     let keep = |name: &str| {
         if worker {
             // They may read the board and the other jobs (job_list, job_result), not start or steer them.
-            !(name == "screen" || name == "route_find" || name.starts_with("browser_") || name.starts_with("page_") || matches!(name, "job_start" | "job_tell" | "job_stop") || name == "message_send" || name == "phone_call")
+            !(name == "screen" || name == "settings" || name == "route_find" || name.starts_with("browser_") || name.starts_with("page_") || matches!(name, "job_start" | "job_tell" | "job_stop") || name == "message_send" || name == "phone_call")
         } else {
             name != "progress"
         }
@@ -293,6 +302,7 @@ pub fn describe(name: &str, input: &Value) -> String {
         "find_text" => format!("글자 찾기: {}", short("text")),
         "job_start" => format!("작업 맡기기: {}", short("title")),
         "job_list" => "맡긴 작업 확인".to_string(),
+        "settings" => format!("설정: {} {}", short("change"), short("value")),
         "board_read" => format!("보드 읽기: {}", short("topic")),
         "job_tell" => format!("작업자에게 전하기: {}", short("id")),
         "job_stop" => format!("작업 멈추기: {}", short("id")),

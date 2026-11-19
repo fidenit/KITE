@@ -42,6 +42,9 @@ pub enum Msg {
     Approve { key: u64, title: String, detail: String, reply: Sender<String> },
     /// The question is no longer needed (the turn was stopped): take it off the board.
     ApproveCancel { key: u64 },
+    /// The model asks to change a setting because the user asked it to (the `settings` tool). What happened
+    /// comes back through `reply`.
+    Settings { change: String, value: String, reply: Sender<String> },
     Done(Stats),
     Error(String),
 }

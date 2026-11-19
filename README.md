@@ -93,7 +93,7 @@ Linux: the build stops at the GTK and WebKit libraries (`glib-sys`) on a machine
 
 ### Pick an engine
 
-The engine is who answers. Open **Settings** at the bottom left and do one of two things: press **Sign in with Claude** (it uses the Claude Code on this computer; no key), or **paste a key**. APERIT tells from the key whose it is (Claude, OpenAI, Gemini, OpenRouter, Groq, xAI) and picks the model. Everything is on one screen: on the left the ways in (also a local model or another address, a server over SSH, an agent of your own), in the middle what the chosen way needs, on the right what you have spent.
+The engine is who answers. Open **Settings** at the bottom left and do one of two things: press **Sign in with Claude** (it uses the Claude Code on this computer; no key), or **paste a key**. APERIT tells from the key whose it is (Claude, OpenAI, Gemini, OpenRouter, Groq, xAI) and picks the model. You can also just ask ("switch to Korean", "use Sonnet"); a change of engine or permission opens the window for you to save, and a key pasted into the conversation goes into the window instead of to the model. Everything is on one screen: on the left the ways in (also a local model or another address, a server over SSH, an agent of your own), in the middle what the chosen way needs, on the right what you have spent.
 
 | Engine | You need | What you get |
 |---|---|---|

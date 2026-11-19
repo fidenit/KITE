@@ -19,9 +19,9 @@ use serde_json::{Value, json};
 use crate::llm::Msg;
 
 /// Tools offered to APERIT's own Claude Code engine. File, command and web tools are Claude Code's own.
-const INSIDE: [&str; 18] = [
+const INSIDE: [&str; 19] = [
     "route_find", "place_find", "note_search", "note_read", "note_write", "note_append", "board_read", "browser_text", "browser_eval", "job_start", "job_list", "job_tell", "job_stop",
-    "job_result", "page_open", "page_read", "page_run", "page_show",
+    "job_result", "page_open", "page_read", "page_run", "page_show", "settings",
 ];
 
 /// The guide an outside agent reads to learn the board language and how to compose a good board.
@@ -341,6 +341,19 @@ fn inside_call(name: &str, input: &Value) -> (String, bool) {
             match rx.recv_timeout(Duration::from_secs(15)) {
                 Ok(Ok(text)) => (text, false),
                 Ok(Err(e)) => (format!("error: {e}"), true),
+                Err(_) => ("error: the screen did not answer".into(), true),
+            }
+        }
+        "settings" => {
+            let (tx, rx) = std::sync::mpsc::channel();
+            if !crate::jobs::to_ui(Msg::Settings { change: input["change"].as_str().unwrap_or("").to_string(), value: input["value"].as_str().unwrap_or("").to_string(), reply: tx }) {
+                return ("error: the screen is not available".into(), true);
+            }
+            match rx.recv_timeout(Duration::from_secs(10)) {
+                Ok(text) => {
+                    let failed = text.starts_with("error");
+                    (text, failed)
+                }
                 Err(_) => ("error: the screen did not answer".into(), true),
             }
         }

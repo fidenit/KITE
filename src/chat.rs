@@ -705,6 +705,134 @@ impl App {
         }
     }
 
+    /// Open the Settings window filled with what is saved, on the given way in (api, claude-code, ssh, openai,
+    /// local, agent) when one is named. Whatever is set after this shows in the window until it is saved or closed.
+    pub fn open_settings(&mut self, engine: Option<&str>) {
+        let current = self.current_engine();
+        self.load_key_window(current);
+        match engine {
+            Some("local") => {
+                self.engine_pick = Some("openai".into());
+                self.openai_by_hand = true;
+            }
+            Some(e) => self.engine_pick = Some(e.to_string()),
+            None => {}
+        }
+        self.key_popup = true;
+    }
+
+    /// A change of settings the model asked for because the user asked it to (the `settings` tool). Harmless ones
+    /// are made at once. Who answers, what may be done without asking, a higher or no spending limit, and keys are
+    /// the user's to decide: the Settings window opens with the change made, and nothing changes until they save.
+    pub fn settings_request(&mut self, change: &str, value: &str) -> String {
+        let v = value.trim().to_lowercase();
+        let in_window = "The Settings window is open with this change made. It takes effect when the user presses Save there; tell them so.";
+        match change.trim() {
+            "language" => {
+                let english = match v.as_str() {
+                    "en" | "english" | "영어" => true,
+                    "ko" | "korean" | "한국어" => false,
+                    _ => return format!("error: language is ko or en (got '{value}')"),
+                };
+                crate::sys::set_english(english, true);
+                format!("The language is now {}. Write from now on in that language.", if english { "English" } else { "Korean" })
+            }
+            "theme" => {
+                let light = match v.as_str() {
+                    "light" | "밝게" | "밝은" => true,
+                    "dark" | "어둡게" | "어두운" => false,
+                    _ => return format!("error: theme is light or dark (got '{value}')"),
+                };
+                crate::set_theme(&self.wake.clone(), light, true);
+                self.titlebar_done = false;
+                format!("The screen is now {}.", if light { "light" } else { "dark" })
+            }
+            "model" => {
+                let id = match v.as_str() {
+                    "opus" | "claude-opus-5-5" => "claude-opus-5-5",
+                    "sonnet" | "claude-sonnet-5-5" => "claude-sonnet-5-5",
+                    "haiku" | "claude-haiku-5-5" => "claude-haiku-5-5",
+                    _ => return format!("error: model is opus, sonnet or haiku (got '{value}')"),
+                };
+                let file = sys::base_dir().join("model.txt");
+                let _ = if id == llm::DEFAULT_MODEL { std::fs::remove_file(&file) } else { std::fs::write(&file, id) };
+                self.cfg = llm::Config::load();
+                let other = self.cfg.cc || self.cfg.openai.is_some() || self.cfg.external || self.cfg.agui.is_some();
+                format!(
+                    "The Claude API engine uses {id} from the next request.{}",
+                    if other { " The engine in use now is not the Claude API, so this matters only when the user switches to it." } else { "" }
+                )
+            }
+            "daily_limit" => {
+                let new = if matches!(v.as_str(), "" | "none" | "off" | "no" | "0" | "없음") {
+                    None
+                } else {
+                    match v.trim_start_matches('$').replace(',', "").parse::<f64>() {
+                        Ok(n) if n > 0.0 => Some(n),
+                        _ => return format!("error: daily_limit is a number of dollars, or none (got '{value}')"),
+                    }
+                };
+                let now = crate::usage::limit();
+                match new {
+                    // Lower, or a first limit: only spends less.
+                    Some(n) if now.map(|c| n <= c).unwrap_or(true) => {
+                        crate::usage::set_limit(Some(n));
+                        format!("The daily limit is now ${n:.2}.")
+                    }
+                    // Higher, or none: the user's call.
+                    _ => {
+                        self.open_settings(None);
+                        self.limit_input = new.map(|n| format!("{n}")).unwrap_or_default();
+                        in_window.into()
+                    }
+                }
+            }
+            "engine" => {
+                let pick = match v.as_str() {
+                    "api" | "claude api" | "key" => "api",
+                    "claude-code" | "claude code" | "local claude code" => "claude-code",
+                    "local" | "openai" | "other" => "local",
+                    "agent" | "mcp" | "ag-ui" => "agent",
+                    "ssh" | "server" => "ssh",
+                    _ => match crate::ssh::find(value.trim()) {
+                        Some(s) => {
+                            self.open_settings(Some("ssh"));
+                            self.fill_ssh(Some(s));
+                            return in_window.into();
+                        }
+                        None => {
+                            let servers: Vec<String> = crate::ssh::servers().0.iter().map(|s| s.id()).collect();
+                            return format!("error: engine is api, claude-code, local, agent, or a saved server ({})", if servers.is_empty() { "none saved".into() } else { servers.join(", ") });
+                        }
+                    },
+                };
+                self.open_settings(Some(pick));
+                in_window.into()
+            }
+            "permission" => {
+                let level = match v.as_str() {
+                    "ask" | "default" => "ask",
+                    "edits" | "acceptedits" => "edits",
+                    "all" | "everything" | "bypasspermissions" => "all",
+                    _ => return format!("error: permission is ask, edits or all (got '{value}')"),
+                };
+                self.open_settings(None);
+                // Claude Code has its own names for the same three.
+                if matches!(self.current_engine(), "claude-code" | "ssh") {
+                    self.perm_pick = Some(match level { "ask" => "default", "edits" => "acceptEdits", _ => "bypassPermissions" }.into());
+                } else {
+                    self.level_pick = Some(level.into());
+                }
+                in_window.into()
+            }
+            "open" | "" => {
+                self.open_settings(None);
+                "The Settings window is open.".into()
+            }
+            other => format!("error: unknown change '{other}'"),
+        }
+    }
+
     /// The engine saved now: api, claude-code, ssh, openai or agent.
     fn current_engine(&self) -> &'static str {
         if self.cfg.ssh {

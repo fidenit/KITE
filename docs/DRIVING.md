@@ -127,6 +127,8 @@ What to expect: the instructions APERIT gives its model were written and tuned f
 
 Keys are kept encrypted inside the app: on Windows for this user account on this computer only (`data/keys.bin`), on macOS in the login keychain. No key is written to a plain file. A key file left by an earlier version (`key.txt`, `jev.txt`, `eleven.txt`, the key line of `openai.txt`, the header lines of `agui.txt`) is moved in on the next start and removed.
 
+Settings can also be asked for in the conversation ("switch to Korean", "make it light", "use Sonnet", "limit me to $5 a day"). The AI has a `settings` tool: the language, light or dark, the model, and a daily limit lower than the one set change at once; who answers (engine or server), what may be done without asking, and a higher or no limit open the **Settings** window with the change made, and change only when you press **Save**. Keys never go through the conversation: a key pasted into it (Claude, OpenAI, Gemini, ...) is not sent; the **Settings** window opens with it filled in. What was asked is in `data/settings.log`.
+
 Everything can be set in the **Settings** window. The same choices as files next to the program, or as environment variables (which win):
 
 | File | Variable | Meaning |

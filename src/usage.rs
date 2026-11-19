@@ -85,7 +85,8 @@ pub fn totals() -> (f64, f64) {
     let days = load();
     let (today, _) = crate::sys::now_local();
     let month = today.get(..7).unwrap_or("").to_string();
-    (days.get(&today).copied().unwrap_or(0.0), days.iter().filter(|(d, _)| d.starts_with(&month)).map(|(_, v)| v).sum())
+    // A fold from 0.0: an empty f64 sum is -0.0, which prints as "$-0.00".
+    (days.get(&today).copied().unwrap_or(0.0), days.iter().filter(|(d, _)| d.starts_with(&month)).fold(0.0, |sum, (_, v)| sum + v))
 }
 
 /// The daily limit, in dollars, when one is set.
