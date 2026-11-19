@@ -225,8 +225,12 @@ class DetachedTest {
 
             // 치우기
             sh(home, c.clean(id))
-            assertEquals(emptyList<String>(), File(home, ".kite/runs").list()!!.toList())
-            assertEquals(listOf("APERITEXIT none"), sh(home, c.follow(id, 0)).lines)
+            // 끝난 코드만 남는다: 이미 끝나 치워진 실행에 다시 붙으면 `gone` (`none` 이 아니다 — 같은 말이 다시 돌지 않게)
+            assertEquals(listOf("$id.exit"), File(home, ".kite/runs").list()!!.toList())
+            assertEquals(listOf("APERITEXIT gone"), sh(home, c.follow(id, 0)).lines)
+            assertEquals(listOf("APERITEXIT none"), sh(home, c.follow("20261120-999999-zzzz", 0)).lines)
+            sh(home, c.stop(id)) // 치운 실행에 멈춤은 아무 일도 없다
+            assertEquals("0", File(home, ".kite/runs/$id.exit").readText().trim())
         } finally {
             home.deleteRecursively()
         }
@@ -335,5 +339,11 @@ class DetachedTest {
         } finally {
             home.deleteRecursively()
         }
+    }
+
+    @Test
+    fun goneIsClassifiedAndStartedOnlyWhenNothingRemains() {
+        assertEquals(FollowLine.Exit("gone"), Detached.classify("APERITEXIT gone"))
+        assertEquals(FollowLine.Exit("none"), Detached.classify("APERITEXIT none"))
     }
 }

@@ -122,7 +122,7 @@ class LiveTest {
         println(Lang.serialize(a.board))
         assertTrue("카드가 만들어져야 한다", a.board.cards.isNotEmpty())
         assertTrue("say 나 tell 이 있어야 한다", a.board.say.isNotEmpty() || a.tells.isNotEmpty())
-        assertEquals("끝난 실행은 서버에서 치워져야 한다", "", ssh.run("ls ~/.kite/runs/${cc.runId}.* 2>/dev/null || true").trim())
+        assertEquals("끝난 실행은 서버에서 치워져야 한다 (끝난 코드 파일만 남는다)", "", ssh.run("ls ~/.kite/runs/${cc.runId}.* 2>/dev/null | grep -v '[.]exit$' || true").trim())
 
         // 멈춤: 서버의 Claude Code 가 끝나야 한다
         var stop = false
@@ -141,7 +141,7 @@ class LiveTest {
         val left = ssh.run("pgrep -f '[a]ppend-system-prompt-file.*[.]kite/system.txt' || true").trim()
         assertEquals("남은 프로세스가 없어야 한다", "", left)
         assertEquals("멈춘 실행의 프로세스가 없어야 한다", "", leftOf(Rig(ssh, cc, os, home), cc.runId!!))
-        assertEquals("멈춘 실행도 서버에서 치워져야 한다", "", ssh.run("ls ~/.kite/runs/${cc.runId}.* 2>/dev/null || true").trim())
+        assertEquals("멈춘 실행도 서버에서 치워져야 한다", "", ssh.run("ls ~/.kite/runs/${cc.runId}.* 2>/dev/null | grep -v '[.]exit$' || true").trim())
         ssh.close()
     }
 
@@ -200,7 +200,7 @@ class LiveTest {
         r.cc.clean(id)
         val gone = runCatching { r.cc.resume(id, null, 0, { false }) {} }.exceptionOrNull()
         println("(d) 치운 번호: ${gone?.message}")
-        assertTrue(gone?.message.orEmpty(), gone?.message.orEmpty().contains("기록이 없습니다"))
+        assertEquals("치운 실행은 다시 돌지 않고 gone 으로 알린다", com.fidenit.kite.engine.GONE, gone?.message)
         val made = runCatching { r.cc.resume("20260101-000000-dead", null, 0, { false }) {} }.exceptionOrNull()
         println("(d) 없는 번호: ${made?.message}")
         assertTrue(made?.message.orEmpty(), made?.message.orEmpty().contains("기록이 없습니다"))

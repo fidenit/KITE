@@ -101,4 +101,51 @@ class JournalTest {
         assertFalse(Journal.writeAtomic(File(d, "no/such/dir/x.txt"), "a"))
         d.deleteRecursively()
     }
+
+    @Test
+    fun recentLengthIsKeptAndOldRecordsReadAsUnknown() {
+        val d = dir()
+        val j = Journal(d)
+        j.writeInflight(Inflight("ssh", "a-1", "t", "s", "b", 1L, 7))
+        assertEquals(7, j.readInflight()!!.recentLen)
+        File(d, "inflight.json").writeText("{\"engine\":\"ssh\",\"id\":\"a-1\",\"turnText\":\"t\",\"shown\":\"s\",\"board\":\"b\",\"startedAt\":1}")
+        assertEquals(-1, j.readInflight()!!.recentLen)
+        d.deleteRecursively()
+    }
+
+    /** 치울 목록은 합친다: 덮어쓰지 않고, 서버에서 치운 것이 확인된 것만 뺀다. */
+    @Test
+    fun theCleanListIsMergedNeverOverwritten() {
+        val d = dir()
+        val j = Journal(d)
+        j.addToClean(listOf("a-1", "b-2"))
+        j.addToClean(listOf("b-2", "c-3", "bad id"))
+        assertEquals(listOf("a-1", "b-2", "c-3"), j.readToClean())
+        j.removeToClean(listOf("b-2", "zzz"))
+        assertEquals(listOf("a-1", "c-3"), j.readToClean())
+        assertEquals(listOf("a-1", "c-3"), Journal(d).readToClean())
+        d.deleteRecursively()
+    }
+
+    /** 쓰기는 일꾼 하나가 하고, 같은 파일은 마지막 것만 남고, 파일 사이의 순서는 지켜진다. flush 뒤에는 디스크에 있다. */
+    @Test
+    fun asyncWritesAreCoalescedOrderedAndFlushed() {
+        val d = dir()
+        val j = Journal(d, async = true)
+        j.writeInflight(Inflight("ssh", "a-1", "t", "s", "b", 1L))
+        for (i in 1..200) j.writeQueue(listOf("말 $i"), emptyList())
+        j.writeFile("board.txt", "보드")
+        j.clearInflight() // 보드를 쓴 다음에 기록을 지운다
+        j.writeCurrent("t2")
+        j.flush()
+        assertEquals(listOf("말 200"), Journal(d).readQueue().pending)
+        assertEquals("보드", File(d, "board.txt").readText())
+        assertNull(Journal(d).readInflight())
+        assertEquals("t2", Journal(d).readCurrent())
+        assertFalse(File(d, "queue.json.tmp").exists())
+        // 읽기는 밀린 쓰기를 먼저 기다린다
+        j.writeQueue(listOf("새 말"), emptyList())
+        assertEquals(listOf("새 말"), j.readQueue().pending)
+        d.deleteRecursively()
+    }
 }

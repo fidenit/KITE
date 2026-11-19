@@ -174,7 +174,7 @@ class DetachedCommands(private val cfg: EngineConfig) {
             """
             f="${'$'}HOME/.kite/runs/$id"; n=$n; last=-1; beat=0; ver=0
             ours() { if [ -r "/proc/${'$'}1/cmdline" ]; then a=${'$'}(tr '\0' ' ' < "/proc/${'$'}1/cmdline" 2>/dev/null); else a=${'$'}(ps -ww -p "${'$'}1" -o args= 2>/dev/null); fi; case "${'$'}a" in *"runs/$id."*) return 0;; esac; return 1; }
-            [ -f "${'$'}f.in" ] || { echo "APERITEXIT none"; exit 0; }
+            [ -f "${'$'}f.in" ] || { if [ -s "${'$'}f.exit" ]; then echo "APERITEXIT gone"; else echo "APERITEXIT none"; fi; exit 0; }
             if [ ! -s "${'$'}f.pid" ] && [ ! -s "${'$'}f.exit" ]; then echo "APERITEXIT none"; exit 0; fi
             while :; do
               fin=0; [ -s "${'$'}f.exit" ] && fin=1
@@ -227,9 +227,12 @@ class DetachedCommands(private val cfg: EngineConfig) {
         )
     }
 
-    /** 치우기: 그 실행의 파일 다섯을 지운다. */
+    /**
+     * 치우기: `.in .out .err .pid` 를 지운다. `.exit` 는 남긴다 (이레 뒤 정리에서 지워진다): 이미 끝나 치워진 실행에 다시 붙으면
+     * `APERITEXIT gone` 이 나오고, 같은 말이 처음부터 다시 돌지 않는다.
+     */
     fun clean(id: String): String = serverShell(
-        "rm -f ${path(id, "in")} ${path(id, "out")} ${path(id, "err")} ${path(id, "exit")} ${path(id, "pid")}",
+        "rm -f ${path(id, "in")} ${path(id, "out")} ${path(id, "err")} ${path(id, "pid")}",
     )
 
     /** 표준 오류 끝부분 (치우기 전에 읽는다). */

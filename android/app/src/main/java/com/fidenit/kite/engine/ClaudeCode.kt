@@ -183,6 +183,9 @@ class EngineConfig(
 
 const val STOPPED = "__stopped"
 
+/** 이 실행은 이미 끝나 서버에서 치워졌다 (끝난 코드만 남았다): 새로 시작하지 않는다. 앱은 저장해 둔 보드를 그대로 쓴다. */
+const val GONE = "__gone"
+
 /** 앱 쪽이 이 엔진을 버렸다 (화면이 닫혀 뷰모델이 없어졌다): 서버의 실행은 그대로 두고 따라 읽기만 그만둔다. */
 const val ABANDONED = "__abandoned"
 
@@ -268,6 +271,16 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
     }
 
     /**
+     * 앱이 보드를 저장하고 기록을 지운 뒤에 부른다 (그 전에 치우면 앱이 그 사이에 꺼졌을 때 턴이 다시 돌 수 있다).
+     * 5초 안에 못 하면 치울 목록에 둔다. 치웠으면 참.
+     */
+    fun cleanRun(id: String): Boolean {
+        val ok = bounded(5000) { ssh.run(cmds.clean(id)) }
+        if (ok) leftover.remove(id) else addToClean(id)
+        return ok
+    }
+
+    /**
      * 한 턴을 서버에서 떼어 돌린다: 올리기 → 시작 → 따라 읽기. 연결이 끊겨도 서버의 Claude Code 는 계속 돌고,
      * 이 함수는 다시 붙어 받은 줄 다음부터 이어 읽는다. 글자는 나오는 대로 `send` 로 보낸다.
      * `stopped` 가 참이 되면 서버의 Claude Code 와 그 자식을 끝내고 [STOPPED] 를 던진다.
@@ -330,7 +343,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
 
     /** 서버에 멈춤을 보낸다. 닿지 않으면 10초까지 다시 붙어 보고 포기한다. 보냈으면 참. */
     private fun stopRun(id: String): Boolean {
-        val end = System.currentTimeMillis() + 10_000
+        val end = System.currentTimeMillis() + 8_000
         while (true) {
             val left = end - System.currentTimeMillis()
             if (left < 1500) return false
@@ -407,7 +420,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
                     if (stopped()) {
                         if (phase == Phase.FOLLOW) {
                             // 서버에 멈춤을 보낸다. 닿지 않으면 바로 연결을 끊어 읽기를 풀어 준다.
-                            if (stopOnce()) waitDone(2500) // 서버가 끝났다고 알려 주면 읽기가 저절로 끝난다
+                            if (stopOnce()) waitDone(1500) // 서버가 끝났다고 알려 주면 읽기가 저절로 끝난다
                         } else {
                             // 올리기·시작 중에는 여기서 서버에 멈춤을 보내지 않는다 (시작과 겹치면 놓친다): 막힌 단계만 풀어 주고 본 흐름이 멈춘다.
                             waitDone(500)
@@ -476,6 +489,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
                         // 끝났다는 줄 없이 읽기가 끝났다 = 연결이 끊겼다
                         throw java.io.IOException(if (idleCut) "idle" else "closed")
                     }
+                    if (code == "gone") throw Exception(GONE)
                     if (code == "none") {
                         if (!restarted && turnText != null && received == 0 && !stopped()) {
                             restarted = true
