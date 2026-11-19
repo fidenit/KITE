@@ -118,7 +118,7 @@ One codebase, two apps (`productFlavors` in `android/app/build.gradle.kts`).
 cd android
 ./gradlew assembleFreeDebug                                    # app/build/outputs/apk/free/debug/app-free-debug.apk
 ./gradlew -PkiteRelayUrl=https://<relay> assembleProDebug      # without it: http://10.0.2.2:8787, this PC seen from the emulator
-./gradlew testFreeDebugUnitTest                                # board, language, conformance cases, API engine against a mock server
+./gradlew testFreeDebugUnitTest                                # board, language, conformance cases, API engine and Jev/ElevenLabs clients against fake servers, KiteViewModel start-up and restore (Robolectric, on the JVM)
 ```
 
 JDK 17 or newer (the `jbr` of Android Studio) and the Android SDK (`ANDROID_HOME`, or `sdk.dir=` in `android/local.properties`).
@@ -128,6 +128,7 @@ JDK 17 or newer (the `jbr` of Android Studio) and the Android SDK (`ANDROID_HOME
 | `core/Board.kt`, `core/Lang.kt` | The protocol in Kotlin, ported from `protocol/rust` |
 | `engine/Api.kt` | The Claude API engine (official Java SDK): streaming, the tool loop, a one-hour prompt cache, usage and an estimated cost per request |
 | `engine/PhoneTools.kt` | Tools that run on the phone: `screen`, the memory vault (`note_*`). Web search and fetch are Anthropic's server tools |
+| `engine/Jev.kt`, `engine/Decide.kt` | The decision model: a client for TypeSafe's Jev (`src/jev.rs`) and the small decisions before and after a turn (`src/decide.rs`), with the same question texts and thresholds |
 | `engine/Ssh.kt`, `engine/ClaudeCode.kt`, `engine/Detached.kt` | The Claude Code engine on a server (SSH, `claude -p`): each turn runs detached on the server and the app follows it (below) |
 | `Journal.kt` | Files that survive the app being killed: the running turn, queued words and card-tap notices, runs still to clean up on the server, the current topic |
 | `voice/` | Microphone and speaker, ElevenLabs transcription and speech, stop and wait words |
@@ -140,7 +141,15 @@ JDK 17 or newer (the `jbr` of Android Studio) and the Android SDK (`ANDROID_HOME
 - The instructions are the desktop's `src/prompt.md`, copied at build time, with additions for the phone (`PHONE_NOTE`, `NOTE`).
 - Core memory is `vault/기억/핵심.md`; with no separate keeper model, the model writes to it with `note_append`.
 - Only debug builds may connect without TLS to `10.0.2.2` and `localhost`.
-- Not there yet: the decision model (Jev), routes, workers, browser tools, messages and calls, recall of old conversations, attached pictures, the Play subscription for Pro, and the bindings for outside agents (MCP, AG-UI, the socket).
+- **The decision model (Jev).** With a TypeSafe Jev key in Settings (kept like the other keys, in the encrypted store; empty means none) a turn gets two small decisions, both from one call to `https://api.typesafe.ai/v1/systemone` that must finish within 2.5 s or is dropped (no key, no answer, a status other than 200 or an odd body all mean "no decision": the turn goes on as without Jev and nothing is shown for it).
+  - Before the turn (not for a turn that is picked up again after a restart, and only when something was typed or said): the kind of request is put in the status line, the topic Jev picks is shown at once, and for a request that asks for work, a screen change or a memory search a short acknowledgement is given first ("네, 바로 해볼게요." and so on; it is read aloud when talking by voice, otherwise shown as the line under the cards) and the turn text gets `<already_said>` so the model does not repeat it. Effort and kind need a confidence of at least 0.5, the topic 0.6.
+  - After the turn (in the background): for the cards the model touched (at most 20) Jev says whether each is clear from the screen alone and how important it is. A card that is clear with a probability below 0.4 is named once in `<review>` in the next turn text; the importance (score / 2, three levels) puts the more important cards first, after the cards that wait for an answer.
+  - Every call is logged to `jev.log` in the app's files (time, app version, the first 40 characters of the input, the values chosen, the time taken; never the key).
+- ElevenLabs: if reading aloud with the ElevenLabs voice fails (wrong key, limit, no connection) the sentence is read with the phone's own voice and the error is shown once; transcription stops at once on HTTP 401, 403 or 429 and shows the first error text; the microphone permission is not asked while the ElevenLabs key is empty (the key error is shown instead).
+- Not there yet (Jev): reading memory notes in advance (the notes of the SSH engine live on the server), the tidy turn that merges overlapping topics (the phone has no idle turn), recall of old conversations (`<recall>`; the phone keeps no turn history), the check whether a heard sentence is meant for the assistant while it waits (that is Claude Haiku, not Jev), and a per-turn effort from Jev (the effort in Settings is used).
+- Not there yet (voice): audio focus (a call or music at the same time), whether the phone listens to its own speaker, the screen freezing for up to 0.5 s when the microphone is stopped. These only show on a real device.
+- Not tested: the Jev and ElevenLabs paths were run against fake servers only (never api.typesafe.ai or api.elevenlabs.io), and no real phone or emulator was used for any of this; the ViewModel is run on the JVM with Robolectric.
+- Not there yet: routes, workers, browser tools, messages and calls, attached pictures, the Play subscription for Pro, and the bindings for outside agents (MCP, AG-UI, the socket).
 
 ## The relay
 

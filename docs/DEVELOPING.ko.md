@@ -90,7 +90,7 @@ add k2 o1 강릉 | 멀지만 시설이 좋음
 cd android
 ./gradlew assembleFreeDebug                                   # app/build/outputs/apk/free/debug/app-free-debug.apk
 ./gradlew -PkiteRelayUrl=https://<중계 서버> assembleProDebug # 주소를 안 주면 에뮬레이터에서 이 PC 의 http://10.0.2.2:8787
-./gradlew testFreeDebugUnitTest                               # 보드·수정 언어·API 엔진(가짜 서버로 한 턴)·서버 명령 줄
+./gradlew testFreeDebugUnitTest                               # 보드·수정 언어·API 엔진(가짜 서버로 한 턴)·서버 명령 줄·Jev/ElevenLabs 호출(가짜 서버)·앱 시작과 복원(Robolectric, JVM)
 ```
 
 JDK 17 이상(Android Studio 의 jbr)과 안드로이드 SDK 가 필요하다. `ANDROID_HOME` 이나 `android/local.properties` 의 `sdk.dir=`로 SDK 자리를 알려 준다.
@@ -100,6 +100,7 @@ JDK 17 이상(Android Studio 의 jbr)과 안드로이드 SDK 가 필요하다. `
 | `core/Board.kt`, `core/Lang.kt` | 보드와 화면 수정 언어. `src/core.rs`, `src/lang.rs` 를 옮긴 것 |
 | `engine/Api.kt` | Claude API 엔진 (공식 Java SDK). 스트리밍, 도구 반복, 1시간 지시문 캐시, 요청마다 사용량과 어림 비용을 더한다. 흐름은 `src/agent.rs` 와 같다 |
 | `engine/PhoneTools.kt` | 폰에서 도는 도구: `screen`, 기억 보관함(`note_*`, 앱 저장소의 `vault/`). 웹 검색·읽기는 Anthropic 서버 쪽 도구 |
+| `engine/Jev.kt`, `engine/Decide.kt` | 판단 모델: TypeSafe Jev 호출(`src/jev.rs`)과 턴 앞뒤의 작은 결정(`src/decide.rs`). 질문 글과 기준 숫자는 데스크톱과 같다 |
 | `engine/Ssh.kt`, `engine/ClaudeCode.kt`, `engine/Detached.kt` | 내 서버의 Claude Code 엔진 (SSH, `claude -p`). 한 턴은 서버에서 떼어 돌고 앱은 그것을 따라 읽는다 (아래) |
 | `Journal.kt` | 앱이 꺼져도 남는 파일: 돌고 있는 턴, 줄 세워 둔 말·카드 조작 알림, 서버에서 아직 치우지 못한 실행, 지금 보는 주제 |
 | `voice/` | 마이크·스피커, ElevenLabs 받아쓰기와 말하기, 멈춤·기다림 낱말 |
@@ -112,7 +113,15 @@ JDK 17 이상(Android Studio 의 jbr)과 안드로이드 SDK 가 필요하다. `
 - 지시문은 데스크톱과 같은 `src/prompt.md` 를 빌드할 때 복사해 쓰고, 폰에 맞는 덧붙임(`PHONE_NOTE`, `NOTE`)을 뒤에 붙인다. 부품 표는 `core/Board.kt` 의 `PARTS` 에서 만든다: `src/core.rs` 의 `PARTS` 를 고치면 여기도 같이 고친다 (`partsMatchDesktop` 시험이 어긋남을 잡는다).
 - API 엔진의 핵심 기억은 `vault/기억/핵심.md` 이고, 데스크톱처럼 따로 정리해 주는 모델이 없어서 모델이 `note_append` 로 직접 적는다.
 - 개발용 빌드만 `10.0.2.2`·`localhost` 로의 암호화 없는 연결을 허용한다 (`src/debug/res/xml/network_security_config.xml`).
-- 아직 없는 것: 판단 모델(Jev) 연동, 경로 찾기, 작업자, 브라우저 도구, 문자·전화, 옛 대화 찾기(`<recall>`), 붙인 사진, Pro 의 Play 구독 연결.
+- **판단 모델(Jev).** 설정에 TypeSafe Jev 키를 넣으면(다른 키처럼 암호화 저장소에 둔다. 비어 있으면 없는 것) 한 턴에 작은 결정 두 가지가 붙는다. 둘 다 `https://api.typesafe.ai/v1/systemone` 한 번 호출이고, 2.5초 안에 끝나지 않으면 버린다 (키 없음, 답 없음, 200이 아닌 상태, 모양이 다른 본문은 모두 "결정 없음": 턴은 Jev 없이 돌던 그대로 가고 화면에는 아무것도 띄우지 않는다).
+  - 턴 앞(앱이 다시 켜져 다시 붙는 턴에는 하지 않고, 입력이 있을 때만): 요청의 종류를 상태 줄에, Jev가 고른 주제를 바로 보여 주고, 일·화면 수정·기억 찾기를 시킨 말이면 받았다는 한마디를 먼저 건넨다("네, 바로 해볼게요." 등. 말로 대화 중이면 소리 내어 읽고, 아니면 카드 아래 한마디로 보인다). 턴 글에는 `<already_said>` 가 붙어 모델이 같은 인사를 되풀이하지 않는다. 깊이·종류는 확신 0.5 이상, 주제는 0.6 이상일 때만 따른다.
+  - 턴 뒤(뒤에서): 모델이 건드린 카드(최대 20장)마다 화면만 보고 분명한지, 얼마나 중요한지를 묻는다. 분명할 확률이 0.4보다 낮은 카드는 다음 턴 글의 `<review>` 에 한 번 실리고, 중요도(점수/2, 세 단계)는 답을 기다리는 카드 다음에 중요한 카드가 먼저 오도록 순서에 쓰인다.
+  - 부를 때마다 앱 파일의 `jev.log` 에 남는다 (시각, 앱 버전, 입력 앞 40자, 고른 값, 걸린 시간. 키는 적지 않는다).
+- ElevenLabs: 목소리로 읽다가 실패하면(키 틀림, 한도, 끊김) 그 문장은 폰의 기본 음성으로 읽고 오류는 한 번만 띄운다. 받아쓰기는 HTTP 401·403·429면 바로 끝내고 첫 오류 글을 보여 준다. ElevenLabs 키가 비어 있으면 마이크 권한을 묻지 않고 키 오류를 띄운다.
+- 아직 없는 것(Jev): 기억 노트 미리 읽기(SSH 엔진의 노트는 서버에 있다), 겹치는 주제를 합치는 정리 턴(폰에는 쉬는 동안 도는 턴이 없다), 옛 대화 찾기(`<recall>`, 폰에는 턴 기록이 없다), 기다리는 중 들린 말이 비서를 부르는 말인지 판단(Jev가 아니라 Claude Haiku), Jev가 정하는 턴별 생각의 깊이(설정의 깊이를 쓴다).
+- 아직 없는 것(음성): 오디오 포커스(전화·음악과 겹칠 때), 폰이 스피커 소리를 자기 말로 듣는지, 마이크를 끝낼 때 화면이 0.5초까지 멈추는 것. 실제 기기에서만 드러난다.
+- 확인하지 못한 것: Jev와 ElevenLabs 경로는 가짜 서버로만 돌려 봤다(api.typesafe.ai·api.elevenlabs.io 에는 부르지 않았다). 실제 폰도 에뮬레이터도 쓰지 않았고, 뷰모델은 JVM 에서 Robolectric 으로 돌렸다.
+- 아직 없는 것: 경로 찾기, 작업자, 브라우저 도구, 문자·전화, 붙인 사진, Pro 의 Play 구독 연결.
 
 ## 중계 서버
 
