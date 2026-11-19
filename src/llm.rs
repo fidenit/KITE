@@ -103,7 +103,7 @@ impl Config {
             agui,
             openai,
             key,
-            // The model chosen in the Keys window (model.txt); APERIT_MODEL wins. Opus is the default.
+            // The model chosen in the Settings window (model.txt); APERIT_MODEL wins. Opus is the default.
             model: env("MODEL")
                 .or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("model.txt")).ok().map(|s| s.trim().to_string()).filter(|s| s.starts_with("claude-")))
                 .unwrap_or_else(|| DEFAULT_MODEL.into()),

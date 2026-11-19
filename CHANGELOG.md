@@ -19,10 +19,11 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 
 ### Claude Code on a server
 
-- A new engine: **Keys** → **A server (SSH)** hands each turn to the Claude Code on a server, with the server's files and commands. APERIT's memory, route maps and workers stay on your computer and reach it through the SSH connection. A key, the ssh agent or a password (kept encrypted) signs in; **Test the connection** checks it first.
+- A new engine: **Settings** → **A server (SSH)** hands each turn to the Claude Code on a server, with the server's files and commands. APERIT's memory, route maps and workers stay on your computer and reach it through the SSH connection. A key, the ssh agent or a password (kept encrypted) signs in; **Test the connection** checks it first.
 
-### The Keys window on one screen
+### The Settings window on one screen
 
+- **Keys** is now **Settings**, at the bottom left.
 - One wide window with everything in view: the ways in on the left, what the chosen one needs in the middle, spending and the optional keys on the right. Nothing to unfold, nothing to scroll, and the window keeps its size when you switch.
 - **Model**: Opus 5.5 (the default), Sonnet 5.5 or Haiku 5.5 for the Claude API engine, each with what a turn roughly costs. Saved in `model.txt`; `APERIT_MODEL` still wins.
 - **Spending**: what your Claude API key has spent today and this month, estimated from the tokens each response reports (`data/usage.json`). An optional **daily limit** (`spend-limit.txt`, `APERIT_DAILY_LIMIT`): at the limit no new turn, worker or background request starts that day, and the app says why.
@@ -40,7 +41,7 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 
 ### Several servers, and workers wherever their files are
 
-- **Keys** → **A server (SSH)** keeps several servers, each with a name (chips above the fields; the green dot marks the one turns go to). `ssh.txt` holds them under `[name]` lines; the one-server file of before still reads. Passwords are kept per server.
+- **Settings** → **A server (SSH)** keeps several servers, each with a name (chips above the fields; the green dot marks the one turns go to). `ssh.txt` holds them under `[name]` lines; the one-server file of before still reads. Passwords are kept per server.
 - A worker can be sent to any of them, or to the Claude Code on this computer, or to the Claude API: the AI sees where it can send work (`<places>`) and names one with `on`. Workers in different places run at the same time.
 
 ### Long jobs keep going
@@ -56,7 +57,7 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 ### Keys stay inside the app
 
 - Keys are no longer written to plain files. On Windows they are encrypted for your user account on this computer (`data/keys.bin`); on macOS they go to the login keychain. Key files from earlier versions are moved in on the first start and removed.
-- The ElevenLabs key can be entered in the **Keys** window; before, it needed a file.
+- The ElevenLabs key can be entered in the **Settings** window; before, it needed a file.
 
 ### The protocol stands apart
 
@@ -68,20 +69,20 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 
 ### Use your own agent
 
-- **MCP.** KITE can be an MCP server for an agent outside it (Claude Code, Cursor, your own): tools `screen`, `board_read`, `events`, `guide`. Choose **Your own agent** under **Keys**; the window gives you the command to connect.
-- **AG-UI.** KITE can be the client of an AG-UI agent (LangGraph, CrewAI, Pydantic AI and others): give the agent's address under **Keys**.
+- **MCP.** KITE can be an MCP server for an agent outside it (Claude Code, Cursor, your own): tools `screen`, `board_read`, `events`, `guide`. Choose **Your own agent** under **Settings**; the window gives you the command to connect.
+- **AG-UI.** KITE can be the client of an AG-UI agent (LangGraph, CrewAI, Pydantic AI and others): give the agent's address under **Settings**.
 - **The protocol socket answers back.** `read` returns the board, `watch` pushes what the user does and types. Verdicts are `ok`, `ok clipped ...`, `err <code> <message>`.
 - With an outside agent, what you type and pick goes to it as events, and KITE runs no model.
-- An outside agent cannot create web, image and file cards unless you allow it under **Keys**: those cards load what the agent chose.
+- An outside agent cannot create web, image and file cards unless you allow it under **Settings**: those cards load what the agent chose.
 
 ### Use another model
 
-- **Keys** is two things now: **Sign in with Claude** (one press when the Claude Code on this computer is signed in; otherwise it opens the sign-in), or **paste a key**. KITE tells whose key it is (Claude, OpenAI, Gemini, OpenRouter, Groq, xAI), sets the address, and picks the newest general model from the service's own list. Nothing else to fill in.
-- A local model or another address is under **Keys** → **Local or other model**: any OpenAI-compatible endpoint (Ollama, LM Studio, ...). KITE's memory, workers and tools stay; web search is with Claude only.
+- **Settings** is two things now: **Sign in with Claude** (one press when the Claude Code on this computer is signed in; otherwise it opens the sign-in), or **paste a key**. KITE tells whose key it is (Claude, OpenAI, Gemini, OpenRouter, Groq, xAI), sets the address, and picks the newest general model from the service's own list. Nothing else to fill in.
+- A local model or another address is under **Settings** → **Local or other model**: any OpenAI-compatible endpoint (Ollama, LM Studio, ...). KITE's memory, workers and tools stay; web search is with Claude only.
 
 ### You decide what runs
 
-- KITE is the interface; what an engine may do on your computer is a setting, not a trait of the app. With the Claude API engine and with another model, KITE now **asks first**: before a command runs or a file is created or changed, a card comes to "my turn" (Allow once / Allow all like this / Don't). Under **Keys** you can allow file edits, or everything. To keep the behaviour of 0.3.0, choose **Everything**.
+- KITE is the interface; what an engine may do on your computer is a setting, not a trait of the app. With the Claude API engine and with another model, KITE now **asks first**: before a command runs or a file is created or changed, a card comes to "my turn" (Allow once / Allow all like this / Don't). Under **Settings** you can allow file edits, or everything. To keep the behaviour of 0.3.0, choose **Everything**.
 - Reading and searching are not asked about. The Claude Code engine keeps following your Claude Code settings.
 
 ### English first
@@ -102,7 +103,7 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 
 ### Good to know
 
-- Checked with real runs on a real window: the Claude API engine (Haiku and Opus), the Claude Code engine, the question card before a command, Claude Code connected as an outside agent over MCP, the OpenAI-compatible engine against a real server, and saving from the Keys window.
+- Checked with real runs on a real window: the Claude API engine (Haiku and Opus), the Claude Code engine, the question card before a command, Claude Code connected as an outside agent over MCP, the OpenAI-compatible engine against a real server, and saving from the Settings window.
 - AG-UI was checked with an agent built on Pydantic AI and a real model: the guide reached it as context, and its text drew the board. It answered in text; it did not call the `screen` tool in that run.
 - Not tried: a model that is not Claude (so recognising a key and picking a model for the other services is untested against them), macOS, and the new cards on an Android device.
 - Text sent back to a model about a rejected line changed from Korean to the coded English form. A board saved by 0.3.0 loads unchanged.

@@ -99,25 +99,25 @@ struct App {
     eleven_input: String,
     /// 키를 넣는 창이 떠 있는가 (키 없이 처음 켰을 때 뜬다)
     key_popup: bool,
-    /// 키 창에서 고른 엔진 (true = Claude Code). 창을 열 때 지금 설정으로 맞춘다.
+    /// 설정 창에서 고른 엔진 (true = Claude Code). 창을 열 때 지금 설정으로 맞춘다.
     /// The engine chosen in the keys window, not saved yet: api, claude-code, openai or agent.
     engine_pick: Option<String>,
     /// What is typed in the keys window for another model (base address, model, key) and for an AG-UI agent (its address).
     openai_input: [String; 3],
     agui_input: String,
-    /// The Keys window, a server over SSH: host, user, port, key file, folder, password, name.
+    /// The Settings window, a server over SSH: host, user, port, key file, folder, password, name.
     ssh_input: [String; 7],
     /// The saved server shown in those fields (None: a new one).
     ssh_pick: Option<String>,
     /// What the last connection test said (empty: none yet; "…": running).
     ssh_test: std::sync::Arc<std::sync::Mutex<String>>,
-    /// The Keys window: the model chosen, the daily limit typed, and whether the window was filled from what is saved.
+    /// The Settings window: the model chosen, the daily limit typed, and whether the window was filled from what is saved.
     model_pick: Option<String>,
     limit_input: String,
     keys_loaded: bool,
-    /// The Keys window: is the OpenAI-compatible service one typed by hand ("Local or other model") rather than known from its key?
+    /// The Settings window: is the OpenAI-compatible service one typed by hand ("Local or other model") rather than known from its key?
     openai_by_hand: bool,
-    /// 키 창에서 고른 Claude Code 권한 방식
+    /// 설정 창에서 고른 Claude Code 권한 방식
     perm_pick: Option<String>,
     /// 화면 조작에 AI 가 반응할 예정 시각
     react_at: Option<std::time::Instant>,
@@ -876,7 +876,7 @@ impl App {
                 _ => false,
             };
             if refused {
-                return Err(patet::Reject::new("not-allowed", "this board does not let outside agents create web, image or doc cards; the user can allow it under Keys"));
+                return Err(patet::Reject::new("not-allowed", "this board does not let outside agents create web, image or doc cards; the user can allow it under Settings"));
             }
         }
         self.board.apply(op, by)?;

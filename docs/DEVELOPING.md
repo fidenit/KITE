@@ -40,7 +40,7 @@ Run from the repository, the program keeps its files (keys, `data/`, `vault/`) i
 
 ## Keys and settings
 
-Text files next to the program. The **Keys** window writes the first ones for you.
+Text files next to the program. The **Settings** window writes the first ones for you.
 
 | File | Holds | Without it |
 |---|---|---|

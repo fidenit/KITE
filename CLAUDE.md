@@ -6,7 +6,7 @@ APERIT is an AI workspace with no chat window: the user talks, the AI builds and
 
 | | |
 |---|---|
-| `src/` | The desktop app (Rust, egui): `main.rs` the app, `ui.rs` drawing, `chat.rs` the left panel and the Keys window, `agent.rs` / `openai.rs` / `cc.rs` / `agui.rs` / `mcp.rs` the engines, `prompt.md` / `worker.md` the instructions for the model (English; `*.ko.md` are older Korean ones) |
+| `src/` | The desktop app (Rust, egui): `main.rs` the app, `ui.rs` drawing, `chat.rs` the left panel and the Settings window, `agent.rs` / `openai.rs` / `cc.rs` / `agui.rs` / `mcp.rs` the engines, `prompt.md` / `worker.md` the instructions for the model (English; `*.ko.md` are older Korean ones) |
 | `protocol/` | **A copy of the PATET repository. Do not edit it here.** Change PATET, then run `python tools/vendor_patet.py` with the PATET repository beside this one |
 | `android/` | The Android app (Kotlin, Compose). `core/Board.kt` and `core/Lang.kt` are the Kotlin implementation of PATET, and are copied into PATET's `kotlin/` |
 | `docs/` | `DRIVING.md` (engines, settings), `DEVELOPING.md`, `COSTS.md` (tokens), `NEXT.md` (history and what is next, in Korean) |
@@ -15,7 +15,7 @@ APERIT is an AI workspace with no chat window: the user talks, the AI builds and
 
 Windows: Rust `stable-x86_64-pc-windows-gnu` and WinLibs MinGW on the PATH. `.\run.ps1` builds and starts; `.\run.ps1 test`; `.\run.ps1 pack` makes `portable\APERIT` (and moves an old `portable\KITE` there whole). macOS: `./run.sh`, same words. Never run `pack` just to test: it replaces the owner's installed copy.
 
-`.\run.ps1 dist` makes `dist\APERIT-Setup-<version>.exe` (Inno Setup 6, per-user, no admin rights; `installer\aperit.iss`) and `dist\APERIT-<version>-windows-x64.zip`. `build.rs` puts the icon and version details into the exe (windres) and links WebView2Loader.dll to load late (dlltool, gendef, delayimp from MinGW); `src/loader.rs` writes the DLL it carries to `data\` when none is beside the exe, so `aperit.exe` alone runs. Engines live in `src/llm.rs`; Claude Code on a server is `src/ssh.rs` + the remote branch of `src/cc.rs`. The Keys window is `key_window` in `src/chat.rs`; spending, prices and the daily limit are `src/usage.rs`; retries on 429/529/5xx are `agent::with_retries` (used by `openai.rs` too).
+`.\run.ps1 dist` makes `dist\APERIT-Setup-<version>.exe` (Inno Setup 6, per-user, no admin rights; `installer\aperit.iss`) and `dist\APERIT-<version>-windows-x64.zip`. `build.rs` puts the icon and version details into the exe (windres) and links WebView2Loader.dll to load late (dlltool, gendef, delayimp from MinGW); `src/loader.rs` writes the DLL it carries to `data\` when none is beside the exe, so `aperit.exe` alone runs. Engines live in `src/llm.rs`; Claude Code on a server is `src/ssh.rs` + the remote branch of `src/cc.rs`. The Settings window is `key_window` in `src/chat.rs`; spending, prices and the daily limit are `src/usage.rs`; retries on 429/529/5xx are `agent::with_retries` (used by `openai.rs` too).
 
 ```sh
 cargo test --workspace
@@ -23,7 +23,7 @@ node protocol/js/test.mjs
 cd android && ./gradlew testFreeDebugUnitTest      # needs JAVA_HOME (Android Studio's jbr) and ANDROID_HOME
 ```
 
-Not in the repository, and needed to run with a real model: a key pasted in the Keys window, or "Sign in with Claude" there. Keys are never in a plain file: `src/secret.rs` keeps them encrypted (Windows DPAPI in `data/keys.bin`, the keychain on macOS). For a test copy in another folder on this PC, copy `data/keys.bin` along: it opens for the same user on the same computer. `data/` (the board) and `vault/` (memory notes) are local too.
+Not in the repository, and needed to run with a real model: a key pasted in the Settings window, or "Sign in with Claude" there. Keys are never in a plain file: `src/secret.rs` keeps them encrypted (Windows DPAPI in `data/keys.bin`, the keychain on macOS). For a test copy in another folder on this PC, copy `data/keys.bin` along: it opens for the same user on the same computer. `data/` (the board) and `vault/` (memory notes) are local too.
 
 ## Testing a window without touching the owner's desktop
 

@@ -11,7 +11,7 @@ Measured on 2026-11-18. Numbers are tokens. The methods are at the end, so they 
 
 ## What you see in the app
 
-The **Keys** window shows what your Claude API key has spent today and this month, and takes a daily limit. The amounts are estimates: each response reports its tokens (new input, cache read, cache written, output), and APERIT multiplies them by the published prices of that model (`src/usage.rs`), counting the main turns, the workers and the small background requests alike. Claude Code bills on its own and is not counted; nor are other services, whose prices APERIT does not know. At the limit no new request starts that day; one already running finishes its step.
+The **Settings** window shows what your Claude API key has spent today and this month, and takes a daily limit. The amounts are estimates: each response reports its tokens (new input, cache read, cache written, output), and APERIT multiplies them by the published prices of that model (`src/usage.rs`), counting the main turns, the workers and the small background requests alike. Claude Code bills on its own and is not counted; nor are other services, whose prices APERIT does not know. At the limit no new request starts that day; one already running finishes its step.
 
 The model buttons show what an ordinary turn roughly costs: 4,000 new input tokens, 26,000 read from the cache, 1,000 out. With the prices of 2026-11 that is about 4¢ on Opus 5.5, 2¢ on Sonnet 5.5 and under 1¢ on Haiku 5.5. A turn that misses the cache, or uses many tools, costs several times that (below). Opus stays the default; choosing a cheaper model is the user's call.
 

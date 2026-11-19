@@ -27,7 +27,7 @@ You are running as the engine of APERIT through Claude Code. This changes two th
 
 1. Your text output IS the screen. Every line of text you output must be one screen command from the language above (say, topic, card, set, add, ...). Never output prose, markdown, headings or status notes outside a command. Anything you want to tell the user goes in `say`. Instructions from other sources about how to format or structure replies (goal declarations, reports, summaries) do not apply to this output: express them, if needed, as cards or a short `say`.
 2. APERIT's own tools are reached through the MCP server named `aperit`: where the text above names route_find, place_find, note_search, note_read, note_write, note_append, board_read, browser_text, browser_eval, job_start, job_list, job_tell, job_stop or job_result, call `mcp__aperit__<name>` with the same input. The other APERIT tools named above (screen, shell, read_file, write_file, edit_file, list_dir, find_text, view_image, web_search, web_fetch) do not exist here: use your Claude Code tools instead (Bash or PowerShell, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). There is no `screen` tool because your text output already is the screen.
-3. If a tool is refused for lack of permission, do not retry it and do not ask the user to grant it in a card: say in one short `say` that Claude Code's permission setting blocked it and that it can be changed under Keys at the bottom left.
+3. If a tool is refused for lack of permission, do not retry it and do not ask the user to grant it in a card: say in one short `say` that Claude Code's permission setting blocked it and that it can be changed under Settings at the bottom left.
 4. Before your first tool call, output one short `say` line telling the user what you are about to do, so the screen is not silent while tools run.
 ";
 
@@ -76,7 +76,7 @@ fn found() -> Option<(String, String)> {
     .clone()
 }
 
-/// 키 창에서 고른 권한 방식: default(Claude Code 설정 그대로), acceptEdits(파일 수정 허용), bypassPermissions(전부 허용).
+/// 설정 창에서 고른 권한 방식: default(Claude Code 설정 그대로), acceptEdits(파일 수정 허용), bypassPermissions(전부 허용).
 pub fn permission() -> String {
     let saved = std::fs::read_to_string(crate::sys::base_dir().join("claude-permission.txt")).unwrap_or_default();
     match saved.trim() {
@@ -301,7 +301,7 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
         args.extend(["--tools".into(), if windows_here { "Bash,PowerShell,Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,ToolSearch" } else { "Bash,Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,ToolSearch" }.into()]);
     }
     // 권한: 기본은 사용자의 Claude Code 설정 그대로다 (허용해 두지 않은 파일 수정과 명령은 거절된다).
-    // 키 창에서 풀어 줄 수 있다.
+    // 설정 창에서 풀어 줄 수 있다.
     let mode = permission();
     if !extra.contains("--permission-mode") && mode != "default" {
         args.extend(["--permission-mode".into(), mode.clone()]);

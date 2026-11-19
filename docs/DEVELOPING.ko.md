@@ -28,7 +28,7 @@ Windows 빌드에는 Rust(`stable-x86_64-pc-windows-gnu`)와 MinGW(WinLibs)가 �
 
 ## 키
 
-키(Claude, Jev, ElevenLabs, 다른 모델, AG-UI 헤더)는 **키** 창에서 넣는다. 평문 파일로 남지 않고 앱 안에 암호화해서 보관한다: Windows는 이 PC의 이 계정에서만 열리게(`data/keys.bin`), macOS는 로그인 키체인에. 옛 버전이 남긴 `key.txt`·`jev.txt`·`eleven.txt`·`openai.txt`의 키 줄·`agui.txt`의 헤더 줄은 다음 실행 때 옮겨 담고 지운다(`src/secret.rs`).
+키(Claude, Jev, ElevenLabs, 다른 모델, AG-UI 헤더)는 **설정** 창에서 넣는다. 평문 파일로 남지 않고 앱 안에 암호화해서 보관한다: Windows는 이 PC의 이 계정에서만 열리게(`data/keys.bin`), macOS는 로그인 키체인에. 옛 버전이 남긴 `key.txt`·`jev.txt`·`eleven.txt`·`openai.txt`의 키 줄·`agui.txt`의 헤더 줄은 다음 실행 때 옮겨 담고 지운다(`src/secret.rs`).
 
 | 파일 | 내용 | 없으면 |
 |---|---|---|

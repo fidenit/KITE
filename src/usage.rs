@@ -113,9 +113,9 @@ pub fn over_limit() -> Option<String> {
     let (today, _) = totals();
     (today >= limit).then(|| {
         if crate::sys::english() {
-            format!("Today's spending limit (${limit:.2}) is reached: about ${today:.2} so far. Raise or clear it under Keys.")
+            format!("Today's spending limit (${limit:.2}) is reached: about ${today:.2} so far. Raise or clear it under Settings.")
         } else {
-            format!("오늘의 사용 한도(${limit:.2})에 닿았습니다. 지금까지 약 ${today:.2}. 키 창에서 올리거나 없앨 수 있습니다.")
+            format!("오늘의 사용 한도(${limit:.2})에 닿았습니다. 지금까지 약 ${today:.2}. 설정 창에서 올리거나 없앨 수 있습니다.")
         }
     })
 }

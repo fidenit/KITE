@@ -201,11 +201,11 @@ impl App {
         {
             crate::sys::set_english(!crate::sys::english(), true);
         }
-        // 그 옆: 키 (Claude 키를 바꾸거나 Jev 키를 나중에 넣는다)
+        // 그 옆: 설정 (엔진, 모델, 키, 사용 한도)
         let k = Rect::from_min_size(egui::pos2(l.right() + 4.0, r.rect.top()), egui::vec2(54.0, 20.0));
         let kr = ui.interact(k, ui.scope_id().with("keys"), egui::Sense::click());
-        p.text(k.left_center(), egui::Align2::LEFT_CENTER, crate::sys::tr("키", "Keys"), ui::font(11.0), if kr.hovered() { ui::TEXT() } else { ui::FAINT() });
-        if kr.on_hover_text(crate::sys::tr("API 키를 넣거나 바꿉니다", "Enter or change API keys")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        p.text(k.left_center(), egui::Align2::LEFT_CENTER, crate::sys::tr("설정", "Settings"), ui::font(11.0), if kr.hovered() { ui::TEXT() } else { ui::FAINT() });
+        if kr.on_hover_text(crate::sys::tr("엔진, 모델, 키, 사용 한도를 정합니다", "Engine, model, keys and spending limit")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             self.key_popup = true;
         }
         if self.cfg.demo() {
@@ -554,7 +554,7 @@ impl App {
             }
             // 대화: 마이크로 말해서 시킨다. 말이 끝나면 알아서 보내고, 답을 다 들으면 다시 듣는다.
             let hint = if crate::eleven::key().is_none() {
-                crate::sys::tr("말로 대화하려면 ElevenLabs 키가 필요합니다 (키 → 음성)", "Talking needs an ElevenLabs key (Keys → Voice)")
+                crate::sys::tr("말로 대화하려면 ElevenLabs 키가 필요합니다 (설정 → 음성)", "Talking needs an ElevenLabs key (Settings → Voice)")
             } else if self.converse {
                 crate::sys::tr("말로 대화하는 중 · 누르면 마이크를 끕니다", "Talking · click to turn the microphone off")
             } else {
@@ -603,7 +603,7 @@ impl App {
         ui.add_space(6.0);
     }
 
-    /// The Keys window: who answers, and how. One wide window, everything in view, nothing to unfold or scroll.
+    /// The Settings window: who answers, and how. One wide window, everything in view, nothing to unfold or scroll.
     /// Left: the ways in. Middle: what the chosen way needs. Right: spending, and the optional keys.
     /// Keys go to the app's encrypted store (secret.rs); the rest to small files next to the program.
     pub fn key_window(&mut self, ctx: &egui::Context) {
@@ -631,7 +631,7 @@ impl App {
             let inner = width - 52.0;
             ui.set_width(inner);
             let first = self.cfg.demo();
-            ui.label(egui::RichText::new(if first { crate::sys::tr("APERIT에 오신 것을 환영합니다", "Welcome to APERIT") } else { crate::sys::tr("엔진과 키", "Engine and keys") }).font(ui::bold(21.0)).color(ui::TEXT()));
+            ui.label(egui::RichText::new(if first { crate::sys::tr("APERIT에 오신 것을 환영합니다", "Welcome to APERIT") } else { crate::sys::tr("설정", "Settings") }).font(ui::bold(21.0)).color(ui::TEXT()));
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(crate::sys::tr(
@@ -1321,7 +1321,7 @@ fn three(ui: &mut egui::Ui, now: &str, options: [(&str, &str); 3]) -> Option<Str
     picked
 }
 
-/// The server typed in the Keys window: host, user, port, key file, folder, -, name (the password is kept apart).
+/// The server typed in the Settings window: host, user, port, key file, folder, -, name (the password is kept apart).
 fn server_from(input: &[String; 7]) -> crate::ssh::Server {
     let name: String = input[6].trim().chars().filter(|c| !"[]=\r\n".contains(*c)).collect();
     let host = input[0].trim().to_string();

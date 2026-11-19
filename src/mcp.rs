@@ -31,7 +31,7 @@ pub const GUIDE: &str = include_str!("../protocol/GUIDE.md");
 pub const MEDIA_KINDS: [&str; 3] = ["web", "image", "doc"];
 
 /// May a writer outside APERIT create those? Off unless APERIT_OUTSIDE_MEDIA is set or `outside-media.txt`
-/// next to the program says `yes` (the Keys window writes it).
+/// next to the program says `yes` (the Settings window writes it).
 pub fn outside_media() -> bool {
     crate::sys::var("OUTSIDE_MEDIA").ok().or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("outside-media.txt")).ok()).map(|v| matches!(v.trim(), "1" | "yes" | "true")).unwrap_or(false)
 }

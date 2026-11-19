@@ -287,7 +287,7 @@ pub fn explain(err: &str) -> String {
     if what.is_empty() { tail } else { format!("{what} ({tail})") }
 }
 
-/// Connect and ask the server's Claude Code for its version: what the Keys window's test button shows.
+/// Connect and ask the server's Claude Code for its version: what the Settings window's test button shows.
 pub fn check(s: &Server, password: Option<&str>) -> Result<String, String> {
     let out = run(s, &format!("{} && {} --version", s.cd(), s.claude()), b"", password)?;
     let version = out.lines().last().unwrap_or("").trim().to_string();

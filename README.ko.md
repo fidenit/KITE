@@ -93,12 +93,12 @@ Linux: GTK와 WebKit 라이브러리(`glib-sys`)가 없는 컴퓨터에서는 �
 
 ### 엔진 고르기
 
-엔진은 "누가 답하는가"다. 왼쪽 아래 **키**를 열고 둘 중 하나를 한다: **Claude로 로그인**(이 컴퓨터의 Claude Code를 쓴다, 키 필요 없음)을 누르거나 **키를 붙여넣는다**. 키를 보고 어느 서비스 것인지(Claude, OpenAI, Gemini, OpenRouter, Groq, xAI) 알아내고 모델도 알아서 고른다. 한 화면에 다 있다: 왼쪽에 방법(로컬 모델이나 다른 주소, SSH로 붙는 서버, 직접 만든 에이전트도), 가운데에 고른 방법에 필요한 것, 오른쪽에 쓴 금액.
+엔진은 "누가 답하는가"다. 왼쪽 아래 **설정**를 열고 둘 중 하나를 한다: **Claude로 로그인**(이 컴퓨터의 Claude Code를 쓴다, 키 필요 없음)을 누르거나 **키를 붙여넣는다**. 키를 보고 어느 서비스 것인지(Claude, OpenAI, Gemini, OpenRouter, Groq, xAI) 알아내고 모델도 알아서 고른다. 한 화면에 다 있다: 왼쪽에 방법(로컬 모델이나 다른 주소, SSH로 붙는 서버, 직접 만든 에이전트도), 가운데에 고른 방법에 필요한 것, 오른쪽에 쓴 금액.
 
 | 엔진 | 필요한 것 | 되는 것 |
 |---|---|---|
 | 데모 | 없음 | 준비된 장면만. 키 없이 시작한다 |
-| Claude API | [Claude API 키](https://console.anthropic.com/settings/keys). 요금은 본인 계정에 청구된다 | APERIT의 기능 전부. **키**에 붙여넣거나(앱 안에 암호화해서 보관한다) 환경 변수 `ANTHROPIC_API_KEY` |
+| Claude API | [Claude API 키](https://console.anthropic.com/settings/keys). 요금은 본인 계정에 청구된다 | APERIT의 기능 전부. **설정**에 붙여넣거나(앱 안에 암호화해서 보관한다) 환경 변수 `ANTHROPIC_API_KEY` |
 | Claude Code | [Claude Code](https://claude.com/claude-code)가 깔려 있고 로그인된 상태. API 키는 필요 없다 | 전부. Claude Code의 로그인, `CLAUDE.md`, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용된다 |
 | 서버의 Claude Code | SSH로 붙는 서버(키 또는 비밀번호)에 Claude Code가 깔려 있고 로그인된 상태 | 같은 기능을 서버의 파일·명령으로. 기억과 APERIT 도구는 내 컴퓨터에 남는다 ([방법](docs/DRIVING.md#a-server-claude-code-over-ssh)) |
 | 다른 모델 | OpenAI 호환 주소: OpenAI, Ollama·LM Studio의 로컬 모델, OpenRouter | APERIT 자체 엔진을 그 모델로 돌린다. 웹 검색은 Claude에서만 된다 |
@@ -106,7 +106,7 @@ Linux: GTK와 WebKit 라이브러리(`glib-sys`)가 없는 컴퓨터에서는 �
 
 **Claude Code를 엔진으로 쓰기.** APERIT는 API를 직접 부르는 대신 턴마다 Claude Code에 맡긴다. 파일·명령·웹 작업은 Claude Code의 도구로 한다. APERIT 자체 도구(경로 지도, 기억 노트, 판 읽기, 작업자)는 APERIT 안의 작은 로컬 MCP 서버로 내주고, 작업자와 기억 정리도 Claude Code를 거쳐 돈다. Claude Code가 자기 지시문을 함께 보내기 때문에 API 키 방식보다 턴당 토큰이 더 든다. 기본은 Claude Code에서 허용해 둔 일만 하고, 같은 창에서 파일 수정이나 전부를 허용할 수 있다. `--model sonnet` 같은 Claude Code 옵션은 프로그램 폴더의 `claude-args.txt`에 적는다.
 
-**두 번째 키는 선택이다.** [TypeSafe AI](https://typesafe.ai)의 Jev 키(**키** 창, 또는 `TYPESAFE_API_KEY`). Jev는 글을 쓰지 않고 판단만 하는 작고 빠른 모델이다. 넣으면 말이 어느 주제에 속하는지 미리 고르고, 중요한 카드를 앞에 놓고, 겹치는 주제를 정리하고, 옛 대화에서 필요한 것만 골라 온다. 없어도 APERIT는 그대로 동작한다.
+**두 번째 키는 선택이다.** [TypeSafe AI](https://typesafe.ai)의 Jev 키(**설정** 창, 또는 `TYPESAFE_API_KEY`). Jev는 글을 쓰지 않고 판단만 하는 작고 빠른 모델이다. 넣으면 말이 어느 주제에 속하는지 미리 고르고, 중요한 카드를 앞에 놓고, 겹치는 주제를 정리하고, 옛 대화에서 필요한 것만 골라 온다. 없어도 APERIT는 그대로 동작한다.
 
 키, 판, 기억 보관함은 모두 프로그램 폴더 안에 있다. 폴더를 옮기면 전부 따라간다.
 
@@ -116,11 +116,11 @@ APERIT는 [PATET](https://github.com/fidenit/patet)을 쓰는 것이면 무엇�
 
 **MCP를 쓰는 에이전트** (Claude Code, Cursor, 직접 만든 것):
 
-1. APERIT에서 **키** → **내 에이전트** → **저장**.
-2. 다시 **키** → **Claude Code 명령 복사**를 눌러 터미널에서 실행한다 (다른 클라이언트는 **설정(JSON) 복사**).
+1. APERIT에서 **설정** → **내 에이전트** → **저장**.
+2. 다시 **설정** → **Claude Code 명령 복사**를 눌러 터미널에서 실행한다 (다른 클라이언트는 **설정(JSON) 복사**).
 3. 에이전트에게 보드에 답하라고 한다. 도구는 넷이다: `guide`, `board_read`, `screen`, `events`.
 
-**AG-UI 프레임워크로 만든 에이전트** (LangGraph, CrewAI, Pydantic AI 등): **키** → **내 에이전트** → **AG-UI**에 에이전트 주소를 적는다.
+**AG-UI 프레임워크로 만든 에이전트** (LangGraph, CrewAI, Pydantic AI 등): **설정** → **내 에이전트** → **AG-UI**에 에이전트 주소를 적는다.
 
 **스크립트:** `APERIT_PROTOCOL_PORT=7878`로 APERIT를 띄우고 그 포트에 줄을 쓴다.
 
@@ -138,7 +138,7 @@ add k2 o2 가평 | 가깝고 저렴함
 
 ## 실행하기 전에 알아 둘 것
 
-- **APERIT는 인터페이스이고, 컴퓨터에서 무슨 일이 일어나는지는 엔진이 정한다.** 묻지 않고 해도 되는 일은 **키** 창에서 엔진마다 정한다.
+- **APERIT는 인터페이스이고, 컴퓨터에서 무슨 일이 일어나는지는 엔진이 정한다.** 묻지 않고 해도 되는 일은 **설정** 창에서 엔진마다 정한다.
 
   | 엔진 | 명령 실행과 파일 수정 |
   |---|---|
@@ -147,7 +147,7 @@ add k2 o2 가평 | 가깝고 저렴함
   | 내 에이전트 | 그 에이전트가 하는 대로다. APERIT는 보드만 그린다 |
 
   파일 읽기와 웹 검색은 묻지 않는다.
-- **쓰는 만큼 돈이 든다.** 기본으로 가장 뛰어난 Claude 모델(Opus 5.5)을 쓴다. **키** 창에서 Sonnet이나 Haiku로 바꿀 수 있고, 모델마다 한 턴의 대략적인 값이 붙어 있다. 한 턴에 보내는 양은 Claude Code의 한 턴과 비슷하다. 실측한 내용은 [docs/COSTS.md](docs/COSTS.md)(영어)에 있다. **키** 창에 내 Claude API 키로 오늘·이번 달 쓴 금액이 나오고, 하루 한도를 걸 수 있다: 한도에 닿으면 그날은 새 일을 시작하지 않는다.
+- **쓰는 만큼 돈이 든다.** 기본으로 가장 뛰어난 Claude 모델(Opus 5.5)을 쓴다. **설정** 창에서 Sonnet이나 Haiku로 바꿀 수 있고, 모델마다 한 턴의 대략적인 값이 붙어 있다. 한 턴에 보내는 양은 Claude Code의 한 턴과 비슷하다. 실측한 내용은 [docs/COSTS.md](docs/COSTS.md)(영어)에 있다. **설정** 창에 내 Claude API 키로 오늘·이번 달 쓴 금액이 나오고, 하루 한도를 걸 수 있다: 한도에 닿으면 그날은 새 일을 시작하지 않는다.
 - **아직 초기다.** 한 사람이 매일 쓰고 있다. 처음에는 영어로 뜨고, 화면 구석에서 한국어로 바꾼다. [바뀐 것](CHANGELOG.md)(영어)과 [다음에 할 일](docs/NEXT.md)을 본다.
 - **다른 모델과 바깥 에이전트는 새 기능이다.** 매일 쓰는 것은 Claude 엔진이다. 나머지는 실제 실행으로 확인했지만(Claude Code를 MCP로 붙인 바깥 에이전트, OpenAI 호환 엔진을 실제 서버에 연결) 매일 쓰는 것은 아니다. AG-UI는 Pydantic AI로 만든 에이전트로 확인했다. Claude가 아닌 모델은 써 보지 않았다: OpenAI·Gemini 등의 키 인식과 모델 자동 선택은 그 서비스들에 대고 시험하지 못했다.
 - 경로 카드의 거리와 시간은 카카오맵에서 읽어 온다. 그래서 경로는 한국 안에서 동작한다.

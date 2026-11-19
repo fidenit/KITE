@@ -11,12 +11,12 @@ APERIT is a renderer of the [PATET](../protocol/README.md): it keeps a board and
 | Claude | The Claude API key or Claude Code engine ([README](../README.md#pick-an-engine)) | kept |
 | Claude Code on a server | [A server over SSH](#a-server-claude-code-over-ssh) | kept, on this computer |
 
-All of these are chosen in the app under **Keys** (bottom left), or with the files and variables in the [settings table](#settings).
+All of these are chosen in the app under **Settings** (bottom left), or with the files and variables in the [settings table](#settings).
 
 ## MCP: your agent comes to APERIT
 
-1. In APERIT, open **Keys**, choose **Your own agent**, and save. APERIT stops running a model of its own and opens an MCP door at `http://127.0.0.1:7711/mcp`.
-2. Open **Keys** again and press **Copy the Claude Code command** (or **Copy the config (JSON)** for other clients). For Claude Code the command is:
+1. In APERIT, open **Settings**, choose **Your own agent**, and save. APERIT stops running a model of its own and opens an MCP door at `http://127.0.0.1:7711/mcp`.
+2. Open **Settings** again and press **Copy the Claude Code command** (or **Copy the config (JSON)** for other clients). For Claude Code the command is:
 
    ```sh
    claude mcp add --transport http aperit http://127.0.0.1:7711/mcp --header "Authorization: Bearer <token>"
@@ -49,7 +49,7 @@ You can also open the MCP door next to another engine, so that an agent outside 
 ## AG-UI: APERIT goes to your agent
 
 1. Run your agent as an AG-UI server (an HTTP endpoint that takes a `RunAgentInput` and streams events).
-2. In APERIT, open **Keys**, choose **Your own agent**, type the endpoint under **AG-UI** (for example `http://localhost:8000/agent`), and save.
+2. In APERIT, open **Settings**, choose **Your own agent**, type the endpoint under **AG-UI** (for example `http://localhost:8000/agent`), and save.
 
 On every turn APERIT POSTs the board, what you did and said, the guide for agents (as `context`) and one frontend tool, `screen`. It applies what comes back from any of:
 
@@ -90,7 +90,7 @@ Limits: 4096 bytes a line, 50 lines a second per connection (bursts of 100), 4 c
 
 ## A server: Claude Code over SSH
 
-APERIT can hand each turn to the Claude Code on a server instead of the one on this computer. Under **Keys** → **A server (SSH)**, give the address, the user, and either a key file or a password (or nothing, to use the ssh agent and your usual keys), and the folder to work in. **Test the connection** signs in and asks the server's Claude Code for its version.
+APERIT can hand each turn to the Claude Code on a server instead of the one on this computer. Under **Settings** → **A server (SSH)**, give the address, the user, and either a key file or a password (or nothing, to use the ssh agent and your usual keys), and the folder to work in. **Test the connection** signs in and asks the server's Claude Code for its version.
 
 - Files and commands are the server's. Claude Code's login, `CLAUDE.md`, skills, hooks and permissions there apply.
 - APERIT's own tools (memory notes, route maps, workers, reading the board) stay on this computer. The server's Claude Code reaches them through a reverse tunnel on the same SSH connection, to `127.0.0.1` on both ends, with a token.
@@ -98,7 +98,7 @@ APERIT can hand each turn to the Claude Code on a server instead of the one on t
 - A password is kept with the other keys, encrypted, and handed to ssh by APERIT itself (as its `SSH_ASKPASS`): it is never on a command line or in a file.
 - On the server, APERIT keeps the instructions it sends in `~/.aperit/`, and pictures you attach while it runs.
 
-Several servers can be kept. Each has a name; the Keys window shows them as chips above the fields, with a green dot on the one turns go to, and **+ New server** for another. Saving makes the one shown the one turns go to.
+Several servers can be kept. Each has a name; the Settings window shows them as chips above the fields, with a green dot on the one turns go to, and **+ New server** for another. Saving makes the one shown the one turns go to.
 
 The settings, other than the passwords, are in `ssh.txt` next to the program: a `use=<name>` line, then each server under a `[name]` line with one `name=value` per line: `host`, `port`, `user`, `key`, `dir`, and `claude` (how to call Claude Code there, when it is not on the PATH). A file from an earlier version (the lines without a `[name]`) is read as one server named after its host. Each server's password is kept apart, encrypted.
 
@@ -112,7 +112,7 @@ While they work, workers can read the board (`board_read`) and the other jobs' s
 
 ## Another model: APERIT's own loop
 
-Choose **Another model** under **Keys** and give the base address, the model and, if needed, a key. APERIT keeps its own loop (memory, workers, tools, voice) and only changes the model, over the `chat/completions` format.
+Choose **Another model** under **Settings** and give the base address, the model and, if needed, a key. APERIT keeps its own loop (memory, workers, tools, voice) and only changes the model, over the `chat/completions` format.
 
 | Provider | Base address |
 |---|---|
@@ -127,14 +127,14 @@ What to expect: the instructions APERIT gives its model were written and tuned f
 
 Keys are kept encrypted inside the app: on Windows for this user account on this computer only (`data/keys.bin`), on macOS in the login keychain. No key is written to a plain file. A key file left by an earlier version (`key.txt`, `jev.txt`, `eleven.txt`, the key line of `openai.txt`, the header lines of `agui.txt`) is moved in on the next start and removed.
 
-Everything can be set in the **Keys** window. The same choices as files next to the program, or as environment variables (which win):
+Everything can be set in the **Settings** window. The same choices as files next to the program, or as environment variables (which win):
 
 | File | Variable | Meaning |
 |---|---|---|
 | `engine.txt` | `APERIT_ENGINE` | `api`, `claude-code`, `ssh` (Claude Code on a server), `openai`, `external` (an agent over MCP or the socket), `ag-ui` |
 | `ssh.txt` | | the servers: `use=<name>`, then for each a `[name]` line and `host=`, `port=`, `user=`, `key=`, `dir=`, `claude=` lines |
-| (**Keys** window) | `ANTHROPIC_API_KEY` | Claude API key |
-| `openai.txt` | `APERIT_OPENAI_URL`, `APERIT_OPENAI_MODEL`, `OPENAI_API_KEY` | another model: base address and model (one per line in the file); the key from the **Keys** window |
+| (**Settings** window) | `ANTHROPIC_API_KEY` | Claude API key |
+| `openai.txt` | `APERIT_OPENAI_URL`, `APERIT_OPENAI_MODEL`, `OPENAI_API_KEY` | another model: base address and model (one per line in the file); the key from the **Settings** window |
 | `agui.txt` | `APERIT_AGUI_URL` | the AG-UI endpoint |
 | `mcp-port.txt` | `APERIT_MCP_PORT` | open the MCP door on this port (always open, on 7711, with engine `external`) |
 | `data/mcp-token.txt` | `APERIT_MCP_TOKEN` | the MCP token; made on first use |
