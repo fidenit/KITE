@@ -11,8 +11,8 @@ android {
         applicationId = "com.fidenit.kite"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
     }
     // 두 갈래: free 는 사용자가 넣은 키로 폰이 Claude API 를 직접 부르고,
     // pro 는 아무것도 넣지 않고 우리 중계 서버(비공개 저장소)를 거친다. 코드는 같고 BuildConfig.PRO 로 갈린다.
