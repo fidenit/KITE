@@ -169,11 +169,11 @@ class LiveTest {
         a.finish()
         val id = r.cc.runId!!
         println("(a) 실행 $id 도구 보임 ${dropped - t0}ms 뒤 연결 끊음, 끝남 ${System.currentTimeMillis() - t0}ms")
-        println("(a) 상태 줄: ${a.activity.filter { it.contains("끊") || it.contains("다시 붙") }}")
+        println("(a) 상태 줄: ${a.activity.filter { it.contains("연결이 끊겼습니다") }}")
         println("(a) 거부된 줄: ${a.rejected}")
         println(Lang.serialize(a.board))
         assertTrue("도구를 쓰는 것이 보여야 한다: ${a.activity}", gotTool)
-        assertTrue("스스로 다시 붙었다고 알려야 한다: ${a.activity}", a.activity.any { it.contains("다시 붙습니다") })
+        assertTrue("스스로 다시 붙었다고 알려야 한다: ${a.activity}", a.activity.any { it.contains("연결이 끊겼습니다 →") && it.contains("이어서 받습니다") })
         assertTrue("카드가 있어야 한다", a.board.cards.isNotEmpty())
         assertTrue("result 의 사용량을 받아야 한다: ${stats.model}", stats.outputTokens > 0 && stats.model.startsWith("Claude Code · "))
         val serverOut = r.ssh.run("cat ~/.kite/runs/$id.out").removeSuffix("\n").lines()
