@@ -60,6 +60,9 @@ class Store(context: Context) {
     var lang by Text("ko")
     var micThreshold by Text("0.02")
 
+    // 판단 모델: TypeSafe 의 Jev (선택). 비어 있으면 그 판단 없이 기본대로 돈다. signature() 에는 넣지 않는다: 엔진이 다시 만들어질 이유가 아니다.
+    var jevKey by Text()
+
     /** 엔진을 다시 만들어야 하는지 알아보는 데 쓰는 글. */
     fun signature(): String =
         listOf(engineKind, apiKey, model, apiEffort, relayToken, host, port, user, password, privateKey, passphrase, claude, dir, permission, effort, extra).joinToString("\u0001")

@@ -156,6 +156,10 @@ fun SettingsScreen(vm: KiteViewModel, onBack: () -> Unit) {
             s.micThreshold = "%.3f".format(it)
         }, valueRange = 0.005f..0.1f)
 
+        Section("판단 모델 (선택)")
+        Hint("주제 고르기, 카드 순서를 빠르게 합니다. 없어도 그대로 동작합니다.")
+        Field("TypeSafe Jev 키", s.jevKey, secret = true) { s.jevKey = it.trim() }
+
         Section("화면")
         Hint("주제 이름을 길게 누르면 그 주제가 보관함으로 내려갑니다.")
         // 되돌릴 수 없으니 한 번 더 눌러야 지운다
