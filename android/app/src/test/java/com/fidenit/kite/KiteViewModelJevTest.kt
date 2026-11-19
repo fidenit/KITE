@@ -62,13 +62,17 @@ class KiteViewModelJevTest {
         private val sock = java.net.ServerSocket(0)
         private val accepted = java.util.Collections.synchronizedList(mutableListOf<java.net.Socket>())
 
+        private val accepting = Thread { try { while (true) accepted.add(sock.accept()) } catch (_: Exception) {} }.apply { isDaemon = true }
+
         init {
-            Thread { try { while (true) accepted.add(sock.accept()) } catch (_: Exception) {} }.apply { isDaemon = true }.start()
+            accepting.start()
             Store(app).apply { engineKind = "ssh"; host = "127.0.0.1"; port = sock.localPort.toString(); user = "u" }
         }
 
         override fun close() {
             sock.close()
+            // a connection taken at this very moment is in the list before the list is closed (left open, the engine waits 15 s for an answer)
+            accepting.join()
             accepted.forEach { try { it.close() } catch (_: Exception) {} }
         }
     }
