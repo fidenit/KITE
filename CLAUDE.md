@@ -34,7 +34,7 @@ APERIT_AUTOPLAY="plan a workshop|!set k2 chosen o2" APERIT_POS="-2800,-2400" APE
 APERIT_SHOT=shot.bmp APERIT_SHOT_AT=9000 APERIT_MODEL=claude-haiku-5-5 ./aperit
 ```
 
-`!op` is a user gesture, `+!op` a gesture during a turn, `@click x y` and `@type text` drive the built-in pointer; `data/ops.log`, `data/rejects.log` and `data/timing.jsonl` say what happened. Settings are `APERIT_<NAME>` (the old `KITE_<NAME>` still works). Android without a key: on a debug build, `adb shell run-as com.fidenit.kite cp /data/local/tmp/board.txt files/board.txt` puts a board on screen.
+`!op` is a user gesture, `+!op` a gesture during a turn (`+@wait N` holds the next `+` steps N seconds, e.g. until a permission card has come: `+@wait 40|+!set ask1 chosen yes`), `@click x y` and `@type text` drive the built-in pointer; `data/ops.log`, `data/rejects.log` and `data/timing.jsonl` say what happened. Settings are `APERIT_<NAME>` (the old `KITE_<NAME>` still works). Android without a key: on a debug build, `adb shell run-as com.fidenit.kite cp /data/local/tmp/board.txt files/board.txt` puts a board on screen.
 
 ## Kept on purpose under the old name
 
