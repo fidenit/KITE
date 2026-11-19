@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.fidenit.kite.KiteViewModel
+import com.fidenit.kite.engine.Decide
 
 object C {
     val bg = Color(0xFF0B0B0C)
@@ -160,7 +161,9 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
         // 카드: 답을 기다리는 것이 맨 위
         val cards = board.cards.filter { it.topic == vm.current }
         val waiting = cards.filter { (it.kind.asks) && it.field("chosen").isEmpty() && it.field("sent").isEmpty() }
-        val ordered = waiting + cards.filter { it !in waiting }
+        // 그다음은 중요한 것부터 세 단계로 (같은 단계 안에서는 원래 순서 그대로)
+        val importance = vm.importance
+        val ordered = waiting + cards.filter { it !in waiting }.sortedBy { -Decide.level(importance[it.id]) }
         if (ordered.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text(

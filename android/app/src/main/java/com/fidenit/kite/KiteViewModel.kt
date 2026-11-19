@@ -144,6 +144,16 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private val pending = mutableListOf<String>()
     private val events = mutableListOf<String>()
     private val rejects = mutableListOf<String>()
+
+    /** 이번 턴에 AI 가 건드린 카드의 ID (턴 뒤 판단이 이것만 본다) */
+    private val touched = LinkedHashSet<String>()
+
+    /** 턴 뒤 판단이 "화면만 봐서는 무엇인지 알기 어렵다"고 한 카드 (ID, 분명할 확률): 다음 턴 글에 `<review>` 로 한 번 실린다 */
+    private var unclear: List<Pair<String, Double>> = emptyList()
+
+    /** 턴 뒤 판단이 매긴 카드별 중요도(0~1). 화면은 기다리는 카드 다음에 이 순서(세 단계)로 놓는다. */
+    var importance by mutableStateOf<Map<String, Double>>(emptyMap())
+        private set
     private var lines = LineStream()
     private var eventTimer: Job? = null
 
@@ -220,6 +230,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             activity = ""
             stopFlag = false
             hush = true // 따라잡는 동안에는 소리를 내지 않고 화면에만 반영한다
+            touched.clear()
             turnSpoken.clear()
             quietSay = null
             lines = LineStream()
@@ -372,6 +383,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             t.append("</recent>\n")
         }
         if (events.isNotEmpty()) t.append("<events>\n${events.joinToString("\n")}\n</events>\n")
+        Decide.reviewBlock(unclear)?.let { t.append(it) }
+        unclear = emptyList()
         val rejected = rejects + board.notes
         rejects.clear()
         board.notes.clear()
@@ -412,6 +425,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         activity = ""
         stopFlag = false
         hush = false
+        touched.clear()
         turnSpoken.clear()
         quietSay = null
         lines = LineStream()
@@ -474,6 +488,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             save() // 반영한 것을 먼저 저장하고, 그다음에 돌던 턴의 기록을 지운다
             journal.clearInflight()
             (engine as? ClaudeCode)?.let { journal.writeToClean(it.toClean) }
+            if (result.isSuccess) reviewTurn() else touched.clear()
             // 기억이 바뀌었을 수 있으니 다음 턴을 위해 다시 읽어 둔다.
             launch(Dispatchers.IO) {
                 try {
@@ -517,6 +532,26 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** TypeSafe Jev 의 주소. 시험에서 가짜 서버로 바꾼다 (앱은 바꾸지 않는다). */
     internal var jevUrl: String = Jev.URL
+
+    /**
+     * 턴 뒤의 판단: 이번 턴에 AI 가 건드린 카드(최대 20장)가 화면만 보고 분명한지, 얼마나 중요한지를 Jev 에게 묻는다.
+     * 턴이 끝난 뒤 뒤에서 돌고(입출력 스레드), 키가 없거나 실패하면 아무 일도 없다.
+     * 분명하지 않은 카드는 다음 턴 글에 `<review>` 로 실리고, 중요도는 카드 순서에 쓰인다.
+     */
+    internal fun reviewTurn() {
+        val key = store.jevKey.trim()
+        val cards = touched.toList().asReversed().mapNotNull { id ->
+            board.card(id)?.let { c -> Decide.CardRef(c.id, board.topics.firstOrNull { it.id == c.topic }?.name.orEmpty(), c.title) }
+        }.take(Decide.MAX_CARDS)
+        touched.clear()
+        if (key.isEmpty() || cards.isEmpty()) return
+        val snapshot = Lang.serialize(board) // 메인 스레드에서 떠 둔다: 보드는 다른 스레드에서 읽지 않는다
+        viewModelScope.launch {
+            val post = withContext(Dispatchers.IO) { runCatching { Decide.after(key, snapshot, cards, jevUrl, log = ::jevLog) }.getOrNull() } ?: return@launch
+            unclear = post.unclear
+            importance = importance + post.importance // 이번에 검토한 카드의 값만 고친다
+        }
+    }
 
     private val jevLogLock = Any()
 
@@ -601,6 +636,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 줄 하나를 보드에 반영한다. AI 의 줄이 거부되면 다음 턴에 알려 준다. */
     private fun applyLine(line: String, by: Author) {
+        // 어떤 카드를 건드렸는지: 줄의 둘째 낱말 (데스크톱과 같다. 카드가 아닌 것은 턴 뒤에 걸러진다)
+        if (by == Author.Ai) line.trim().split(Regex("\\s+")).getOrNull(1)?.let { touched.add(it) }
         try {
             val op = Lang.parse(line) ?: return
             board.apply(op, by)
@@ -627,7 +664,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
      * AI 가 낸 한 줄을 받는다. 음성이 꺼져 있으면 바로 화면에 반영하고,
      * 켜져 있으면 "문장 → 그 문장의 카드" 순서로 줄을 세워 말하는 속도에 맞춰 내보낸다.
      */
-    private fun aiLine(line: String) {
+    internal fun aiLine(line: String) {
         val t = line.trim()
         if (!voice || hush || standby) {
             if (!t.startsWith("tell ")) applyLine(line, Author.Ai)
@@ -920,6 +957,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         board = Board()
         recent.clear()
         events.clear()
+        touched.clear()
+        unclear = emptyList()
+        importance = emptyMap()
         current = null
         rev++
         journal.clearInflight() // 지우지 않으면 다시 켰을 때 옛 보드가 되살아난다

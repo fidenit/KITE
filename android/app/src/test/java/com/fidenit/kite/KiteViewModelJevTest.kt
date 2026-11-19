@@ -172,4 +172,83 @@ class KiteViewModelJevTest {
         assertEquals(0, server.requestCount)
         vm.stop()
     }
+
+    // --- J-5: after the turn ---------------------------------------------------------------
+
+    private fun after(vararg parts: String) = MockResponse().setResponseCode(200).setBody("""{"answers":{${parts.joinToString(",")}}}""")
+
+    @Test
+    fun afterATurnTheCardsTheAiTouchedAreJudgedAndTheReviewGoesIntoTheNextTurnOnce() {
+        val vm = vm("test-key-not-real")
+        vm.aiLine("card k3 note t1 2x1 정리")
+        vm.aiLine("say 정리했어요")
+        server.enqueue(after(""""clear_k3":{"type":"noul","noul":0.2}""", """"imp_k3":{"type":"score","score":2.0,"confidence":0.9}"""))
+        vm.reviewTurn()
+        until("the review is in") { vm.importance.isNotEmpty() }
+        assertEquals(1, server.requestCount)
+        val body = JSONObject(server.takeRequest(1, TimeUnit.SECONDS)!!.body.readUtf8())
+        assertEquals(setOf("clear_k3", "imp_k3"), body.getJSONObject("questions").keys().asSequence().toSet()) // only what the AI touched, and only cards
+        assertTrue(body.getString("state").contains("card k3 note t1 2x1 정리"))
+        assertEquals(1.0, vm.importance["k3"]!!, 1e-9)
+        // the next turn carries the review once (the key is taken away so that this send asks nothing)
+        Store(app).jevKey = ""
+        vm.send("다음 말")
+        val text = Journal(files).readInflight()!!.turnText
+        assertTrue(text, text.contains("<review>\ncard k3: hard to tell what it is about from the screen alone (probability it is clear: 0.20)\n</review>\n"))
+        until("turn ends") { !vm.busy }
+        vm.send("또 다음 말")
+        assertFalse(Journal(files).readInflight()!!.turnText.contains("<review>"))
+    }
+
+    @Test
+    fun aClearCardAddsNoReviewAndNoKeyMeansNoCall() {
+        val vm = vm("k")
+        vm.aiLine("card k3 note t1 2x1 정리")
+        server.enqueue(after(""""clear_k3":{"type":"noul","noul":0.4}""", """"imp_k3":{"type":"score","score":0.0,"confidence":0.9}"""))
+        vm.reviewTurn()
+        until("the review is in") { vm.importance.isNotEmpty() }
+        assertEquals(0.0, vm.importance["k3"]!!, 1e-9)
+        Store(app).jevKey = ""
+        vm.send("다음 말")
+        assertFalse(Journal(files).readInflight()!!.turnText.contains("<review>"))
+        until("turn ends") { !vm.busy }
+        // without a key: nothing is asked
+        vm.aiLine("card k4 note t1 2x1 또")
+        vm.reviewTurn()
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun importanceOfEarlierCardsStaysWhenLaterOnesAreJudged() {
+        val vm = vm("k")
+        vm.aiLine("card k3 note t1 2x1 정리")
+        server.enqueue(after(""""imp_k3":{"type":"score","score":2.0,"confidence":0.9}"""))
+        vm.reviewTurn()
+        until("first") { vm.importance.containsKey("k3") }
+        vm.aiLine("card k4 note t1 2x1 또")
+        server.enqueue(after(""""imp_k4":{"type":"score","score":0.0,"confidence":0.9}"""))
+        vm.reviewTurn()
+        until("second") { vm.importance.containsKey("k4") }
+        assertEquals(1.0, vm.importance["k3"]!!, 1e-9)
+        assertEquals(0.0, vm.importance["k4"]!!, 1e-9)
+        vm.clearAll()
+        assertTrue(vm.importance.isEmpty())
+    }
+
+    @Test
+    fun aFailingJevServerAfterTheTurnChangesNothing() {
+        val vm = vm("k")
+        vm.aiLine("card k3 note t1 2x1 정리")
+        server.enqueue(MockResponse().setResponseCode(500))
+        vm.reviewTurn()
+        until("the call was made") { server.requestCount == 1 }
+        repeat(30) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(10)
+        }
+        assertTrue(vm.importance.isEmpty())
+        Store(app).jevKey = ""
+        vm.send("다음 말")
+        assertFalse(Journal(files).readInflight()!!.turnText.contains("<review>"))
+    }
 }
