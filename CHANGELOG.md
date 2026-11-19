@@ -53,6 +53,8 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 
 ### A cleaner window
 
+- Nothing is left cut off. The conversation shows the AI's sentence whole, even past the protocol's 80 characters for the caption. When text on a card is cut at its limit, a short turn rewrites it right away to fit (it is not part of the conversation). The instructions ask for a short answer (about 40 characters) and the details on cards.
+
 - The line at the bottom left no longer shows numbers meant for development (model, time, tokens, card and character counts, the zoom hint). Set `APERIT_DEBUG` to see them.
 - APERIT has an icon of its own, in the window, the taskbar and Explorer, and `aperit.exe` says what it is (name, version, maker) in its properties.
 - `aperit.exe` runs on its own: WebView2Loader.dll, which web cards need, is carried inside it.

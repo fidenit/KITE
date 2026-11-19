@@ -261,6 +261,13 @@ struct App {
     pub pics: Vec<(pics::Pic, egui::TextureHandle)>,
     /// 방금까지 사용자 앞에 있던 일의 주제 (다음 일을 고를 때 같은 주제의 것부터 가져온다)
     task_topic: Option<String>,
+    /// The AI's last `say` as it wrote it, with the board's caption it became (clipped at 80 characters by the
+    /// protocol). The conversation shows the whole sentence; the board keeps the caption.
+    say_full: (String, String),
+    /// Text of the last turn was cut at its limit on a card: a short turn to rewrite it runs at once
+    /// (`fix_pending`), and while it runs (`fixing`) it does not start another.
+    fix_pending: bool,
+    fixing: bool,
     /// The focus last seen on the board: when the AI focuses a question card anew, it comes to the front.
     focus_seen: Option<String>,
     /// The question cards already seen (None until the first look). A question asked since then comes first.
@@ -642,6 +649,9 @@ impl App {
             replay_date: None,
             recall_cands: Vec::new(),
             task_topic: None,
+            say_full: (String::new(), String::new()),
+            fix_pending: false,
+            fixing: false,
             focus_seen: None,
             asks_known: None,
             pics: Vec::new(),
@@ -872,6 +882,11 @@ impl App {
     }
 
     /// 모든 변화가 지나가는 단 하나의 문. AI 와 사용자의 조작이 같은 형식으로 여기를 통과한다.
+    /// What the AI said last, whole: the sentence it wrote when the caption is that sentence cut at 80 characters.
+    pub fn said(&self) -> String {
+        if self.say_full.0 == self.board.say { self.say_full.1.clone() } else { self.board.say.clone() }
+    }
+
     fn apply_line(&mut self, line: &str, by: Author) {
         if let Err(e) = self.apply_op_line(line, by, if by == Author::User { "user" } else { "model" }) {
             // A model is told what was rejected on its next turn. A user's gesture that fails is dropped.
@@ -899,7 +914,14 @@ impl App {
                 return Err(patet::Reject::new("not-allowed", "this board does not let outside agents create web, image or doc cards; the user can allow it under Settings"));
             }
         }
+        let said = match &op {
+            core::Op::Say { text } => Some(text.clone()),
+            _ => None,
+        };
         self.board.apply(op, by)?;
+        if let Some(text) = said {
+            self.say_full = (self.board.say.clone(), text);
+        }
         hub::hub().publish(if by == Author::User { "user" } else { "agent" }, origin, line);
         {
             {
@@ -918,8 +940,9 @@ impl App {
                         self.turn_said = true;
                         // With an outside agent, its `say` is the reply to the last thing the user typed.
                         if self.cfg.external {
+                            let said = self.said();
                             if let Some(last) = self.recent.last_mut() {
-                                last.1 = self.board.say.clone();
+                                last.1 = said;
                             }
                         }
                     }
@@ -1372,7 +1395,12 @@ impl App {
         // 구성 정리 턴: 판단 모델이 짚은 것을 전한다.
         // 사용자가 말했거나 화면을 조작해서 시작된 턴에는 끼워 넣지 않는다 (그 턴은 그 요청만 처리한다).
         let own_turn = input.is_empty() && self.events.is_empty() && self.job_turn.is_none();
-        if let Some(hints) = if own_turn { self.tidy.take() } else { None } {
+        if own_turn && self.fix_pending {
+            self.fix_pending = false;
+            self.fixing = true;
+            t += "<fix>Some text you wrote last turn was cut at its limit (the `clipped` lines in <rejected>): on the board it now ends in \"…\". Rewrite each of those shorter with `set` or `upd` so that it fits whole, saying the same thing. Change nothing else, and write no `say`.</fix>\n";
+        }
+        if let Some(hints) = if own_turn && !self.fixing { self.tidy.take() } else { None } {
             t += &format!("<tidy>
 {}
 </tidy>
@@ -1495,6 +1523,8 @@ impl App {
         let auto = input.is_empty(); // 사용자가 말한 것이 아니라 프로그램이 시작한 턴
         self.cur_input = if let Some(names) = &self.job_turn {
             format!("({}) {names}", sys::tr("맡긴 작업이 끝남", "delegated work finished"))
+        } else if self.fixing {
+            sys::tr("(잘린 글자 고치기)", "(fixing cut text)").to_string()
         } else if self.tidying {
             sys::tr("(분류와 주제 정리)", "(tidying topics)").to_string()
         } else if auto {
@@ -1651,7 +1681,16 @@ impl App {
         self.activity.clear();
         self.pre = None;
         // 구성 정리 턴인데 고칠 것이 없어 아무것도 내지 않았으면, 대화에도 기록에도 남기지 않는다.
-        let silent = self.tidying && self.turn_raw.trim().is_empty() && self.error.is_none();
+        // A turn that only shortened cut text is housekeeping too: not part of the conversation.
+        let silent = (self.tidying && self.turn_raw.trim().is_empty() && self.error.is_none()) || (self.fixing && self.error.is_none());
+        let cut = self.board.notes.iter().any(|n| n.starts_with("clipped ") && !n.starts_with("clipped say"));
+        if self.fixing {
+            self.fixing = false;
+        } else if cut && self.error.is_none() && !self.cfg.demo() && !self.cfg.external && self.cfg.agui.is_none() {
+            // Cut text on a card is not left there: one short turn rewrites it, right away.
+            self.fix_pending = true;
+            self.react_at = Some(std::time::Instant::now() + std::time::Duration::from_millis(300));
+        }
         // 이번 턴에 손댄 카드와 주제 (보드가 아무리 커져도 검토와 기록은 이것만 본다)
         let mut touched_cards: Vec<String> = Vec::new();
         for l in self.turn_raw.lines() {
@@ -1731,7 +1770,7 @@ impl App {
             let turn = memory::Turn {
                 at: format!("{date} {time}"),
                 user: self.cur_input.clone(),
-                say: self.board.say.clone(),
+                say: self.said(),
                 did: self.turn_actions.clone(),
                 ops: self.turn_raw.trim().chars().take(2000).collect(),
                 topics: topic_names.join(", "),
@@ -1762,7 +1801,7 @@ impl App {
         if !self.cfg.demo() && !silent {
             vault::log_turn(&vault::TurnRecord {
                 input: self.cur_input.clone(),
-                say: self.board.say.clone(),
+                say: self.said(),
                 spoken: self.turn_spoken.clone(),
                 actions: self.turn_actions.clone(),
                 raw: self.turn_raw.clone(),
@@ -1770,7 +1809,7 @@ impl App {
             });
         }
         if !silent {
-            self.recent.push((std::mem::take(&mut self.cur_input), self.board.say.clone()));
+            self.recent.push((std::mem::take(&mut self.cur_input), self.said()));
         }
     }
 

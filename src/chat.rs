@@ -317,7 +317,7 @@ impl App {
                     if self.board.say.is_empty() {
                         ui.label(egui::RichText::new(crate::sys::tr("무엇이든 말하세요.\n답은 오른쪽 화면에 카드로 나타납니다.", "Say anything.\nThe answer appears as cards on the right.")).size(13.5).color(ui::FAINT()));
                     } else {
-                        yours(ui, &self.board.say.clone(), true);
+                        yours(ui, &self.said(), true);
                     }
                 }
                 for (i, (u, a)) in self.recent.iter().enumerate() {
@@ -335,7 +335,7 @@ impl App {
                         .caption
                         .clone()
                         .or_else(|| self.say_live.clone())
-                        .or_else(|| self.turn_said.then(|| self.board.say.clone()))
+                        .or_else(|| self.turn_said.then(|| self.said()))
                         // 아직 한마디가 없는데 일은 시작했으면, 말없이 일하는 것처럼 보이지 않게 한다.
                         .or_else(|| (!self.activity.is_empty() && !self.tidying).then(|| crate::sys::tr("확인하고 있어요.", "Looking into it.").to_string()));
                     if let Some(text) = live.filter(|t| !t.is_empty()) {
