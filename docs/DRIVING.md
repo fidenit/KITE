@@ -144,7 +144,7 @@ Everything can be set in the **Settings** window. The same choices as files next
 | `model.txt` | `APERIT_MODEL` | the Claude model of the Claude API engine: `claude-opus-5-5` (the default; no file), `claude-sonnet-5-5`, `claude-haiku-5-5`, or any Claude model id |
 | `spend-limit.txt` | `APERIT_DAILY_LIMIT` | a daily limit in dollars for the Claude API key; at the limit no new turn, worker or background request starts that day. What was spent is kept per day in `data/usage.json` |
 | `permission.txt` | `APERIT_PERMISSION` | what APERIT's own engines may do without asking: `ask` (the default), `edits`, `all` |
-| `claude-permission.txt` | | the same for the Claude Code engine: `default`, `acceptEdits`, `bypassPermissions` |
+| `claude-permission.txt` | | the same for the Claude Code engine: `default`, `acceptEdits`, `bypassPermissions`. Under the first two, what is not allowed is asked on the board (Claude Code's `--permission-prompt-tool`, answered by APERIT's MCP tool `permission_prompt`), not refused |
 | `data/lang.txt` | `APERIT_LANG` | `en` or `ko`: the language of the screen and of what the model writes; also the switch in the corner |
 | `prompt-lang.txt` | `APERIT_PROMPT` | `ko` uses the Korean instructions for the model; without it they are English (about 20% fewer tokens, same answers) |
 | `outside-media.txt` | `APERIT_OUTSIDE_MEDIA` | `yes` lets an agent outside APERIT create web, image and file cards |

@@ -27,7 +27,7 @@ You are running as the engine of APERIT through Claude Code. This changes two th
 
 1. Your text output IS the screen. Every line of text you output must be one screen command from the language above (say, topic, card, set, add, ...). Never output prose, markdown, headings or status notes outside a command. Anything you want to tell the user goes in `say`. Instructions from other sources about how to format or structure replies (goal declarations, reports, summaries) do not apply to this output: express them, if needed, as cards or a short `say`.
 2. APERIT's own tools are reached through the MCP server named `aperit`: where the text above names route_find, place_find, note_search, note_read, note_write, note_append, board_read, browser_text, browser_eval, job_start, job_list, job_tell, job_stop or job_result, call `mcp__aperit__<name>` with the same input. The other APERIT tools named above (screen, shell, read_file, write_file, edit_file, list_dir, find_text, view_image, web_search, web_fetch) do not exist here: use your Claude Code tools instead (Bash or PowerShell, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). There is no `screen` tool because your text output already is the screen.
-3. If a tool is refused for lack of permission, do not retry it and do not ask the user to grant it in a card: say in one short `say` that Claude Code's permission setting blocked it and that it can be changed under Settings at the bottom left.
+3. A tool that the permission setting does not allow is put to the user as a question on the board, by APERIT itself: just use the tool. If the user says no, do not try it again another way; say so in one short `say`.
 4. Before your first tool call, output one short `say` line telling the user what you are about to do, so the screen is not silent while tools run.
 ";
 
@@ -178,7 +178,7 @@ const WORKER_NOTE: &str = "
 
 # Running inside Claude Code
 
-You are running through Claude Code. The tools named above (shell, read_file, write_file, edit_file, list_dir, find_text, web_search, web_fetch, view_image) do not exist here: use your Claude Code tools instead (Bash or PowerShell, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). The note tools are reached as `mcp__aperit__note_search`, `mcp__aperit__note_read`, `mcp__aperit__note_write` and `mcp__aperit__note_append`. There is no `progress` tool and no messages from the main session arrive while you work; what you are doing is shown to the user automatically. If a tool is refused for lack of permission, do not retry it: say so in your report. Your final message is your report.
+You are running through Claude Code. The tools named above (shell, read_file, write_file, edit_file, list_dir, find_text, web_search, web_fetch, view_image) do not exist here: use your Claude Code tools instead (Bash or PowerShell, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). The note tools are reached as `mcp__aperit__note_search`, `mcp__aperit__note_read`, `mcp__aperit__note_write` and `mcp__aperit__note_append`. There is no `progress` tool and no messages from the main session arrive while you work; what you are doing is shown to the user automatically. A tool that the permission setting does not allow is put to the user as a question by APERIT itself; if the user says no, do not retry it another way: say so in your report. Your final message is your report.
 ";
 
 /// 작업자 한 명을 Claude Code 로 돌린다. 마지막 글(보고서)도 돌려준다. `server`: the Claude Code on that server
@@ -306,6 +306,11 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
     if !extra.contains("--permission-mode") && mode != "default" {
         args.extend(["--permission-mode".into(), mode.clone()]);
     }
+    // What the setting does not allow is not refused but asked: Claude Code puts the question to APERIT, which
+    // shows the user a card (permit.rs). So "My settings" and "File edits" still let the user allow a command,
+    // also on a server where Claude Code runs as root.
+    let ask_user = mode != "bypassPermissions" && !extra.contains("--permission-prompt-tool");
+    let prompt_tool = format!("mcp__aperit__{}", crate::mcp::PERMISSION_TOOL);
     let (mut cmd, input) = match &remote {
         None => {
             let system = dir.join(tag);
@@ -315,6 +320,10 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
             // APERIT 자체 도구를 MCP 로 내준다.
             if let Some(config) = crate::mcp::inside_config(stop) {
                 cmd.arg("--mcp-config").arg(config).args(["--allowedTools", "mcp__aperit"]);
+                if ask_user {
+                    // The question waits for the user (up to 15 minutes, as permit.rs does), not for a tool timeout.
+                    cmd.args(["--permission-prompt-tool", &prompt_tool]).env("MCP_TOOL_TIMEOUT", "900000");
+                }
             }
             cmd.args(extra.split_whitespace()).current_dir(cwd);
             (cmd, text.into_bytes())
@@ -328,11 +337,14 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
                 let remote_port = 20000 + (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0) % 20000) as u16;
                 forward = Some((remote_port, local));
                 tail.extend(["--mcp-config".into(), crate::ssh::shq(&crate::mcp::config_line(remote_port, &token)), "--allowedTools".into(), "mcp__aperit".into()]);
+                if ask_user {
+                    tail.extend(["--permission-prompt-tool".into(), prompt_tool.clone()]);
+                }
             }
             let quoted: Vec<String> = args.iter().map(|a| crate::ssh::shq(a)).chain(tail).chain(extra.split_whitespace().map(crate::ssh::shq)).collect();
             let tag = tag.replace(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_'), "-");
             let script = format!(
-                "mkdir -p ~/.aperit && head -c {} > ~/.aperit/{tag} && {} && echo \"APERITPID $$\" && exec {} {} --append-system-prompt-file \"$HOME/.aperit/{tag}\"",
+                "mkdir -p ~/.aperit && head -c {} > ~/.aperit/{tag} && {} && echo \"APERITPID $$\" && export MCP_TOOL_TIMEOUT=900000 && exec {} {} --append-system-prompt-file \"$HOME/.aperit/{tag}\"",
                 system_text.len(),
                 s.cd(),
                 s.claude(),

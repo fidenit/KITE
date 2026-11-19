@@ -274,6 +274,8 @@ struct App {
     retrying: bool,
     /// The focus last seen on the board: when the AI focuses a question card anew, it comes to the front.
     focus_seen: Option<String>,
+    /// For checking: `+@wait N` in APERIT_AUTOPLAY holds the next `+` steps until then.
+    plus_hold: Option<std::time::Instant>,
     /// The question cards already seen (None until the first look). A question asked since then comes first.
     asks_known: Option<std::collections::HashSet<String>>,
     /// 왼쪽 구역에 보관함 목록을 펼쳐 놓았는가
@@ -659,6 +661,7 @@ impl App {
             settings_note: None,
             retrying: false,
             focus_seen: None,
+            plus_hold: None,
             asks_known: None,
             pics: Vec::new(),
             reset_armed: None,
@@ -2612,9 +2615,14 @@ impl eframe::App for App {
         }
         if !self.autoplay.is_empty() {
             // "+" 로 시작하는 입력은 앞의 턴이 도는 도중(시작 4초 뒤)에 넣는다: 답하는 중에 더 말하는 것을 시험한다.
-            if self.busy && self.autoplay.front().map(|n| n.starts_with('+')).unwrap_or(false) && self.sent_at.elapsed().as_millis() > 4000 {
+            let held = self.plus_hold.map(|t| std::time::Instant::now() < t).unwrap_or(false);
+            if self.busy && !held && self.autoplay.front().map(|n| n.starts_with('+')).unwrap_or(false) && self.sent_at.elapsed().as_millis() > 4000 {
                 let said = self.autoplay.pop_front().unwrap_or_default().trim_start_matches('+').to_string();
-                if said == "!stop" {
+                if let Some(secs) = said.strip_prefix("@wait ").and_then(|s| s.trim().parse::<f32>().ok()) {
+                    // For checking: wait while the turn runs (a question from a tool comes some seconds in).
+                    self.plus_hold = Some(std::time::Instant::now() + std::time::Duration::from_secs_f32(secs));
+                    ctx.request_repaint_after(std::time::Duration::from_millis(200));
+                } else if said == "!stop" {
                     // 확인용: 멈춤 버튼을 누른 것으로 친다.
                     self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
                 } else if let Some(op) = said.strip_prefix('!') {

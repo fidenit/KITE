@@ -24,6 +24,10 @@ const INSIDE: [&str; 19] = [
     "job_result", "page_open", "page_read", "page_run", "page_show", "settings",
 ];
 
+/// The tool Claude Code asks, in place of refusing, when its own settings do not allow one of its tools
+/// (`--permission-prompt-tool`). It is not for the model: the answer is the user's, from a card on the board.
+pub const PERMISSION_TOOL: &str = "permission_prompt";
+
 /// The guide an outside agent reads to learn the board language and how to compose a good board.
 pub const GUIDE: &str = include_str!("../protocol/GUIDE.md");
 
@@ -303,6 +307,11 @@ fn serve(mut conn: std::net::TcpStream, door: &Door) {
                 .flatten()
                 .filter(|t| INSIDE.contains(&t["name"].as_str().unwrap_or("")))
                 .map(|t| json!({ "name": t["name"], "description": t["description"], "inputSchema": t["input_schema"] }))
+                .chain(std::iter::once(json!({
+                    "name": PERMISSION_TOOL,
+                    "description": "Used by Claude Code itself to ask the user whether a tool may run. Do not call it.",
+                    "inputSchema": { "type": "object", "properties": { "tool_name": { "type": "string" }, "input": { "type": "object" }, "tool_use_id": { "type": "string" } } },
+                })))
                 .collect();
             json!({ "tools": tools })
         }
@@ -311,6 +320,8 @@ fn serve(mut conn: std::net::TcpStream, door: &Door) {
             let input = &req["params"]["arguments"];
             let (text, is_error) = if door.outside {
                 outside_call(name, input)
+            } else if name == PERMISSION_TOOL {
+                (permission_prompt(input), false)
             } else if INSIDE.contains(&name) {
                 inside_call(name, input)
             } else {
@@ -324,6 +335,21 @@ fn serve(mut conn: std::net::TcpStream, door: &Door) {
         }
     };
     reply("200 OK", &json!({ "jsonrpc": "2.0", "id": req["id"], "result": result }).to_string());
+}
+
+/// Claude Code asks whether one of its tools may run: put the question to the user, and answer in the shape
+/// Claude Code reads (a text holding {"behavior":"allow"} or {"behavior":"deny","message":...}).
+fn permission_prompt(input: &Value) -> String {
+    let tool = input["tool_name"].as_str().unwrap_or("");
+    let args = if input["input"].is_object() { input["input"].clone() } else { json!({}) };
+    crate::sys::log("cc-permission.log", &format!("asked: {tool} (fields: {})", input.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>().join(", ")).unwrap_or_default()));
+    let answer = crate::permit::ask_claude_code(tool, &args);
+    crate::sys::log("cc-permission.log", &format!("{tool}: {}", if answer.is_ok() { "allowed" } else { "not allowed" }));
+    match answer {
+        // The input goes back unchanged (some builds of Claude Code want it there).
+        Ok(()) => json!({ "behavior": "allow", "updatedInput": args }).to_string(),
+        Err(why) => json!({ "behavior": "deny", "message": why }).to_string(),
+    }
 }
 
 /// Run one of APERIT's own tools. What lives on the screen side (the board, browser cards) is asked of the screen thread.
