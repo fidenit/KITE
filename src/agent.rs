@@ -122,7 +122,25 @@ pub fn ask(key: &str, model: &str, system: &str, user: &str, max_tokens: u32) ->
     Ok(v["content"].as_array().map(|a| a.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("")).unwrap_or_default())
 }
 
-fn body(cfg: &Config, role: &Role, messages: &[Value], fallbacks: bool, drop_block: bool) -> String {
+/// When a request's input passes this many tokens, the API summarizes the older part of the conversation
+/// (server-side compaction), so a long turn or a long job keeps going instead of running out of room, and each
+/// step stops resending everything. APERIT_COMPACT_AT changes it (at least 50,000, the API's minimum).
+pub fn compact_at() -> u64 {
+    crate::sys::var("COMPACT_AT").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(100_000).max(50_000)
+}
+
+const COMPACT_BETA: &str = "compact-2026-01-12";
+
+/// What a request may use beyond the basics. Each is dropped for the rest of the turn if the API refuses it.
+#[derive(Clone, Copy)]
+struct Extras {
+    fallbacks: bool,
+    drop_block: bool,
+    compact: bool,
+}
+
+fn body(cfg: &Config, role: &Role, messages: &[Value], x: Extras) -> String {
+    let Extras { fallbacks, drop_block, compact } = x;
     let mut v = json!({
         "model": cfg.model,
         "max_tokens": 32000,
@@ -145,6 +163,9 @@ fn body(cfg: &Config, role: &Role, messages: &[Value], fallbacks: bool, drop_blo
     if fallbacks {
         // 안전 분류기가 요청을 거절하면 서버가 다른 모델로 이어서 답하게 한다.
         v["fallbacks"] = "default".into();
+    }
+    if compact {
+        v["context_management"] = json!({ "edits": [{ "type": "compact_20260112", "trigger": { "type": "input_tokens", "value": compact_at() } }] });
     }
     v.to_string()
 }
@@ -231,8 +252,7 @@ pub fn run_as(cfg: &Config, key: &str, role: &Role, turn_text: &str, images: &[(
     let agent = http();
     let started = Instant::now();
     let mut stats = Stats { model: cfg.model.clone(), ..Default::default() };
-    let mut fallbacks = true;
-    let mut drop_block = false;
+    let mut extras = Extras { fallbacks: true, drop_block: false, compact: true };
     let mut messages = if images.is_empty() {
         vec![json!({ "role": "user", "content": turn_text })]
     } else {
@@ -247,11 +267,16 @@ pub fn run_as(cfg: &Config, key: &str, role: &Role, turn_text: &str, images: &[(
         if let Some(reached) = crate::usage::over_limit() {
             return Err(reached);
         }
-        let reply = stream_once(&agent, cfg, key, role, &messages, &mut fallbacks, &mut drop_block, &mut stats, started, send)?;
+        let reply = stream_once(&agent, cfg, key, role, &messages, &mut extras, &mut stats, started, send)?;
         send(Msg::Delta("\n".into())); // 응답 사이에 줄이 붙지 않게 한다
         // 빈 글 블록은 되돌려 보낼 수 없다.
         let content: Vec<Value> =
             reply.blocks.iter().filter(|b| !(b["type"] == "text" && b["text"].as_str().unwrap_or("").is_empty())).cloned().collect();
+        // The API summarized what came before: it ignores everything ahead of the summary from now on, so stop
+        // sending it. The first message stays, so that the conversation still starts with the user.
+        if content.iter().any(|b| b["type"] == "compaction") {
+            messages.truncate(1);
+        }
         match reply.stop.as_str() {
             "tool_use" => {
                 messages.push(json!({ "role": "assistant", "content": content }));
@@ -301,46 +326,53 @@ fn stream_once(
     key: &str,
     role: &Role,
     messages: &[Value],
-    fallbacks: &mut bool,
-    drop_block: &mut bool,
+    extras: &mut Extras,
     stats: &mut Stats,
     started: Instant,
     send: &dyn Fn(Msg),
 ) -> Result<Reply, String> {
-    let post = |fallbacks: bool, drop_block: bool| {
+    let post = |x: Extras| {
         let mut req = agent
             .post(URL)
             .header("content-type", "application/json")
             .header("x-api-key", key)
             .header("anthropic-version", "2026-10-21");
-        let betas: Vec<&str> = [(fallbacks, "server-side-fallback-2026-07-01"), (drop_block, "thinking-binding-controls-2026-08-01")].iter().filter(|b| b.0).map(|b| b.1).collect();
+        let betas: Vec<&str> = [(x.fallbacks, "server-side-fallback-2026-07-01"), (x.drop_block, "thinking-binding-controls-2026-08-01"), (x.compact, COMPACT_BETA)]
+            .iter()
+            .filter(|b| b.0)
+            .map(|b| b.1)
+            .collect();
         if !betas.is_empty() {
             req = req.header("anthropic-beta", betas.join(","));
         }
-        req.send(body(cfg, role, messages, fallbacks, drop_block)).map_err(|e| format!("{}: {e}", crate::sys::tr("연결 실패", "Could not connect")))
+        req.send(body(cfg, role, messages, x)).map_err(|e| format!("{}: {e}", crate::sys::tr("연결 실패", "Could not connect")))
     };
-    let mut resp = with_retries(Some(send), || post(*fallbacks, *drop_block))?;
-    for _ in 0..3 {
+    let mut resp = with_retries(Some(send), || post(*extras))?;
+    for _ in 0..4 {
         if resp.status().as_u16() != 400 {
             break;
         }
         let text = resp.body_mut().read_to_string().unwrap_or_default();
-        if !*drop_block && text.contains("block_binding") {
+        if !extras.drop_block && text.contains("block_binding") {
             // 앞서 받은 생각 블록이 "그때와 대화 내용이 다르다"고 거부됐다. 그 블록만 버리게 하고 이어 간다 (이 턴이 끝날 때까지 유지).
             // 원인을 찾을 수 있게 보낸 내용을 남긴다.
             crate::sys::log("api.log", &format!("생각 블록 거부, 버리고 다시 보냄: {}", api_error(400, &text)));
             let _ = std::fs::write(crate::sys::data_dir().join("bind-error.json"), json!({ "error": text, "messages": messages }).to_string());
-            *drop_block = true;
+            extras.drop_block = true;
+        } else if extras.compact && (text.contains("context_management") || text.contains("compact")) {
+            // Compaction is not accepted here (an older model, a proxy): go on without it.
+            crate::sys::log("api.log", &format!("compaction refused, going on without it: {}", api_error(400, &text)));
+            extras.compact = false;
         } else if LONG_CACHE.load(std::sync::atomic::Ordering::Relaxed) && (text.contains("ttl") || text.contains("cache_control")) {
             // The one-hour cache was not accepted here: go back to the default and send again.
             crate::sys::log("api.log", &format!("one-hour cache refused, using the default: {}", api_error(400, &text)));
             LONG_CACHE.store(false, std::sync::atomic::Ordering::Relaxed);
-        } else if *fallbacks && text.contains("fallback") {
-            *fallbacks = false; // 이 계정·모델에서 fallbacks 가 안 받아들여지면 빼고 다시 보낸다
+        } else if extras.fallbacks && text.contains("fallback") {
+            extras.fallbacks = false; // 이 계정·모델에서 fallbacks 가 안 받아들여지면 빼고 다시 보낸다
         } else {
             return Err(api_error(400, &text));
         }
-        resp = with_retries(Some(send), || post(*fallbacks, *drop_block))?;
+        resp = with_retries(Some(send), || post(*extras))?;
     }
     let status = resp.status().as_u16();
     if status != 200 {
@@ -353,6 +385,8 @@ fn stream_once(
     let mut stop = String::new();
     // What this one request used, for what it cost (usage.rs).
     let (mut used_in, mut used_read, mut used_write, mut used_out, mut used_model) = (0u64, 0u64, 0u64, 0u64, cfg.model.clone());
+    // The summarizing step, when there was one: its own tokens, reported apart from the answer's.
+    let mut compaction_usage = Value::Null;
     let reader = BufReader::new(resp.into_body().into_reader());
     for line in reader.lines() {
         let line = line.map_err(|e| format!("{}: {e}", crate::sys::tr("스트림 끊김", "The stream broke")))?;
@@ -393,6 +427,9 @@ fn stream_once(
                         let what = if blocks[idx]["name"] == "web_fetch" { "웹 페이지 읽는 중" } else { "웹 검색 중" };
                         send(Msg::Activity(what.into()));
                     }
+                    Some("compaction") => {
+                        send(Msg::Activity(crate::sys::tr("지금까지 한 일을 요약하는 중", "Summarizing the work so far").into()));
+                    }
                     _ => {}
                 }
             }
@@ -418,6 +455,12 @@ fn stream_once(
                     }
                     "thinking_delta" => append(&mut blocks[idx], "thinking", d["thinking"].as_str().unwrap_or("")),
                     "signature_delta" => blocks[idx]["signature"] = d["signature"].clone(),
+                    // The summary comes whole, in one piece.
+                    "compaction_delta" => {
+                        if let Some(more) = d["content"].as_str() {
+                            append(&mut blocks[idx], "content", more);
+                        }
+                    }
                     "citations_delta" => {
                         if !blocks[idx]["citations"].is_array() {
                             blocks[idx]["citations"] = json!([]);
@@ -440,6 +483,11 @@ fn stream_once(
                 }
             }
             "message_delta" => {
+                if let Some(it) = v["usage"]["iterations"].as_array() {
+                    if let Some(c) = it.iter().rev().find(|i| i["type"] == "compaction") {
+                        compaction_usage = c.clone();
+                    }
+                }
                 if let Some(n) = v["usage"]["output_tokens"].as_u64() {
                     stats.output_tokens += n;
                     used_out = n;
@@ -456,6 +504,24 @@ fn stream_once(
     let write_factor = if LONG_CACHE.load(std::sync::atomic::Ordering::Relaxed) { 2.0 } else { 1.25 };
     if let Some(c) = crate::usage::cost(&used_model, used_in, used_read, used_write, write_factor, used_out) {
         crate::usage::record(c);
+    }
+    if !compaction_usage.is_null() {
+        // The summarizing step is billed apart from the answer and is not in the answer's usage.
+        let n = |k: &str| compaction_usage[k].as_u64().unwrap_or(0);
+        stats.input_tokens += n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens");
+        stats.output_tokens += n("output_tokens");
+        if let Some(c) = crate::usage::cost(&used_model, n("input_tokens"), n("cache_read_input_tokens"), n("cache_creation_input_tokens"), 1.25, n("output_tokens")) {
+            crate::usage::record(c);
+        }
+    }
+    if let Some(b) = blocks.iter().find(|b| b["type"] == "compaction") {
+        let summary = b["content"].as_str().unwrap_or("");
+        crate::sys::log("api.log", &format!("compacted: summary of {} characters; summarizing step {}", summary.chars().count(), compaction_usage));
+        if summary.is_empty() {
+            // No summary came back: the block cannot stand for what came before. Leave it out; the request
+            // just goes on with the full conversation.
+            blocks.retain(|b| b["type"] != "compaction");
+        }
     }
     Ok(Reply { blocks, stop })
 }

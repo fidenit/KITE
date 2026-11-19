@@ -143,6 +143,33 @@ fn functions(tools: &Value) -> Vec<Value> {
     tools.as_array().into_iter().flatten().filter(|t| t["input_schema"].is_object()).map(|t| json!({ "type": "function", "function": { "name": t["name"], "description": t["description"], "parameters": t["input_schema"] } })).collect()
 }
 
+/// What an old tool result is replaced with when the conversation grows too long.
+const CLEARED: &str = "[an earlier tool result, cleared to save room; run the tool again if it is still needed]";
+
+/// Keep a long turn or a long job inside the model's room. These services have no summarizing of their own
+/// (the Claude engine uses the API's compaction), so once the conversation passes about `agent::compact_at()`
+/// tokens (counted as four characters each), the results of all but the last `keep` tool calls are cleared, and
+/// pictures before them dropped. The calls themselves stay, so the model still sees what it did.
+fn clear_old(messages: &mut [Value], keep: usize) -> usize {
+    let size: usize = messages.iter().map(|m| m.to_string().len()).sum();
+    if size as u64 <= crate::agent::compact_at() * 4 {
+        return 0;
+    }
+    let tools: Vec<usize> = messages.iter().enumerate().filter(|(_, m)| m["role"] == "tool").map(|(i, _)| i).collect();
+    let Some(&cut) = tools.len().checked_sub(keep).and_then(|n| tools.get(n)) else { return 0 };
+    let mut cleared = 0;
+    for m in messages.iter_mut().take(cut).skip(2) {
+        if m["role"] == "tool" && m["content"] != CLEARED {
+            m["content"] = CLEARED.into();
+            cleared += 1;
+        } else if m["role"] == "user" && m["content"].is_array() {
+            m["content"] = "[pictures sent earlier, removed to save room]".into();
+            cleared += 1;
+        }
+    }
+    cleared
+}
+
 /// The main turn. `added` hands over what the user said while the model was working (see `agent::run`).
 pub fn run(p: &Provider, turn_text: &str, images: &[(String, String)], added: &dyn Fn() -> Result<Option<String>, String>, send: &dyn Fn(Msg)) -> Result<Stats, String> {
     let role = Role { system: crate::agent::system(), tools: crate::tools::definitions(false), max_steps: 80, check: &|| added(), tool: &|_, _| None };
@@ -167,6 +194,10 @@ pub fn run_as(p: &Provider, role: &Role, turn_text: &str, images: &[(String, Str
     let mut with_usage = true;
 
     for _ in 0..role.max_steps {
+        let cleared = clear_old(&mut messages, 8);
+        if cleared > 0 {
+            crate::sys::log("api.log", &format!("cleared {cleared} old tool results to keep the conversation small"));
+        }
         let mut body = json!({ "model": p.model, "messages": messages, "stream": true });
         if !tools.is_empty() {
             body["tools"] = tools.clone().into();
@@ -391,6 +422,10 @@ mod tests {
         assert_eq!(m[2]["tool_calls"][0]["function"], json!({ "name": "lookup", "arguments": "{\"q\":\"venue\"}" }));
         assert_eq!(m[2]["content"], "say Looking it up.\n");
         assert_eq!(m[3], json!({ "role": "tool", "tool_call_id": "call_a", "content": "Gapyeong" }));
+        // A short conversation is left alone.
+        let mut short = m.clone();
+        assert_eq!(clear_old(&mut short, 1), 0);
+        assert_eq!(&short, m);
         assert_eq!(m[4], json!({ "role": "tool", "tool_call_id": "call_b", "content": "applied" }));
         assert_eq!(m[5]["content"][0]["text"], "<added>\nand the price\n</added>");
     }
@@ -446,5 +481,23 @@ mod known {
         assert_eq!(of("Gemini").choose(&ids(&["models/gemini-2.5-flash", "models/gemini-2.5-pro", "models/gemini-3-pro-preview", "models/gemini-2.5-flash-lite"])).as_deref(), Some("models/gemini-2.5-pro"));
         assert_eq!(of("Gemini").choose(&ids(&["models/gemini-2.5-flash", "models/gemini-embedding-001"])).as_deref(), Some("models/gemini-2.5-flash"));
         assert_eq!(of("OpenAI").choose(&ids(&["whisper-1"])), None);
+    }
+
+    #[test]
+    fn a_long_conversation_clears_old_tool_results() {
+        let big = "x".repeat(100_000);
+        let mut m = vec![json!({ "role": "system", "content": "S" }), json!({ "role": "user", "content": "go" })];
+        for n in 0..6 {
+            m.push(json!({ "role": "assistant", "content": null, "tool_calls": [{ "id": format!("c{n}"), "type": "function", "function": { "name": "read_file", "arguments": "{}" } }] }));
+            m.push(json!({ "role": "tool", "tool_call_id": format!("c{n}"), "content": big }));
+        }
+        assert_eq!(clear_old(&mut m, 2), 4);
+        // The first four results are cleared, the last two kept; the calls and the first messages stay.
+        assert_eq!(m[3]["content"], CLEARED);
+        assert_eq!(m[9]["content"], CLEARED);
+        assert_eq!(m[11]["content"], big.as_str());
+        assert_eq!(m[13]["content"], big.as_str());
+        assert_eq!(m[2]["tool_calls"][0]["id"], "c0");
+        assert_eq!(m[1]["content"], "go");
     }
 }

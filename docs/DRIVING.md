@@ -141,6 +141,8 @@ Variables named `LYBOARD_...` from earlier versions are still read.
 
 When the service is busy (HTTP 429, 529 or another 5xx) or cannot be reached, APERIT waits and sends the request again, up to four more times: as long as the service asks (`retry-after`), or 2, 4, 8 and 16 seconds. The line under the conversation says so while it waits, and **Stop** ends the wait. Only a request that got no answer is sent again, so nothing on the board is written twice.
 
+A long turn or a long job does not run out of room. With the Claude API engine, once a request passes 100,000 input tokens (`APERIT_COMPACT_AT`, at least 50,000) the API summarizes the older part of the conversation and the work goes on from the summary (server-side compaction, the `compact-2026-01-12` beta); the line under the conversation says "Summarizing the work so far". With the OpenAI-compatible engine, past the same size the results of all but the last eight tool calls are cleared (the calls stay, so the model knows what it did). The Claude Code engine and its workers compact on their own. The main turn never grows this way across turns: each turn is rebuilt from the board, the last ten exchanges, older ones that bear on what was said, and memory.
+
 ## Without a model: demos and logs
 
 - **Seed the demo.** With no key, or `APERIT_DEMO=1`, set `APERIT_DEMO_SEED=<file.ops>`: the board is filled before the window opens.

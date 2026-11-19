@@ -15,6 +15,10 @@ The **Keys** window shows what your Claude API key has spent today and this mont
 
 The model buttons show what an ordinary turn roughly costs: 4,000 new input tokens, 26,000 read from the cache, 1,000 out. With the prices of 2026-11 that is about 4¢ on Opus 5.5, 2¢ on Sonnet 5.5 and under 1¢ on Haiku 5.5. A turn that misses the cache, or uses many tools, costs several times that (below). Opus stays the default; choosing a cheaper model is the user's call.
 
+## Long jobs
+
+A turn or a worker that uses tools sends the whole conversation again on every step, so a long job used to cost more with every step and could end by running out of room. Now, past 100,000 input tokens, the API writes a summary of the older part and later steps send the summary instead (about 2,000 characters in a test). The summary is a step of its own and is billed; APERIT counts it in the spending. Measured on 2026-11-19 with Haiku 5.5 and the threshold at its minimum (50,000): a turn that read four large source files compacted twice, finished with the right answer, and cost about 2.5¢ in all.
+
 ## Where the input goes (Claude API engine)
 
 From 20 real turns of daily use with Opus (2026-11-16): input per request 34,088 to 44,612, median 36,466; output median 514; cache hit 90%.
