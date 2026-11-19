@@ -88,11 +88,13 @@ object Jev {
         }
         val r = done.get()
         if (r == null) {
-            // 늦었다: 기다리지 않고 연결을 끊는다.
-            try {
-                conn.get()?.disconnect()
-            } catch (_: Exception) {
-            }
+            // 늦었다: 기다리지 않고 돌아간다. 연결은 따로 끊는다 (읽는 중인 연결을 끊으면 끝날 때까지 막힐 수 있다).
+            Thread {
+                try {
+                    conn.get()?.disconnect()
+                } catch (_: Exception) {
+                }
+            }.apply { isDaemon = true }.start()
             fail("Jev 응답이 ${limitMs}ms 안에 오지 않음")
             return null
         }
