@@ -61,8 +61,9 @@ class ElevenTest {
                 s.enqueue(MockResponse().setResponseCode(code).setBody("first answer $code"))
                 s.enqueue(MockResponse().setResponseCode(500).setBody("second answer"))
                 val m = failure()!!
-                assertTrue(m, m.startsWith("HTTP $code") && m.contains("first answer $code") && !m.contains("second"))
-                assertEquals("HTTP $code: one request only", 1, s.requestCount)
+                // 업로드를 흘려 보내는 중에 거절되면 응답 본문은 읽을 수 없다: 처음 오류의 상태 번호가 글에 있어야 하고, 둘째 응답의 글은 없어야 한다
+                assertTrue(m, m.startsWith("HTTP $code") && !m.contains("second"))
+                assertEquals("HTTP $code: one request only (no second model)", 1, s.requestCount)
             } finally {
                 s.shutdown()
             }
