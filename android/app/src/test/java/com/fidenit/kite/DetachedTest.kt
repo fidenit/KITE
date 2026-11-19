@@ -1,0 +1,224 @@
+package com.fidenit.kite
+
+import com.fidenit.kite.engine.Detached
+import com.fidenit.kite.engine.DetachedCommands
+import com.fidenit.kite.engine.EngineConfig
+import com.fidenit.kite.engine.FollowLine
+import com.fidenit.kite.engine.Waker
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeFalse
+import org.junit.Test
+import java.io.File
+import java.util.concurrent.TimeUnit
+import kotlin.random.Random
+
+class DetachedTest {
+    private val cfg = EngineConfig("claude", "~/work dir", "acceptEdits", "low", "--model sonnet")
+
+    @Test
+    fun idsAreMadeAndChecked() {
+        val id = Detached.newId(0L, Random(1))
+        assertTrue(id, Regex("\\d{8}-\\d{6}-[0-9a-f]{4}").matches(id))
+        assertTrue(Detached.valid(id))
+        assertTrue(Detached.valid("A-b-9"))
+        for (bad in listOf("", "a b", "a;rm -rf ~", "../x", "a\$(id)", "a`id`", "a'b", "a\"b", "a\nb", "한글", "a/b", "a.b", "x".repeat(65))) {
+            assertFalse("'$bad'", Detached.valid(bad))
+        }
+        val c = DetachedCommands(cfg)
+        for (bad in listOf("a b", "x;y", "")) {
+            for (f in listOf<() -> String>({ c.upload(bad) }, { c.start(bad) }, { c.follow(bad, 0) }, { c.stop(bad) }, { c.clean(bad) }, { c.errTail(bad) })) {
+                assertTrue(runCatching { f() }.exceptionOrNull() is IllegalArgumentException)
+            }
+        }
+        // 같은 때에 만든 두 번호도 다르다
+        assertTrue(Detached.newId() != Detached.newId())
+    }
+
+    @Test
+    fun linesAreClassifiedAndCounted() {
+        assertEquals(FollowLine.Data("""{"type":"result"}"""), Detached.classify("""{"type":"result"}"""))
+        assertEquals(FollowLine.Exit("0"), Detached.classify("APERITEXIT 0"))
+        assertEquals(FollowLine.Exit("stopped"), Detached.classify("APERITEXIT stopped"))
+        assertEquals(FollowLine.Exit("none"), Detached.classify("APERITEXIT none\r"))
+        assertEquals(FollowLine.Beat, Detached.classify("APERITBEAT"))
+        assertEquals(FollowLine.Run("a-1"), Detached.classify("APERITRUN a-1"))
+        assertEquals(FollowLine.Fail(""), Detached.classify("APERITFAIL"))
+        assertEquals(FollowLine.Fail("cd"), Detached.classify("APERITFAIL cd"))
+        assertEquals(FollowLine.Other, Detached.classify("Welcome to the server"))
+        assertEquals(FollowLine.Other, Detached.classify(""))
+        assertEquals(FollowLine.Other, Detached.classify("APERITEXIT"))
+        val lines = listOf("APERITRUN x", """{"a":1}""", "motd", "APERITBEAT", """{"a":2}""", "", """{"a":3}""", "APERITEXIT 0")
+        assertEquals(3, Detached.countData(lines))
+    }
+
+    @Test
+    fun reconnectDelays() {
+        assertEquals(listOf(1000L, 2000L, 4000L, 8000L, 15000L, 30000L, 30000L, 30000L), (0..7).map { Detached.delayMs(it) })
+        assertEquals(1000L, Detached.delayMs(-3))
+    }
+
+    @Test
+    fun wakerWakesAndStops() {
+        val w = Waker()
+        var t = System.currentTimeMillis()
+        Thread { Thread.sleep(150); w.wake() }.start()
+        assertTrue(w.sleep(10_000) { false })
+        assertTrue("깨우기로 바로 깬다", System.currentTimeMillis() - t < 3000)
+        t = System.currentTimeMillis()
+        var stop = false
+        Thread { Thread.sleep(150); stop = true }.start()
+        assertFalse(w.sleep(10_000) { stop })
+        assertTrue("멈춤으로 바로 깬다", System.currentTimeMillis() - t < 3000)
+        w.wake()
+        w.clear()
+        t = System.currentTimeMillis()
+        assertFalse(w.sleep(300) { false })
+        assertTrue(System.currentTimeMillis() - t >= 250)
+    }
+
+    // ---------------------------------------------------------------- 이 컴퓨터의 셸로 돌려 본다
+
+    private class Out(val lines: List<String>, val ms: Long)
+
+    private fun sh(home: File, cmd: String, stdin: String? = null, timeoutSec: Long = 60): Out {
+        val t0 = System.currentTimeMillis()
+        val pb = ProcessBuilder("sh", "-c", cmd)
+        pb.environment()["HOME"] = home.absolutePath
+        pb.redirectErrorStream(true)
+        val proc = pb.start()
+        proc.outputStream.use { if (stdin != null) it.write(stdin.toByteArray()) }
+        val lines = proc.inputStream.bufferedReader().readLines()
+        assertTrue("시간 초과: $cmd", proc.waitFor(timeoutSec, TimeUnit.SECONDS))
+        return Out(lines, System.currentTimeMillis() - t0)
+    }
+
+    private fun newHome(fake: String, dir: String = "work dir"): File {
+        val home = File.createTempFile("kite", "home").let { it.delete(); it.mkdirs(); it }
+        File(home, ".local/bin").mkdirs()
+        File(home, dir).mkdirs()
+        File(home, ".kite").mkdirs()
+        File(home, ".kite/system.txt").writeText("x")
+        val f = File(home, ".local/bin/claude")
+        f.writeText(fake)
+        f.setExecutable(true)
+        return home
+    }
+
+    private val okFake = "#!/bin/sh\nmkdir -p \"\$HOME/cap\"\necho \"\$*\" > \"\$HOME/cap/args\"\npwd > \"\$HOME/cap/pwd\"\ncat > \"\$HOME/cap/stdin\"\n" +
+        "echo '{\"type\":\"system\",\"subtype\":\"init\"}'\nfor i in 1 2 3 4; do echo \"{\\\"type\\\":\\\"stream_event\\\",\\\"n\\\":\$i}\"; sleep 0.4; done\necho '{\"type\":\"result\",\"result\":\"ok\"}'\n"
+
+    private fun alive(home: File): List<String> = sh(File("/"), "ps -eo args").lines.filter { (it.contains(home.absolutePath) || it.contains("sleep 37.31")) && !it.contains("ps -eo") }
+
+    @Test
+    fun uploadStartFollowRunUnderShell() {
+        // 서버(리눅스·맥)의 셸을 흉내 내는 시험이라 Windows 에서는 건너뛴다 (sh 가 없고, 있어도 경로와 인자 다루는 법이 다르다).
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val home = newHome(okFake)
+        val c = DetachedCommands(cfg)
+        val id = "20261120-013000-a1b2"
+        val text = "<input>it's \"quoted\" \$HOME</input>"
+        try {
+            assertEquals(emptyList<String>(), sh(home, c.upload(id), text).lines)
+            assertEquals(text, File(home, ".kite/runs/$id.in").readText())
+
+            // 시작은 바로 돌아온다 (가짜 claude 는 1.6초 넘게 돈다)
+            val st = sh(home, c.start(id))
+            assertEquals(listOf("APERITRUN $id"), st.lines)
+            assertTrue("시작이 ${st.ms}ms 걸림", st.ms < 1500)
+            assertTrue(File(home, ".kite/runs/$id.pid").readText().trim().all { it.isDigit() })
+            // 두 번 시작하지 않는다
+            assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
+
+            // 처음부터 따라 읽기: 줄 6개와 끝
+            val all = sh(home, c.follow(id, 0)).lines
+            assertEquals(all.toString(), "APERITEXIT 0", all.last())
+            val data = all.filter { Detached.classify(it) is FollowLine.Data }
+            assertEquals(all.toString(), 6, data.size)
+            assertEquals(File(home, ".kite/runs/$id.out").readLines(), data)
+            assertTrue(data.last().contains("\"result\""))
+            // k 줄 뒤부터
+            val rest = sh(home, c.follow(id, 4)).lines
+            assertEquals(data.drop(4) + "APERITEXIT 0", rest)
+            assertEquals(listOf("APERITEXIT 0"), sh(home, c.follow(id, 6)).lines)
+
+            // 옛 command() 시험에서 옮겨 온 것: 인자·작업 폴더·표준 입력
+            val args = File(home, "cap/args").readText().trim()
+            assertEquals("-p --output-format stream-json --verbose --include-partial-messages --no-session-persistence --append-system-prompt-file ${home.absolutePath}/.kite/system.txt --effort low --tools Bash,Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,ToolSearch --permission-mode acceptEdits --model sonnet", args)
+            assertTrue(File(home, "cap/pwd").readText().trim().endsWith("/work dir"))
+            assertEquals(text, File(home, "cap/stdin").readText())
+
+            // 모르는 번호
+            assertEquals(listOf("APERITEXIT none"), sh(home, c.follow("20261120-999999-zzzz", 0)).lines)
+
+            // 치우기
+            sh(home, c.clean(id))
+            assertEquals(emptyList<String>(), File(home, ".kite/runs").list()!!.toList())
+            assertEquals(listOf("APERITEXIT none"), sh(home, c.follow(id, 0)).lines)
+        } finally {
+            home.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun startFailsClearly() {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val home = newHome(okFake)
+        try {
+            // 올리지 않고 시작
+            assertEquals(listOf("APERITFAIL noin"), sh(home, DetachedCommands(cfg).start("x1")).lines)
+            // 없는 작업 폴더
+            val bad = DetachedCommands(EngineConfig("claude", "~/nope", "default", "", ""))
+            sh(home, bad.upload("x2"), "hi")
+            assertEquals(listOf("APERITFAIL cd"), sh(home, bad.start("x2")).lines)
+        } finally {
+            home.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun folderNameWithQuoteAndSpace() {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val home = newHome(okFake, "it's a \"dir\"")
+        val c = DetachedCommands(EngineConfig("claude", "~/it's a \"dir\"", "default", "", ""))
+        try {
+            sh(home, c.upload("q1"), "hi")
+            assertEquals(listOf("APERITRUN q1"), sh(home, c.start("q1")).lines)
+            val all = sh(home, c.follow("q1", 0)).lines
+            assertEquals("APERITEXIT 0", all.last())
+            assertTrue(File(home, "cap/pwd").readText().trim().endsWith("/it's a \"dir\""))
+        } finally {
+            home.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun stopEndsWrapperClaudeAndChildren() {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val home = newHome("#!/bin/sh\ncat > /dev/null\necho '{\"type\":\"system\"}'\nsleep 37.31\necho '{\"type\":\"result\"}'\n")
+        val c = DetachedCommands(cfg)
+        val id = "stop-1"
+        try {
+            sh(home, c.upload(id), "hi")
+            assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
+            Thread.sleep(600)
+            assertTrue("돌고 있어야 한다: ${alive(home)}", alive(home).any { it.contains("sleep 37.31") })
+            val t0 = System.currentTimeMillis()
+            sh(home, c.stop(id))
+            val took = System.currentTimeMillis() - t0
+            val exit = File(home, ".kite/runs/$id.exit").readText().trim()
+            assertTrue("끝난 값: $exit", exit in listOf("143", "137", "stopped"))
+            assertTrue("멈춤이 ${took}ms 걸림", took < 5000)
+            Thread.sleep(300)
+            assertEquals("남은 프로세스", emptyList<String>(), alive(home))
+            assertEquals(listOf("APERITEXIT $exit"), sh(home, c.follow(id, 2)).lines.filter { it.startsWith("APERITEXIT") })
+            // 끝난 뒤 다시 멈춰도 아무 일 없다
+            sh(home, c.stop(id))
+            assertEquals(exit, File(home, ".kite/runs/$id.exit").readText().trim())
+        } finally {
+            sh(File("/"), "pkill -f ${home.absolutePath}; true")
+            home.deleteRecursively()
+        }
+    }
+}
