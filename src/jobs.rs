@@ -1,5 +1,8 @@
 //! 맡긴 작업. 메인 AI 가 작업 지시서를 쓰면, 지시서마다 작업자(따로 도는 대화)가 하나씩 붙어 동시에 일한다.
 //! 메인은 기다리지 않고 사용자와 계속 대화하고, 작업자가 끝나면 보고서가 메인에게 돌아온다.
+//! A job can wait for others (`after`): it starts by itself when they are done, with their reports added to its
+//! order, so a change and its review, or the steps of a pipeline, are handed over at once. Workers can read the
+//! board and the other jobs' reports while they work.
 //!
 //!   지시서와 결과  보관함 `작업/지시서/<작업ID> <제목>.md`
 //!   진행 상황      화면의 진행 카드 (카드 ID = 작업 ID)
@@ -120,7 +123,7 @@ struct Job {
     place: String,
     dir: String,
     note: String,
-    /// 진행 중 / 끝남 / 실패 / 중단함
+    /// 기다림 (for the jobs in `after`) / 진행 중 / 끝남 / 실패 / 중단함
     state: &'static str,
     /// 가장 최근에 한 일 한 줄
     last: String,
@@ -163,6 +166,36 @@ fn emit(ev: Event) {
     }
 }
 
+/// Wait until every job in `after` is done. Returns their reports, to add to the order; an error when one of
+/// them failed or was stopped (then this job does not start), or when this job is stopped while it waits.
+fn wait_for(id: &str, after: &[String], stop: &Arc<AtomicBool>) -> Result<String, String> {
+    if after.is_empty() {
+        return Ok(String::new());
+    }
+    let waits = format!("{}: {}", crate::sys::tr("먼저 끝나야 하는 작업", "Waits for"), after.join(", "));
+    set(id, |j| j.last = waits.clone());
+    emit(Event::Progress { id: id.to_string(), pct: None, text: Some(waits) });
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return Err("시작하기 전에 중단함".into());
+        }
+        let all = jobs();
+        let of = |a: &String| all.iter().find(|j| &j.id == a);
+        if let Some(j) = after.iter().filter_map(of).find(|j| matches!(j.state, "실패" | "중단함")) {
+            return Err(format!("시작하지 않음: 먼저 끝나야 하는 작업 {} ({}) 이 {} 상태로 끝남", j.id, j.title, j.state));
+        }
+        if after.iter().filter_map(of).all(|j| j.state == "끝남") {
+            let earlier: String = after.iter().filter_map(of).map(|j| format!("<earlier id=\"{}\" title=\"{}\">\n{}\n</earlier>\n", j.id, j.title, j.report)).collect();
+            drop(all);
+            set(id, |j| j.state = "진행 중");
+            emit(Event::Progress { id: id.to_string(), pct: None, text: Some(crate::sys::tr("시작함", "Started").into()) });
+            return Ok(format!("\n<earlier_jobs>\nThe reports of the jobs this one waited for:\n{earlier}</earlier_jobs>"));
+        }
+        drop(all);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
 fn next_id() -> String {
     let path = sys::data_dir().join("job.seq");
     let n = std::fs::read_to_string(&path).ok().and_then(|s| s.trim().parse::<u32>().ok()).unwrap_or(0) + 1;
@@ -171,14 +204,18 @@ fn next_id() -> String {
 }
 
 pub fn running() -> usize {
-    jobs().iter().filter(|j| j.state == "진행 중").count()
+    jobs().iter().filter(|j| matches!(j.state, "진행 중" | "기다림")).count()
 }
 
 /// 지금 돌고 있는 작업 (매 턴 메인 모델에게 보여 준다).
 pub fn summary() -> String {
     let mut out = String::new();
-    for j in jobs().iter().filter(|j| j.state == "진행 중") {
-        out += &format!("{} [{}분째] {} — 지금: {}\n", j.id, j.started.elapsed().as_secs() / 60, j.title, if j.last.is_empty() { "시작하는 중" } else { &j.last });
+    for j in jobs().iter().filter(|j| matches!(j.state, "진행 중" | "기다림")) {
+        if j.state == "기다림" {
+            out += &format!("{} [기다림] {} — {}\n", j.id, j.title, j.last);
+        } else {
+            out += &format!("{} [{}분째] {} — 지금: {}\n", j.id, j.started.elapsed().as_secs() / 60, j.title, if j.last.is_empty() { "시작하는 중" } else { &j.last });
+        }
     }
     out
 }
@@ -202,7 +239,11 @@ pub fn tool(name: &str, input: &Value) -> Result<String, String> {
             Ok(all
                 .iter()
                 .map(|j| {
-                    let time = if j.state == "진행 중" { format!("{}분째", j.started.elapsed().as_secs() / 60) } else { format!("{}초 걸림", j.took_secs) };
+                    let time = match j.state {
+                "진행 중" => format!("{}분째", j.started.elapsed().as_secs() / 60),
+                "기다림" => "시작 전".to_string(),
+                _ => format!("{}초 걸림", j.took_secs),
+            };
                     format!("{} [{} · {time}] {} — {} (곳: {}, 작업 폴더: {}, 지시서: {})", j.id, j.state, j.title, if j.last.is_empty() { "-" } else { &j.last }, j.place, j.dir, j.note)
                 })
                 .collect::<Vec<_>>()
@@ -212,7 +253,7 @@ pub fn tool(name: &str, input: &Value) -> Result<String, String> {
             let msg = input["message"].as_str().unwrap_or("").trim().to_string();
             let all = jobs();
             let j = all.iter().find(|j| j.id == id).ok_or_else(|| format!("'{id}' 라는 작업이 없음"))?;
-            if j.state != "진행 중" {
+            if !matches!(j.state, "진행 중" | "기다림") {
                 return Err(format!("{id} 는 이미 {} 상태라 전할 수 없음. 이어서 시키려면 job_start 로 새 작업을 맡긴다", j.state));
             }
             j.inbox.lock().unwrap_or_else(|e| e.into_inner()).push(msg);
@@ -227,7 +268,11 @@ pub fn tool(name: &str, input: &Value) -> Result<String, String> {
         "job_result" => {
             let all = jobs();
             let j = all.iter().find(|j| j.id == id).ok_or_else(|| format!("'{id}' 라는 작업이 없음"))?;
-            Ok(if j.state == "진행 중" { format!("아직 진행 중. 지금: {}", j.last) } else { format!("[{}]\n{}", j.state, j.report) })
+            Ok(match j.state {
+                "진행 중" => format!("아직 진행 중. 지금: {}", j.last),
+                "기다림" => format!("아직 시작 전. {}", j.last),
+                _ => format!("[{}]\n{}", j.state, j.report),
+            })
         }
         other => Err(format!("모르는 도구 '{other}'")),
     }
@@ -243,6 +288,22 @@ fn start(input: &Value) -> Result<String, String> {
     // 작업자는 지금 엔진으로 돈다 (`on` 으로 다른 곳을 고르지 않으면): Claude Code 엔진이면 Claude Code 로, 서버면 그 서버로, 아니면 API 키로.
     let place = place_named(&cfg, input["on"].as_str().unwrap_or(""))?;
     let key = cfg.key.clone().unwrap_or_default();
+    // The jobs this one waits for. A list, or ids in one string.
+    let after: Vec<String> = match &input["after"] {
+        Value::Array(a) => a.iter().filter_map(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+        Value::String(s) => s.split([',', ' ']).map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect(),
+        _ => Vec::new(),
+    };
+    {
+        let all = jobs();
+        for a in &after {
+            match all.iter().find(|j| &j.id == a) {
+                None => return Err(format!("'{a}' 라는 작업이 없음 (after)")),
+                Some(j) if matches!(j.state, "실패" | "중단함") => return Err(format!("{a} 는 {} 상태로 끝나서 기다릴 수 없음", j.state)),
+                _ => {}
+            }
+        }
+    }
     cfg.effort = match input["effort"].as_str() {
         Some(e) if ["low", "medium", "high"].contains(&e) => e.to_string(),
         _ => "medium".into(),
@@ -296,7 +357,7 @@ fn start(input: &Value) -> Result<String, String> {
         place: place.name(),
         dir: dir.clone(),
         note: note.clone(),
-        state: "진행 중",
+        state: if after.is_empty() { "진행 중" } else { "기다림" },
         last: String::new(),
         report: String::new(),
         started: Instant::now(),
@@ -319,14 +380,22 @@ fn start(input: &Value) -> Result<String, String> {
     }
     let (jid, jtitle, jdir, jnote) = (id.clone(), title.clone(), dir.clone(), note.clone());
     let place_name = place.name();
+    let after_text = after.join(", ");
     std::thread::spawn(move || {
         let id = jid;
+        // Wait for the jobs in `after`, then add their reports to the order.
+        let waited = wait_for(&id, &after, &stop);
         let started = Instant::now();
-        let send = |m: Msg| {
-            if let Msg::Activity(a) = m {
+        set(&id, |j| j.started = started);
+        let send = |m: Msg| match m {
+            Msg::Activity(a) => {
                 if !a.is_empty() {
                     set(&id, |j| j.last = a);
                 }
+            }
+            // Reading the board is done by the screen thread.
+            other => {
+                to_ui(other);
             }
         };
         let check = || {
@@ -355,8 +424,13 @@ fn start(input: &Value) -> Result<String, String> {
                 _ => None,
             }
         };
-        let result = match &place {
-            Place::Here | Place::Server(_) => {
+        let first = match &waited {
+            Ok(earlier) => format!("{first}{earlier}"),
+            Err(_) => first,
+        };
+        let result = match (&waited, &place) {
+            (Err(e), _) => Err(e.clone()),
+            (_, Place::Here | Place::Server(_)) => {
                 // Claude Code 가 하는 일을 진행 카드에 그대로 보여 준다 (이 엔진에는 progress 도구가 없다).
                 let shown = |m: Msg| {
                     if let Msg::Activity(a) = m {
@@ -369,7 +443,7 @@ fn start(input: &Value) -> Result<String, String> {
                 let server = if let Place::Server(s) = &place { Some(s.clone()) } else { None };
                 crate::cc::worker(&id, worker_prompt(), &jdir, &cfg.effort, &first, server, &stop, &shown)
             }
-            Place::OpenAi | Place::Api => {
+            (_, Place::OpenAi | Place::Api) => {
                 let role = agent::Role { system: worker_prompt(), tools: tools::definitions(true), max_steps: MAX_STEPS, check: &check, tool: &tool };
                 match (&place, &cfg.openai) {
                     (Place::OpenAi, Some(p)) => crate::openai::run_as(p, &role, &first, &[], &send),
@@ -397,5 +471,56 @@ fn start(input: &Value) -> Result<String, String> {
         });
         emit(Event::Finished { id: id.clone(), title: jtitle, ok, report });
     });
-    Ok(format!("작업 {id} 을 작업자에게 맡김 ({place_name}). 작업 폴더: {dir}.") + &format!(" 지시서: {note}. 화면에 진행 카드 {id} 가 자동으로 생겼다. 끝나면 보고서가 <job_done> 으로 온다. 기다리지 말고 이 턴을 마친다."))
+    let waits = if after_text.is_empty() { String::new() } else { format!(" {after_text} 이 끝나면 그 보고서를 받아 저절로 시작한다.") };
+    Ok(format!("작업 {id} 을 작업자에게 맡김 ({place_name}).{waits} 작업 폴더: {dir}.") + &format!(" 지시서: {note}. 화면에 진행 카드 {id} 가 자동으로 생겼다. 끝나면 보고서가 <job_done> 으로 온다. 기다리지 말고 이 턴을 마친다."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(id: &str, state: &'static str, report: &str) -> Job {
+        Job {
+            id: id.into(),
+            title: format!("{id} title"),
+            place: "api".into(),
+            dir: String::new(),
+            note: String::new(),
+            state,
+            last: String::new(),
+            report: report.into(),
+            started: Instant::now(),
+            took_secs: 0,
+            stop: Arc::new(AtomicBool::new(false)),
+            inbox: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    #[test]
+    fn a_job_waits_for_the_ones_before_it() {
+        jobs().extend([job("tA", "진행 중", ""), job("tB", "기다림", ""), job("tC", "실패", "broke")]);
+        let stop = Arc::new(AtomicBool::new(false));
+        // tB waits for tA; when tA is done, tB gets its report and is running.
+        let waiter = {
+            let stop = stop.clone();
+            std::thread::spawn(move || wait_for("tB", &["tA".to_string()], &stop))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        assert_eq!(jobs().iter().find(|j| j.id == "tB").unwrap().state, "기다림");
+        set("tA", |j| {
+            j.state = "끝남";
+            j.report = "Result: alpha written".into();
+        });
+        let got = waiter.join().unwrap().unwrap();
+        assert!(got.contains("<earlier id=\"tA\"") && got.contains("alpha written"), "{got}");
+        assert_eq!(jobs().iter().find(|j| j.id == "tB").unwrap().state, "진행 중");
+        // One that failed: the waiting job does not start.
+        let err = wait_for("tD", &["tC".to_string()], &stop).unwrap_err();
+        assert!(err.contains("tC") && err.contains("실패"), "{err}");
+        // Stopped while waiting.
+        jobs().push(job("tE", "진행 중", ""));
+        stop.store(true, Ordering::Relaxed);
+        assert!(wait_for("tF", &["tE".to_string()], &stop).is_err());
+        jobs().retain(|j| !j.id.starts_with('t'));
+    }
 }

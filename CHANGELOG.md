@@ -28,6 +28,12 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 - **Spending**: what your Claude API key has spent today and this month, estimated from the tokens each response reports (`data/usage.json`). An optional **daily limit** (`spend-limit.txt`, `APERIT_DAILY_LIMIT`): at the limit no new turn, worker or background request starts that day, and the app says why.
 - When Claude is overloaded (529), rate-limited (429) or briefly unreachable, the request is sent again after a wait (what the service asks, or 2 to 16 seconds; four more tries), with a line saying so. The OpenAI-compatible engine does the same.
 
+### Work in order, with a second look
+
+- A job can wait for others (`after`): it starts by itself when they are done, with their reports in its order, and does not start if one fails. A change and its review, or the steps of a pipeline, are handed over in one go.
+- The AI is asked to add a review job after a change that matters, on another model or machine when there is one: it checks and reports, and fixes nothing.
+- Workers can read the board and the other jobs' reports while they work.
+
 ### Several servers, and workers wherever their files are
 
 - **Keys** → **A server (SSH)** keeps several servers, each with a name (chips above the fields; the green dot marks the one turns go to). `ssh.txt` holds them under `[name]` lines; the one-server file of before still reads. Passwords are kept per server.

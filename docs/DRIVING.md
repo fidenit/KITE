@@ -106,6 +106,10 @@ The settings, other than the passwords, are in `ssh.txt` next to the program: a 
 
 The AI you talk to hands long work to workers, which run at the same time while it goes on talking with you. A worker runs where the AI runs, unless it is sent elsewhere: when there is more than one place, each turn lists them (`<places>`: the Claude API, the OpenAI-compatible service, the Claude Code on this computer, each saved server) and `job_start` takes `on`, the name of one. So a job on a server's repository can go to that server while another runs here. On a server, a worker's folder is a folder there (the server's `dir` unless the job names one); `worktree` is for workers on this computer only. The progress card says where a worker runs when it is not the default.
 
+Jobs can come in order. `job_start` takes `after`, the ids of jobs that must be done first: the job waits (its progress card says for what), starts by itself when they are done with their reports added to its order (`<earlier_jobs>`), and does not start if one of them fails. So the AI hands over a whole sequence at once, a change and its review, or the steps of a pipeline, and goes on talking. The instructions ask for a review job after a change that matters, sent to another model or machine when there is one, that checks and reports without fixing.
+
+While they work, workers can read the board (`board_read`) and the other jobs' state and reports (`job_list`, `job_result`), so one can build on what another put up. They cannot start or steer other jobs; that stays with the AI you talk to.
+
 ## Another model: APERIT's own loop
 
 Choose **Another model** under **Keys** and give the base address, the model and, if needed, a key. APERIT keeps its own loop (memory, workers, tools, voice) and only changes the model, over the `chat/completions` format.

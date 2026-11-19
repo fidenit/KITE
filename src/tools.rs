@@ -185,6 +185,7 @@ pub fn definitions(worker: bool) -> Value {
                 "worktree": { "type": "boolean", "description": "true gives this job a branch and a working folder of its own in a git repository. Use it when several workers change the same repository at the same time." },
                 "effort": { "type": "string", "enum": ["low", "medium", "high"], "description": "How deeply to think while working. Default medium; high for hard coding" },
                 "on": { "type": "string", "description": "Where the worker runs: a name from <places> (a server, claude-code, api). Omit for the default, the first one listed. On a server, `dir` is a folder on that server." },
+                "after": { "type": "array", "items": { "type": "string" }, "description": "Ids of jobs that must be done first. This job waits, then starts by itself with their reports added to its order (it does not start if one of them fails). For a step that needs an earlier result, such as a review of a change." },
             }),
             &["title", "order"],
         ),
@@ -252,7 +253,8 @@ pub fn definitions(worker: bool) -> Value {
     // 작업자는 화면과 브라우저를 직접 다루지 않고, 일을 다시 남에게 맡기지도 않는다. 메인은 progress 를 쓰지 않는다.
     let keep = |name: &str| {
         if worker {
-            !(name == "screen" || name == "board_read" || name == "route_find" || name.starts_with("browser_") || name.starts_with("page_") || name.starts_with("job_") || name == "message_send" || name == "phone_call")
+            // They may read the board and the other jobs (job_list, job_result), not start or steer them.
+            !(name == "screen" || name == "route_find" || name.starts_with("browser_") || name.starts_with("page_") || matches!(name, "job_start" | "job_tell" | "job_stop") || name == "message_send" || name == "phone_call")
         } else {
             name != "progress"
         }
