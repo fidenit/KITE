@@ -224,16 +224,14 @@ pub fn command(s: &Server, script: &str, forward: Option<(u16, u16)>, password: 
     if !s.key.trim().is_empty() {
         c.arg("-i").arg(s.key.trim()).args(["-o", "IdentitiesOnly=yes"]);
     }
-    let saved = s.password();
-    let password = password.map(str::to_string).filter(|p| !p.is_empty()).or_else(|| saved.clone());
+    let password = password.map(str::to_string).filter(|p| !p.is_empty()).or_else(|| s.password());
     match (password, std::env::current_exe()) {
         (Some(p), Ok(me)) => {
             // ssh asks this program for the password (see `askpass` in main.rs); nothing is typed or written.
-            c.env("SSH_ASKPASS", me).env("SSH_ASKPASS_REQUIRE", "force").env("DISPLAY", ":0").env("APERIT_ASKPASS", s.id()).args(["-o", "NumberOfPasswordPrompts=1"]);
-            // A password given only for this connection (a test before saving) is handed over as it is.
-            if saved.as_deref() != Some(p.as_str()) {
-                c.env("APERIT_ASKPASS_VALUE", p);
-            }
+            // The password is handed over in the helper's environment, which only this user's processes can read
+            // (as they could the encrypted store), and not read again from the store: what this program holds is
+            // what is used, even when the file on disk is behind it (a reset, a copy).
+            c.env("SSH_ASKPASS", me).env("SSH_ASKPASS_REQUIRE", "force").env("DISPLAY", ":0").env("APERIT_ASKPASS", s.id()).env("APERIT_ASKPASS_VALUE", p).args(["-o", "NumberOfPasswordPrompts=1"]);
         }
         _ => {
             c.args(["-o", "BatchMode=yes"]);
@@ -303,7 +301,8 @@ pub fn explain_for(s: &Server, err: &str, password: Option<&str>) -> String {
 
 /// Connect and ask the server's Claude Code for its version: what the Settings window's test button shows.
 pub fn check(s: &Server, password: Option<&str>) -> Result<String, String> {
-    let out = run(s, &format!("{} && {} --version", s.cd(), s.claude()), b"", password).map_err(|e| if e.to_lowercase().contains("permission denied") { explain_for(s, &e, password) } else { e })?;
+    let nothing = s.key.trim().is_empty() && password.map(|p| p.trim().is_empty()).unwrap_or(true) && s.password().is_none();
+    let out = run(s, &format!("{} && {} --version", s.cd(), s.claude()), b"", password).map_err(|e| if nothing && e.to_lowercase().contains("permission denied") { explain_for(s, &e, password) } else { e })?;
     let version = out.lines().last().unwrap_or("").trim().to_string();
     if version.is_empty() { Err(crate::sys::tr("연결은 됐지만 Claude Code 버전을 읽지 못했습니다.", "Connected, but Claude Code did not say its version.").into()) } else { Ok(version) }
 }
