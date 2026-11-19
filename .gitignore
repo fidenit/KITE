@@ -9,3 +9,15 @@ voice.txt
 vault.txt
 *.WebView2/
 /dist
+# Settings written next to the program (Settings window): this machine's, never the repository's
+/engine.txt
+/ssh.txt
+/model.txt
+/spend-limit.txt
+/permission.txt
+/claude-permission.txt
+/openai.txt
+/agui.txt
+/outside-media.txt
+/prompt-lang.txt
+/mcp-port.txt
