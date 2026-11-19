@@ -1326,6 +1326,8 @@ impl App {
     }
 
     fn save_keys(&mut self) {
+        // An error from before (a refused sign-in, a missing key) is about the settings being replaced now.
+        self.error = None;
         let base = sys::base_dir();
         let was_demo = self.cfg.demo();
         let engine = match self.engine_pick.as_deref() {
