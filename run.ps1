@@ -7,9 +7,7 @@
 # portable\APERIT 폴더는 그 자체로 완결이다. 통째로 어디에 복사해도 그대로 동작한다.
 #   aperit.exe         프로그램 (설치 불필요)
 #   WebView2Loader.dll   화면 안의 브라우저를 불러오는 파일 (프로그램과 같은 폴더에 있어야 함)
-#   key.txt              Claude API 키
-#   jev.txt              (선택) TypeSafe Jev 키. 있으면 판단 모델이 켜진다
-#   data\                보드 상태와 설정
+#   data\                보드 상태와 설정, 그리고 암호화된 키(keys.bin: 이 PC의 이 계정에서만 열린다)
 #   vault\               기록과 기억 (옵시디언 보관함)
 $mingw = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Directory -Filter 'BrechtSanders.WinLibs*' |
     ForEach-Object { Join-Path $_.FullName 'mingw64\bin' } | Where-Object { Test-Path $_ } | Select-Object -First 1
@@ -55,7 +53,7 @@ switch ($args[0]) {
         Copy-Loader $out
         if ($first) {
             # 처음 만들 때만 지금까지의 상태를 옮겨 준다. 그 뒤로는 프로그램만 새것으로 바꾼다.
-            foreach ($item in 'key.txt', 'data', 'vault') {
+            foreach ($item in 'data', 'vault') {
                 if (Test-Path $item) { Copy-Item $item $out -Recurse -Force }
             }
         }

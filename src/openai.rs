@@ -25,6 +25,7 @@ pub struct Provider {
     pub key: Option<String>,
 }
 
+/// The key is never in a file: OPENAI_API_KEY, or the one kept by the app (secret.rs).
 /// APERIT_OPENAI_URL and APERIT_OPENAI_MODEL (the key from OPENAI_API_KEY), or `openai.txt` next to the
 /// program: the base address, the model, and optionally the key, one per line.
 pub fn settings() -> Option<Provider> {
@@ -33,7 +34,9 @@ pub fn settings() -> Option<Provider> {
         let key = std::env::var("OPENAI_API_KEY").ok().map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
         return Some(Provider { url: url.trim_end_matches('/').to_string(), model, key });
     }
-    parse_settings(&std::fs::read_to_string(crate::sys::base_dir().join("openai.txt")).ok()?)
+    let mut p = parse_settings(&std::fs::read_to_string(crate::sys::base_dir().join("openai.txt")).ok()?)?;
+    p.key = crate::secret::get(crate::secret::OPENAI).or(p.key);
+    Some(p)
 }
 
 fn parse_settings(text: &str) -> Option<Provider> {

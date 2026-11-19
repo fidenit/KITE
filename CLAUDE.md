@@ -21,7 +21,7 @@ node protocol/js/test.mjs
 cd android && ./gradlew testFreeDebugUnitTest      # needs JAVA_HOME (Android Studio's jbr) and ANDROID_HOME
 ```
 
-Not in the repository, and needed to run with a real model: `key.txt` (a Claude API key) next to the program, or choose "Sign in with Claude" in the Keys window. `data/` (the board) and `vault/` (memory notes) are local too.
+Not in the repository, and needed to run with a real model: a key pasted in the Keys window, or "Sign in with Claude" there. Keys are never in a plain file: `src/secret.rs` keeps them encrypted (Windows DPAPI in `data/keys.bin`, the keychain on macOS). For a test copy in another folder on this PC, copy `data/keys.bin` along: it opens for the same user on the same computer. `data/` (the board) and `vault/` (memory notes) are local too.
 
 ## Testing a window without touching the owner's desktop
 

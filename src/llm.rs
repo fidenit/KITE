@@ -79,7 +79,7 @@ impl Config {
     pub fn load() -> Self {
         let env = |k: &str| crate::sys::var(k).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
         let key = std::env::var("ANTHROPIC_API_KEY").ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).or_else(|| {
-            std::fs::read_to_string(crate::sys::base_dir().join("key.txt")).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+            crate::secret::get(crate::secret::CLAUDE)
         });
         // APERIT_DEMO 가 있으면 키가 있어도 시연 대본으로 돈다 (화면 확인용, API 비용 없음).
         let key = if env("DEMO").is_some() { None } else { key };

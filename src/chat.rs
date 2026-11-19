@@ -554,7 +554,7 @@ impl App {
             }
             // 대화: 마이크로 말해서 시킨다. 말이 끝나면 알아서 보내고, 답을 다 들으면 다시 듣는다.
             let hint = if crate::eleven::key().is_none() {
-                crate::sys::tr("말로 대화하려면 ElevenLabs 키가 필요합니다 (프로그램 폴더의 eleven.txt)", "Talking needs an ElevenLabs key (eleven.txt in the program folder)")
+                crate::sys::tr("말로 대화하려면 ElevenLabs 키가 필요합니다 (키 → 다른 방법)", "Talking needs an ElevenLabs key (Keys → More options)")
             } else if self.converse {
                 crate::sys::tr("말로 대화하는 중 · 누르면 마이크를 끕니다", "Talking · click to turn the microphone off")
             } else {
@@ -604,7 +604,7 @@ impl App {
     }
 
     /// 처음 켰을 때(또는 "API 키 넣기"를 눌렀을 때) 뜨는 창.
-    /// 키를 넣으면 프로그램 폴더의 key.txt 에 저장하고 바로 시작한다. 키 없이 데모만 둘러볼 수도 있다.
+    /// 키를 넣으면 암호화해서 앱 안에만 보관하고(secret.rs) 바로 시작한다. 키 없이 데모만 둘러볼 수도 있다.
     pub fn key_window(&mut self, ctx: &egui::Context) {
         if !self.key_popup {
             return;
@@ -626,8 +626,8 @@ impl App {
             ui.add_space(8.0);
             ui.label(
                 egui::RichText::new(crate::sys::tr(
-                    "로그인하거나 키를 붙여넣으면 바로 시작합니다.\n키는 이 프로그램 폴더에만 저장되고, 그 키의 서비스 말고는 어디로도 보내지지 않습니다.",
-                    "Sign in, or paste a key, and you are ready.\nA key is saved only in this program's folder and is sent nowhere except to the service it belongs to.",
+                    "로그인하거나 키를 붙여넣으면 바로 시작합니다.\n키는 암호화해서 앱 안에만 보관하고(이 컴퓨터의 이 계정에서만 열림), 그 키의 서비스 말고는 어디로도 보내지 않습니다.",
+                    "Sign in, or paste a key, and you are ready.\nA key is kept encrypted inside the app, readable only by this account on this computer, and is sent nowhere except to the service it belongs to.",
                 ))
                 .size(12.5)
                 .color(ui::DIM()),
@@ -925,6 +925,12 @@ Files, commands and the web go through Claude Code's tools; APERIT's own feature
                 ui.label(egui::RichText::new(crate::sys::tr("LangGraph, CrewAI, Pydantic AI처럼 AG-UI를 쓰는 에이전트의 주소를 적으면 APERIT가 턴마다 그 주소를 부릅니다. 비워 두면 MCP로 오는 에이전트를 기다립니다.", "Give the address of an agent that speaks AG-UI (LangGraph, CrewAI, Pydantic AI) and APERIT calls it on every turn. Leave it empty to wait for an agent over MCP.")).size(11.5).color(ui::FAINT()));
                 ui.add_space(14.0);
             }
+            if more_open {
+            let has_eleven = crate::eleven::key().is_some();
+            caption(ui, crate::sys::tr("ElevenLabs 키", "ElevenLabs key"), if has_eleven { crate::sys::tr("저장됨", "saved") } else { crate::sys::tr("말로 대화할 때만", "only to talk") }, has_eleven);
+            field(ui, &mut self.eleven_input, if has_eleven { crate::sys::tr("비워 두면 지금 키를 그대로 씁니다", "Leave empty to keep the current key") } else { crate::sys::tr("없어도 됩니다", "Not needed to start") });
+            ui.add_space(10.0);
+            }
             if !pick_agent && more_open {
             caption(ui, crate::sys::tr("TypeSafe Jev 키", "TypeSafe Jev key"), if has_jev { crate::sys::tr("저장됨", "saved") } else { crate::sys::tr("선택", "optional") }, has_jev);
             field(ui, &mut self.jev_input, if has_jev { crate::sys::tr("비워 두면 지금 키를 그대로 씁니다", "Leave empty to keep the current key") } else { crate::sys::tr("없어도 됩니다", "Not needed to start") });
@@ -943,7 +949,7 @@ Files, commands and the web go through Claude Code's tools; APERIT's own feature
             (pick, current, has_key, pick_cc, pick_openai, pick_agent)
             }).inner;
             ui.add_space(12.0);
-            let jev_typed = self.jev_input.trim().len() > 8 || self.level_pick.as_deref().map(|l| l != crate::permit::level().name()).unwrap_or(false);
+            let jev_typed = self.jev_input.trim().len() > 8 || self.eleven_input.trim().len() > 8 || self.level_pick.as_deref().map(|l| l != crate::permit::level().name()).unwrap_or(false);
             let ready = if pick_cc {
                 pick != current || jev_typed || self.perm_pick.as_deref().map(|p| p != crate::cc::permission()).unwrap_or(false)
             } else if pick_openai {
@@ -984,21 +990,23 @@ Files, commands and the web go through Claude Code's tools; APERIT's own feature
                 Some("openai") => {
                     // Address, model, key: one per line. An empty key box keeps the key that is saved.
                     let [url, model, key] = &self.openai_input;
-                    let old_key = std::fs::read_to_string(base.join("openai.txt")).ok().and_then(|t| t.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).nth(2).map(str::to_string));
-                    let key = if key.trim().is_empty() { old_key.unwrap_or_default() } else { key.trim().to_string() };
+                    let key = if key.trim().is_empty() { crate::secret::get(crate::secret::OPENAI).unwrap_or_default() } else { key.trim().to_string() };
                     let url = url.trim().trim_end_matches('/');
                     // A service APERIT knows: it picks the model from the service's own list.
                     let model = match crate::openai::known_by_url(url) {
                         Some(k) if model.trim().is_empty() => k.model(&key),
                         _ => model.trim().to_string(),
                     };
-                    let _ = std::fs::write(base.join("openai.txt"), format!("{url}\n{model}\n{key}\n"));
+                    // The address and the model are not secret; the key is kept by the app.
+                    let _ = std::fs::write(base.join("openai.txt"), format!("{url}\n{model}\n"));
+                    if let Err(e) = crate::secret::set(crate::secret::OPENAI, &key) {
+                        self.error = Some(e);
+                    }
                     "openai"
                 }
                 Some("agent") if !self.agui_input.trim().is_empty() => {
-                    // Keep the header lines someone added to the file by hand.
-                    let kept: String = std::fs::read_to_string(base.join("agui.txt")).unwrap_or_default().lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).skip(1).map(|l| format!("{l}\n")).collect();
-                    let _ = std::fs::write(base.join("agui.txt"), format!("{}\n{kept}", self.agui_input.trim()));
+                    // Only the address: header lines are kept by the app (secret.rs).
+                    let _ = std::fs::write(base.join("agui.txt"), format!("{}\n", self.agui_input.trim()));
                     "ag-ui"
                 }
                 Some("agent") => "external",
@@ -1014,14 +1022,17 @@ Files, commands and the web go through Claude Code's tools; APERIT's own feature
             if let Some(m) = self.media_pick.take() {
                 let _ = std::fs::write(base.join("outside-media.txt"), if m { "yes" } else { "no" });
             }
-            if engine == "api" && !self.key_input.trim().is_empty() {
-                let _ = std::fs::write(base.join("key.txt"), self.key_input.trim());
-            }
-            if !self.jev_input.trim().is_empty() {
-                let _ = std::fs::write(base.join("jev.txt"), self.jev_input.trim());
+            // Keys go to the app's encrypted store (secret.rs), never to a file.
+            for (name, typed, wanted) in [(crate::secret::CLAUDE, &self.key_input, engine == "api"), (crate::secret::JEV, &self.jev_input, true), (crate::secret::ELEVEN, &self.eleven_input, true)] {
+                if wanted && !typed.trim().is_empty() {
+                    if let Err(e) = crate::secret::set(name, typed) {
+                        self.error = Some(e);
+                    }
+                }
             }
             self.key_input.clear();
             self.jev_input.clear();
+            self.eleven_input.clear();
             self.openai_input[2].clear();
             self.cfg = llm::Config::load();
             // With an agent outside, the MCP door has to be open for it to come in.

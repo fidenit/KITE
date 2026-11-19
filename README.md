@@ -98,7 +98,7 @@ The engine is who answers. Open **Keys** at the bottom left and do one of two th
 | Engine | You need | What you get |
 |---|---|---|
 | Demo | nothing | Prepared scenes. Start with no key |
-| Claude API | a [Claude API key](https://console.anthropic.com/settings/keys); usage is billed to your account | Everything APERIT does. Enter the key under **Keys**, or set `ANTHROPIC_API_KEY`, or put it in `key.txt` next to the program |
+| Claude API | a [Claude API key](https://console.anthropic.com/settings/keys); usage is billed to your account | Everything APERIT does. Paste the key under **Keys** (it is kept encrypted inside the app), or set `ANTHROPIC_API_KEY` |
 | Claude Code | [Claude Code](https://claude.com/claude-code) installed and logged in; no API key | Everything, through your Claude Code: its login, `CLAUDE.md`, skills, hooks, MCP servers and permissions apply |
 | Another model | an OpenAI-compatible endpoint: OpenAI, a local model behind Ollama or LM Studio, OpenRouter | APERIT's own loop with that model. Web search is with Claude only |
 | Your own agent | an agent that speaks MCP or AG-UI | The board as your agent's screen. APERIT runs no model |

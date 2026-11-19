@@ -28,16 +28,13 @@ Windows 빌드에는 Rust(`stable-x86_64-pc-windows-gnu`)와 MinGW(WinLibs)가 �
 
 ## 키
 
-프로그램 폴더(실행 파일이 있는 폴더)에 텍스트 파일로 둔다. 처음 실행하면 왼쪽 구역에서 입력할 수도 있다.
+키(Claude, Jev, ElevenLabs, 다른 모델, AG-UI 헤더)는 **키** 창에서 넣는다. 평문 파일로 남지 않고 앱 안에 암호화해서 보관한다: Windows는 이 PC의 이 계정에서만 열리게(`data/keys.bin`), macOS는 로그인 키체인에. 옛 버전이 남긴 `key.txt`·`jev.txt`·`eleven.txt`·`openai.txt`의 키 줄·`agui.txt`의 헤더 줄은 다음 실행 때 옮겨 담고 지운다(`src/secret.rs`).
 
 | 파일 | 내용 | 없으면 |
 |---|---|---|
-| `key.txt` | Claude API 키 | 시작할 수 없음 (필수) |
-| `jev.txt` | TypeSafe Jev 키 | 판단 모델 없이 동작 |
-| `eleven.txt` | ElevenLabs 키 | OS 기본 음성으로 읽고, 마이크 대화는 못 씀 |
 | `voice.txt` | ElevenLabs 목소리 ID | 기본 목소리 |
 
-키 파일과 `data/`, `vault/`는 저장소에 올라가지 않는다.
+`data/`, `vault/`는 저장소에 올라가지 않는다.
 
 ## 부품 더하기
 

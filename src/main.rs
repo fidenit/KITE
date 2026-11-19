@@ -10,6 +10,7 @@ mod audio;
 mod chat;
 mod decide;
 mod eleven;
+mod secret;
 mod feed;
 mod hub;
 mod jev;
@@ -92,6 +93,7 @@ struct App {
     /// 처음 쓰는 사람이 키를 넣는 칸
     key_input: String,
     jev_input: String,
+    eleven_input: String,
     /// 키를 넣는 창이 떠 있는가 (키 없이 처음 켰을 때 뜬다)
     key_popup: bool,
     /// 키 창에서 고른 엔진 (true = Claude Code). 창을 열 때 지금 설정으로 맞춘다.
@@ -531,6 +533,7 @@ impl App {
             say_live: None,
             key_input: String::new(),
             jev_input: String::new(),
+            eleven_input: String::new(),
             key_popup: false,
             engine_pick: None,
             openai_input: Default::default(),

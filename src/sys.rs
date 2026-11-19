@@ -32,7 +32,7 @@ pub fn base_dir() -> PathBuf {
 }
 
 /// A setting given through the environment: `APERIT_<name>`. The names from before the rename
-/// (`APERIT_<name>`) are still read, so old scripts keep working.
+/// (`KITE_<name>`) are still read, so old scripts keep working.
 pub fn var(name: &str) -> Result<String, std::env::VarError> {
     // Settings made when the app was called KITE keep working.
     std::env::var(format!("APERIT_{name}")).or_else(|_| std::env::var(format!("KITE_{name}")))

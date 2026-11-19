@@ -1,6 +1,6 @@
 //! ElevenLabs: 자연스러운 목소리(말하기)와 음성 인식(받아쓰기).
 //!
-//! 키는 환경 변수 ELEVENLABS_API_KEY 또는 프로그램 폴더의 eleven.txt 에서 읽는다.
+//! The key is ELEVENLABS_API_KEY, or the one kept by the app (secret.rs).
 //! 키가 없으면 말하기는 OS 의 기본 음성으로 돌아가고, 받아쓰기(마이크 입력)는 쓸 수 없다.
 //!
 //!   voice.txt       (선택) 쓸 목소리의 voice_id
@@ -24,7 +24,7 @@ fn file(name: &str) -> Option<String> {
 }
 
 pub fn key() -> Option<String> {
-    std::env::var("ELEVENLABS_API_KEY").ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).or_else(|| file("eleven.txt"))
+    std::env::var("ELEVENLABS_API_KEY").ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).or_else(|| crate::secret::get(crate::secret::ELEVEN))
 }
 
 fn agent(timeout: Duration) -> ureq::Agent {

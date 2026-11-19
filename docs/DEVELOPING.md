@@ -45,13 +45,12 @@ Text files next to the program. The **Keys** window writes the first ones for yo
 | File | Holds | Without it |
 |---|---|---|
 | `engine.txt` | `api`, `claude-code`, `openai`, `external` or `ag-ui` | `api` |
-| `key.txt` | Claude API key | the demo, unless another engine is chosen |
-| `openai.txt` | another model: base address, model, key, one per line | |
-| `agui.txt` | the address of an AG-UI agent, then optional header lines | |
+| `openai.txt` | another model: base address and model, one per line (its key is kept with the other keys) | |
+| `agui.txt` | the address of an AG-UI agent | |
 | `permission.txt` | `ask`, `edits` or `all`: what APERIT's own engines may do without asking | `ask` |
-| `jev.txt` | TypeSafe Jev key | no decision model |
-| `eleven.txt` | ElevenLabs key | the OS voice; no microphone conversation |
 | `voice.txt` | ElevenLabs voice id | the default voice |
+
+Keys are kept encrypted inside the app: on Windows for this user account on this computer only (`data/keys.bin`), on macOS in the login keychain. No key is written to a plain file. A key file left by an earlier version (`key.txt`, `jev.txt`, `eleven.txt`, the key line of `openai.txt`, the header lines of `agui.txt`) is moved in on the next start and removed. See `src/secret.rs`.
 
 Every setting read from the environment is named `APERIT_<NAME>` (the older `LYBOARD_<NAME>` is still read). Those meant for users are listed in [DRIVING.md](DRIVING.md#settings). The rest are for checking and recording: `APERIT_DEMO`, `APERIT_AUTOPLAY` (types the given inputs by itself, in a window with another title), `APERIT_POS`, `APERIT_SIZE`, `APERIT_SHOT` (saves a picture of the window), `APERIT_KEY_WINDOW`, `APERIT_DEBUG` and others; search for `sys::var(` in `src/`.
 
@@ -151,5 +150,5 @@ The server APERIT Pro talks to (it holds the key, meters and limits each user, c
 
 1. Bump `version` in `Cargo.toml` (the app) and, when the protocol changed, `VERSION` in `protocol/rust/src/lang.rs`, the crate version, and `protocol/CHANGELOG.md`.
 2. Add the release to [CHANGELOG.md](../CHANGELOG.md). Release notes are written in English.
-3. `.\run.ps1 test`, then `.\run.ps1 pack`; zip `portable\APERIT` without `key.txt`, `data\` and `vault\`.
+3. `.\run.ps1 test`, then `.\run.ps1 pack`; zip `portable\APERIT` without `data\` and `vault\` (the keys are in `data\`).
 4. Tag `v<version>` and attach the zip to a GitHub release.

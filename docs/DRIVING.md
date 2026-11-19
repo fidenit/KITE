@@ -58,7 +58,7 @@ On every turn APERIT POSTs the board, what you did and said, the guide for agent
 
 The exact shape is in [SPEC.md, section 10.5](../protocol/SPEC.md#105-ag-ui). An agent whose model follows the guide needs no APERIT-specific code. An agent that answers in prose still shows up: its text becomes the caption and a note card.
 
-Headers (an `Authorization` header, for example) go on lines after the address in `agui.txt`:
+Headers (an `Authorization` header, for example) carry tokens, so they are kept with the keys, encrypted. To add them, write them on lines after the address in `agui.txt`; on its next start APERIT moves them into its store and leaves only the address in the file:
 
 ```
 https://agent.example.com/run
@@ -102,14 +102,16 @@ What to expect: the instructions APERIT gives its model were written and tuned f
 
 ## Settings
 
+Keys are kept encrypted inside the app: on Windows for this user account on this computer only (`data/keys.bin`), on macOS in the login keychain. No key is written to a plain file. A key file left by an earlier version (`key.txt`, `jev.txt`, `eleven.txt`, the key line of `openai.txt`, the header lines of `agui.txt`) is moved in on the next start and removed.
+
 Everything can be set in the **Keys** window. The same choices as files next to the program, or as environment variables (which win):
 
 | File | Variable | Meaning |
 |---|---|---|
 | `engine.txt` | `APERIT_ENGINE` | `api`, `claude-code`, `openai`, `external` (an agent over MCP or the socket), `ag-ui` |
-| `key.txt` | `ANTHROPIC_API_KEY` | Claude API key |
-| `openai.txt` | `APERIT_OPENAI_URL`, `APERIT_OPENAI_MODEL`, `OPENAI_API_KEY` | another model: base address, model, key (one per line in the file) |
-| `agui.txt` | `APERIT_AGUI_URL` | the AG-UI endpoint; header lines may follow in the file |
+| (**Keys** window) | `ANTHROPIC_API_KEY` | Claude API key |
+| `openai.txt` | `APERIT_OPENAI_URL`, `APERIT_OPENAI_MODEL`, `OPENAI_API_KEY` | another model: base address and model (one per line in the file); the key from the **Keys** window |
+| `agui.txt` | `APERIT_AGUI_URL` | the AG-UI endpoint |
 | `mcp-port.txt` | `APERIT_MCP_PORT` | open the MCP door on this port (always open, on 7711, with engine `external`) |
 | `data/mcp-token.txt` | `APERIT_MCP_TOKEN` | the MCP token; made on first use |
 | | `APERIT_PROTOCOL_PORT`, `APERIT_PROTOCOL_TOKEN` | the protocol socket, and an optional token (`auth <token>` as the first line) |

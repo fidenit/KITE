@@ -7,10 +7,7 @@
 #
 # portable/APERIT 폴더는 그 자체로 완결이다. 통째로 어디에 복사해도 그대로 동작한다.
 #   APERIT.app         프로그램 (설치 불필요)
-#   key.txt         Claude API 키
-#   jev.txt         (선택) TypeSafe Jev 키
-#   eleven.txt      (선택) ElevenLabs 키
-#   data/           보드 상태와 설정
+#   data/           보드 상태와 설정 (키는 파일이 아니라 로그인 키체인에 있다)
 #   vault/          기록과 기억 (옵시디언 보관함)
 set -e
 cd "$(dirname "$0")"
@@ -58,7 +55,7 @@ EOF
     codesign --force --deep -s - "$app"
     if [ "$first" = 1 ]; then
       # 처음 만들 때만 지금까지의 상태를 옮겨 준다. 그 뒤로는 프로그램만 새것으로 바꾼다.
-      for item in key.txt jev.txt eleven.txt voice.txt data vault; do
+      for item in voice.txt data vault; do
         [ -e "$item" ] && cp -R "$item" "$out/"
       done
     fi

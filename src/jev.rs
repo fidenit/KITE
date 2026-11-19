@@ -4,7 +4,7 @@
 //! "정해 준 선택지 중 하나"나 "0~1 사이의 확률"만 돌려준다. 그래서 없는 선택지를 지어낼 수 없고
 //! 응답이 0.2초 안팎으로 빠르다. 이 프로그램에서는 메인 모델의 앞뒤에서 작은 결정을 맡는다.
 //!
-//! 키는 환경 변수 TYPESAFE_API_KEY 또는 프로그램 폴더의 jev.txt 에서 읽는다.
+//! The key is TYPESAFE_API_KEY, or the one kept by the app (secret.rs).
 //! 키가 없으면 이 모듈을 쓰는 모든 곳이 기본값으로 동작한다 (프로그램은 그대로 돈다).
 
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ pub fn key() -> Option<String> {
     std::env::var("TYPESAFE_API_KEY")
         .ok()
         .and_then(clean)
-        .or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("jev.txt")).ok().and_then(clean))
+        .or_else(|| crate::secret::get(crate::secret::JEV))
 }
 
 /// 선택지 중 하나를 고르게 하는 질문. `options` 는 (이름, 설명).

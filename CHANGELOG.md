@@ -17,6 +17,11 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 - On Android the app is shown as APERIT and APERIT Pro. Its package name is unchanged, so it updates in place.
 - Say "Aperit" (or, as before, "Kite") to call it back while it waits.
 
+### Keys stay inside the app
+
+- Keys are no longer written to plain files. On Windows they are encrypted for your user account on this computer (`data/keys.bin`); on macOS they go to the login keychain. Key files from earlier versions are moved in on the first start and removed.
+- The ElevenLabs key can be entered in the **Keys** window (under **More options**); before, it needed a file.
+
 ### The protocol stands apart
 
 - The board language is the **KITE Protocol**, version 0.3, in [protocol/](protocol): a specification that does not depend on the app, a guide to give your model, a comparison with A2UI, json-render, AG-UI and MCP Apps, a schema, examples, conformance cases, and implementations with no dependencies in Rust and JavaScript.

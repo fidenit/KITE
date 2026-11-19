@@ -30,7 +30,12 @@ pub fn settings() -> Option<Settings> {
     if let Some(url) = crate::sys::var("AGUI_URL").ok().map(|u| u.trim().to_string()).filter(|u| !u.is_empty()) {
         return Some(Settings { url, headers: Vec::new() });
     }
-    parse_settings(&std::fs::read_to_string(crate::sys::base_dir().join("agui.txt")).ok()?)
+    let mut s = parse_settings(&std::fs::read_to_string(crate::sys::base_dir().join("agui.txt")).ok()?)?;
+    // Header lines carry tokens: they are kept by the app (secret.rs), not in the file.
+    if let Some(lines) = crate::secret::get(crate::secret::AGUI_HEADERS) {
+        s.headers.extend(lines.lines().filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))));
+    }
+    Some(s)
 }
 
 fn parse_settings(text: &str) -> Option<Settings> {
