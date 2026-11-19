@@ -1404,6 +1404,9 @@ impl App {
         let own_turn = input.is_empty() && self.events.is_empty() && self.job_turn.is_none();
         let retry = own_turn.then(|| self.settings_note.take()).flatten();
         self.retrying = retry.is_some();
+        if self.retrying {
+            sys::log("settings.log", "a turn goes back to what the permission setting blocked");
+        }
         if let Some(note) = &retry {
             t += &format!("<settings>{note}</settings>\n");
         }
@@ -1536,7 +1539,7 @@ impl App {
         self.cur_input = if let Some(names) = &self.job_turn {
             format!("({}) {names}", sys::tr("맡긴 작업이 끝남", "delegated work finished"))
         } else if self.retrying {
-            sys::tr("(권한을 넓힘, 다시 시도)", "(more allowed, trying again)").to_string()
+            sys::tr("(권한 설정 바꿈)", "(permission changed)").to_string()
         } else if self.fixing {
             sys::tr("(잘린 글자 고치기)", "(fixing cut text)").to_string()
         } else if self.tidying {
@@ -1696,7 +1699,18 @@ impl App {
         self.pre = None;
         // 구성 정리 턴인데 고칠 것이 없어 아무것도 내지 않았으면, 대화에도 기록에도 남기지 않는다.
         // A turn that only shortened cut text is housekeeping too: not part of the conversation.
-        let silent = (self.tidying && self.turn_raw.trim().is_empty() && self.error.is_none()) || (self.fixing && self.error.is_none());
+        let silent = (self.tidying && self.turn_raw.trim().is_empty() && self.error.is_none())
+            || (self.retrying && !self.turn_said && self.error.is_none())
+            || (self.fixing && self.error.is_none());
+        // What this turn said: its own `say`, or, when it ended in an error without one, the error (never the
+        // previous turn's sentence, which would read as the same answer twice).
+        let said_now = if self.turn_said {
+            self.said()
+        } else if let Some(e) = &self.error {
+            format!("⚠ {}", e.chars().take(160).collect::<String>())
+        } else {
+            String::new()
+        };
         let cut = self.board.notes.iter().any(|n| n.starts_with("clipped ") && !n.starts_with("clipped say"));
         if self.fixing {
             self.fixing = false;
@@ -1784,7 +1798,7 @@ impl App {
             let turn = memory::Turn {
                 at: format!("{date} {time}"),
                 user: self.cur_input.clone(),
-                say: self.said(),
+                say: said_now.clone(),
                 did: self.turn_actions.clone(),
                 ops: self.turn_raw.trim().chars().take(2000).collect(),
                 topics: topic_names.join(", "),
@@ -1815,7 +1829,7 @@ impl App {
         if !self.cfg.demo() && !silent {
             vault::log_turn(&vault::TurnRecord {
                 input: self.cur_input.clone(),
-                say: self.said(),
+                say: said_now.clone(),
                 spoken: self.turn_spoken.clone(),
                 actions: self.turn_actions.clone(),
                 raw: self.turn_raw.clone(),
@@ -1823,7 +1837,7 @@ impl App {
             });
         }
         if !silent {
-            self.recent.push((std::mem::take(&mut self.cur_input), self.said()));
+            self.recent.push((std::mem::take(&mut self.cur_input), said_now));
         }
     }
 

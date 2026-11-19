@@ -1373,28 +1373,29 @@ impl App {
             _ => "api",
         };
         let _ = std::fs::write(base.join("engine.txt"), engine);
-        // More was allowed than before: what was refused for lack of permission is tried again at once.
-        let rank = |p: &str| match p {
-            "acceptEdits" | "edits" => 1,
-            "bypassPermissions" | "all" => 2,
-            _ => 0,
-        };
-        let mut widened = None;
+        // The permission setting changed (either way): the next turn starts at once and goes back to what the
+        // setting had blocked. Most often the user changed it because something was just refused.
+        let mut changed = None;
         if let Some(p) = self.perm_pick.take() {
-            if rank(&p) > rank(&crate::cc::permission()) {
-                widened = Some(p.clone());
+            let was = crate::cc::permission();
+            if p != was {
+                changed = Some((was, p.clone()));
             }
             let _ = std::fs::write(base.join("claude-permission.txt"), p);
         }
         if let Some(l) = self.level_pick.take() {
-            if rank(&l) > rank(crate::permit::level().name()) {
-                widened = Some(l.clone());
+            let was = crate::permit::level().name().to_string();
+            if l != was {
+                changed = Some((was, l.clone()));
             }
             let _ = std::fs::write(base.join("permission.txt"), l);
         }
-        if let (Some(w), false, false) = (widened, was_demo, self.recent.is_empty()) {
+        if let Some((was, now)) = &changed {
+            crate::sys::log("settings.log", &format!("permission {was} -> {now} (demo {was_demo}, turns so far {})", self.recent.len()));
+        }
+        if let (Some((was, now)), false, false) = (changed, was_demo, self.recent.is_empty()) {
             self.settings_note = Some(format!(
-                "The user just allowed more in Settings: what may be done without asking is now '{w}'. If something in the last turns was refused for lack of permission, do it now, without asking again."
+                "The user just changed in Settings what may be done without asking: now '{now}' (was '{was}'). If the last turns were blocked by the permission setting, go back to that work now, without being asked: do it if the new setting allows it; if it still does not, say in one short line which setting would. If nothing was blocked, only say in one short line that you saw the change."
             ));
             self.react_at = Some(std::time::Instant::now() + std::time::Duration::from_millis(400));
         }
