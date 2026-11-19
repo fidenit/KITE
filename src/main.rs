@@ -1034,7 +1034,7 @@ impl App {
         if parts.is_empty() { format!("({}) {}", sys::tr("화면에서 직접 조작", "on the board"), self.turn_events) } else { format!("({})", parts.join(" · ")) }
     }
 
-    /// 초기화: 화면, 대화, 기억, 기록을 전부 지우고 처음 상태로 돌아간다. API 키와 음성 설정만 남는다. 되돌릴 수 없다.
+    /// 초기화: 화면, 대화, 기억, 기록을 전부 지우고 처음 상태로 돌아간다. 키(keys.bin)와 화면·음성·언어 설정은 남는다. 되돌릴 수 없다.
     pub fn reset_all(&mut self) {
         agui::reset();
         if self.busy || jobs::running() > 0 {
@@ -1043,10 +1043,11 @@ impl App {
         }
         self.flush_speech();
         self.log = None; // 기록 파일을 놓아야 지울 수 있다
-        // data 폴더: 음성 켬/끔과 화면 밝기 설정만 남기고 전부 지운다.
+        // data 폴더: 음성 켬/끔, 화면 밝기, 언어, 그리고 키(암호화된 keys.bin)만 남기고 전부 지운다.
+        // The keys are settings, not records: a reset never takes them (they are removed in Settings, one by one).
         if let Ok(rd) = std::fs::read_dir(sys::data_dir()) {
             for e in rd.flatten() {
-                if e.file_name() == "voice" || e.file_name() == "theme.txt" {
+                if matches!(e.file_name().to_str(), Some("voice" | "theme.txt" | "lang.txt" | "keys.bin" | "keys.bin.tmp")) {
                     continue;
                 }
                 let p = e.path();
