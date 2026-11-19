@@ -143,8 +143,10 @@ class DetachedCommands(private val cfg: EngineConfig) {
         Detached.check(id)
         return serverShell(
             """
-            f="${'$'}HOME/.kite/runs/$id"; n=$n; last=-1; beat=0
+            f="${'$'}HOME/.kite/runs/$id"; n=$n; last=-1; beat=0; ver=0
+            ours() { if [ -r "/proc/${'$'}1/cmdline" ]; then a=${'$'}(tr '\0' ' ' < "/proc/${'$'}1/cmdline" 2>/dev/null); else a=${'$'}(ps -ww -p "${'$'}1" -o args= 2>/dev/null); fi; case "${'$'}a" in *"runs/$id."*) return 0;; esac; return 1; }
             [ -f "${'$'}f.in" ] || { echo "APERITEXIT none"; exit 0; }
+            if [ ! -s "${'$'}f.pid" ] && [ ! -s "${'$'}f.exit" ]; then echo "APERITEXIT none"; exit 0; fi
             while :; do
               fin=0; [ -s "${'$'}f.exit" ] && fin=1
               size=${'$'}(( ${'$'}(wc -c < "${'$'}f.out" 2>/dev/null || echo 0) ))
@@ -153,7 +155,10 @@ class DetachedCommands(private val cfg: EngineConfig) {
                 if [ "${'$'}total" -gt "${'$'}n" ]; then sed -n "${'$'}((n+1)),${'$'}{total}s/^/>/p" "${'$'}f.out"; n=${'$'}total; beat=0; fi
               fi
               if [ "${'$'}fin" = 1 ]; then echo "APERITEXIT ${'$'}(cat "${'$'}f.exit")"; exit 0; fi
-              if ! kill -0 "${'$'}(cat "${'$'}f.pid" 2>/dev/null)" 2>/dev/null; then
+              p=; { read -r p < "${'$'}f.pid"; } 2>/dev/null
+              alive=0
+              if kill -0 "${'$'}p" 2>/dev/null; then if [ "${'$'}ver" = 1 ] || ours "${'$'}p"; then ver=1; alive=1; fi; fi
+              if [ "${'$'}alive" = 0 ]; then
                 sleep 0.3; [ -s "${'$'}f.exit" ] && continue
                 echo "APERITEXIT lost"; exit 0
               fi
@@ -165,17 +170,22 @@ class DetachedCommands(private val cfg: EngineConfig) {
     }
 
     /**
-     * 멈춤: 묶음에 TERM (감싼 bash 는 `trap : TERM` 이라 살아서 `.exit` 에 143 을 적는다). 1초 안에 안 끝나면
+     * 멈춤: `.pid` 의 번호가 이 실행의 감싼 bash 인지 확인한 뒤에만 끝낸다 (서버가 다시 켜져 번호가 남의 것이 됐을 수 있다:
+     * 아니면 아무것도 끝내지 않고 `stopped` 만 적는다). 묶음에 TERM (감싼 bash 는 `trap : TERM` 이라 살아서 `.exit` 에 143 을 적는다). 1초 안에 안 끝나면
      * 묶음과 자식에 KILL. 그래도 `.exit` 가 없으면 `stopped` 를 적는다.
      */
     fun stop(id: String): String {
         Detached.check(id)
         return serverShell(
         """
-        f="${'$'}HOME/.kite/runs/$id"; p=${'$'}(cat "${'$'}f.pid" 2>/dev/null)
+        f="${'$'}HOME/.kite/runs/$id"
+        ours() { if [ -r "/proc/${'$'}1/cmdline" ]; then a=${'$'}(tr '\0' ' ' < "/proc/${'$'}1/cmdline" 2>/dev/null); else a=${'$'}(ps -ww -p "${'$'}1" -o args= 2>/dev/null); fi; case "${'$'}a" in *"runs/$id."*) return 0;; esac; return 1; }
+        [ -s "${'$'}f.exit" ] && exit 0
+        i=0; while [ ! -s "${'$'}f.pid" ] && [ -f "${'$'}f.in" ] && [ ${'$'}i -lt 10 ]; do sleep 0.1; i=${'$'}((i+1)); done
+        p=${'$'}(cat "${'$'}f.pid" 2>/dev/null)
         case "${'$'}p" in ''|*[!0-9]*) exit 0;; esac
         [ -s "${'$'}f.exit" ] && exit 0
-        kill -0 "${'$'}p" 2>/dev/null || { sleep 0.3; [ -s "${'$'}f.exit" ] || echo stopped > "${'$'}f.exit"; exit 0; }
+        if ! { kill -0 "${'$'}p" 2>/dev/null && ours "${'$'}p"; }; then sleep 0.3; [ -s "${'$'}f.exit" ] || echo stopped > "${'$'}f.exit"; exit 0; fi
         kt() { for c in ${'$'}(pgrep -P "${'$'}1" 2>/dev/null); do kt "${'$'}c" "${'$'}2"; done; kill -"${'$'}2" "${'$'}1" 2>/dev/null; }
         kill -TERM -- -"${'$'}p" 2>/dev/null || kt "${'$'}p" TERM
         i=0; while [ ${'$'}i -lt 10 ] && [ ! -s "${'$'}f.exit" ] && kill -0 "${'$'}p" 2>/dev/null; do sleep 0.1; i=${'$'}((i+1)); done

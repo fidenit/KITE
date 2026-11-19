@@ -266,4 +266,47 @@ class DetachedTest {
             home.deleteRecursively()
         }
     }
+
+    /** 서버가 다시 켜져 `.pid` 의 번호가 남의 프로세스가 됐다: 돌고 있다고 보지 않고, 멈춤도 그 프로세스를 건드리지 않는다. */
+    @Test
+    fun foreignPidIsNotOurs() {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val home = newHome(okFake)
+        val c = DetachedCommands(cfg)
+        val other = ProcessBuilder("sleep", "51.7").start()
+        try {
+            val runs = File(home, ".kite/runs").also { it.mkdirs() }
+            File(runs, "f1.in").writeText("hi")
+            File(runs, "f1.pid").writeText(other.pid().toString() + "\n")
+            val t0 = System.currentTimeMillis()
+            assertEquals(listOf("APERITEXIT lost"), sh(home, c.follow("f1", 0)).lines)
+            assertTrue("lost 까지 ${System.currentTimeMillis() - t0}ms", System.currentTimeMillis() - t0 < 4000)
+            sh(home, c.stop("f1"))
+            assertTrue("남의 프로세스가 살아 있어야 한다", other.isAlive)
+            assertEquals("stopped", File(runs, "f1.exit").readText().trim())
+        } finally {
+            other.destroyForcibly()
+            home.deleteRecursively()
+        }
+    }
+
+    /** 올리기만 하고 시작 전에 앱이 꺼졌다: `.pid` 도 `.exit` 도 없으면 돌던 적 없는 것(none)이다 — lost 가 아니다. */
+    @Test
+    fun uploadedButNeverStartedIsNone() {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val home = newHome(okFake)
+        val c = DetachedCommands(cfg)
+        try {
+            sh(home, c.upload("n1"), "hi")
+            assertEquals(listOf("APERITEXIT none"), sh(home, c.follow("n1", 0)).lines)
+            // 멈춤은 아무것도 끝내지 않고, 시작한 적이 없으니 `.exit` 도 적지 않는다
+            sh(home, c.stop("n1"))
+            assertFalse(File(home, ".kite/runs/n1.exit").exists())
+            // 그 뒤 같은 번호로 시작하면 돈다
+            assertEquals(listOf("APERITRUN n1"), sh(home, c.start("n1")).lines)
+            assertEquals("APERITEXIT 0", sh(home, c.follow("n1", 0)).lines.last())
+        } finally {
+            home.deleteRecursively()
+        }
+    }
 }
