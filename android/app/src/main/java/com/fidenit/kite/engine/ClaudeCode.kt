@@ -183,6 +183,9 @@ class EngineConfig(
 
 const val STOPPED = "__stopped"
 
+/** 앱 쪽이 이 엔진을 버렸다 (화면이 닫혀 뷰모델이 없어졌다): 서버의 실행은 그대로 두고 따라 읽기만 그만둔다. */
+const val ABANDONED = "__abandoned"
+
 class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
     override val label = "Claude Code"
 
@@ -217,6 +220,18 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
 
     fun addToClean(id: String) {
         if (Detached.valid(id) && !leftover.contains(id)) leftover.add(id)
+    }
+
+    @Volatile
+    private var abandoned = false
+
+    /**
+     * 이 엔진을 더 쓰지 않는다: 돌고 있는 [run]·[resume] 은 서버의 실행을 멈추지 않고 따라 읽기만 그만두고 [ABANDONED] 를 던진다.
+     * (서버의 실행은 `inflight.json` 으로 다음에 다시 붙는다.)
+     */
+    fun abandon() {
+        abandoned = true
+        waker.wake()
     }
 
     /** 다시 붙기를 기다리는 중이면 바로 시도한다 (앱이 앞으로 돌아왔을 때). */
@@ -427,6 +442,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
 
         private fun loop(): Stats {
             while (true) {
+                if (abandoned) throw Exception(ABANDONED)
                 if (stopped()) return stoppedEnd()
                 try {
                     ssh.connect()
@@ -476,6 +492,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
                     throw e
                 } catch (e: Exception) {
                     ssh.close() // 끊긴 연결은 버리고 다시 붙는다
+                    if (abandoned) throw Exception(ABANDONED)
                     if (stopped()) continue
                     val wait = Detached.delayMs(attempt)
                     attempt++
@@ -483,7 +500,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
                     val what = if (idleCut) "서버에서 한동안 소식이 없습니다 → 연결을 끊고 다시 붙는 중입니다 → 할 일은 없습니다" else "연결이 끊겼습니다 → 서버에서는 계속 일하는 중입니다 → 다시 연결되면 이어서 받습니다"
                     idleCut = false
                     send(Ev.Activity(what))
-                    waker.sleep(wait, stopped)
+                    waker.sleep(wait) { stopped() || abandoned }
                 }
             }
         }
