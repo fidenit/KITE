@@ -1,6 +1,11 @@
 package com.fidenit.kite
 
 import android.app.Application
+import android.os.Looper
+import com.fidenit.kite.engine.Ev
+import com.fidenit.kite.engine.GONE
+import com.fidenit.kite.engine.Runner
+import com.fidenit.kite.engine.Stats
 import com.fidenit.kite.core.Lang
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -13,6 +18,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.File
 
@@ -59,6 +65,37 @@ class KiteViewModelTest {
         Store(app).jevKey = "test-key-not-real"
         return KiteViewModel(app).also { it.jevUrl = jevServer.url("/v1/systemone").toString() }
     }
+
+    /** Runs the main looper one task at a time until `cond` holds. */
+    private fun until(what: String, cond: () -> Boolean) {
+        val looper = shadowOf(Looper.getMainLooper())
+        val end = System.currentTimeMillis() + 10_000
+        while (!cond()) {
+            check(System.currentTimeMillis() < end) { "timed out: $what" }
+            if (looper.isIdle) Thread.sleep(10) else looper.runOneTask()
+        }
+    }
+
+    /** An engine for the tests: says what it is told to, can wait on a latch, can fail. */
+    private class Fake(
+        val lines: String = "",
+        val failWith: String? = null,
+        val gate: java.util.concurrent.CountDownLatch? = null,
+    ) : Runner {
+        override val label = "fake"
+        val started = java.util.concurrent.CountDownLatch(1)
+        private var calls = 0
+
+        override fun run(turnText: String, stopped: () -> Boolean, send: (Ev) -> Unit): Stats {
+            started.countDown()
+            gate?.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            failWith?.let { throw Exception(it) }
+            if (lines.isNotEmpty() && calls++ == 0) send(Ev.Delta(lines)) // only the first turn says it (a later turn for the tap notices must not redo it)
+            return Stats()
+        }
+    }
+
+    private fun serverSettings() = Store(app).apply { engineKind = "ssh"; host = "h"; user = "u" }
 
     private fun write(name: String, text: String) = File(files, name).writeText(text)
 
@@ -110,6 +147,7 @@ class KiteViewModelTest {
         write("recent.json", recent)
         inflight("ssh", "20261120-013000-a1b2")
         val vm = vm()
+        vm.flushWrites()
         assertFalse(vm.busy)
         assertNull(Journal(files).readInflight())
         assertFalse(exists("inflight.json"))
@@ -124,6 +162,7 @@ class KiteViewModelTest {
         write("board.txt", board + "card k3 note t2 반쯤 적용된 카드\n") // the turn had already applied a line
         inflight("api", "")
         val vm = vm()
+        vm.flushWrites()
         same(board, Lang.serialize(vm.board))
         assertNull(vm.board.card("k3"))
         same(board, File(files, "board.txt").readText().let { Lang.serialize(Lang.load(it)) }) // and the file says so too
@@ -135,6 +174,7 @@ class KiteViewModelTest {
         write("board.txt", board)
         inflight("api", "")
         val vm = vm()
+        vm.flushWrites()
         val e = vm.error!!
         assertTrue(e, e.contains("여행 짐 정리해 줘"))
         assertTrue(e, e.contains("끊겼"))
@@ -147,7 +187,9 @@ class KiteViewModelTest {
     fun apiTurnRecordErrorLineIsEnglishWhenTheAppIsEnglish() {
         Store(app).lang = "en"
         inflight("api", "")
-        val e = vm().error!!
+        val v = vm()
+        val e = v.error!!
+        v.flushWrites()
         assertTrue(e, e.contains("여행 짐 정리해 줘") && e.contains("closed") && e.contains("send it again"))
         assertFalse(exists("inflight.json"))
     }
@@ -182,10 +224,11 @@ class KiteViewModelTest {
         val vm = vm()
         val card = vm.board.card("k1")!!
         vm.toggle(card, card.items.first())
-        // no waiting: the tap is already in the files
+        // the tap is written by the writer thread: on disk before the app can be stopped normally (background() and onCleared flush)
+        vm.flushWrites()
         assertTrue(File(files, "board.txt").readText().contains("add k1 i1 done | 여권"))
         assertEquals(listOf("upd k1 i1 done | 여권"), Journal(files).readQueue().events)
-        val again = vm() // a new ViewModel on the same files dir
+        val again = vm() // a new ViewModel on the same files dir (as after a kill that came after the flush)
         assertEquals("done", again.board.card("k1")!!.items.first().cells.first())
         assertEquals(listOf("upd k1 i1 done | 여권"), Journal(files).readQueue().events) // still to be told to the model
     }
@@ -196,11 +239,13 @@ class KiteViewModelTest {
         val vm = vmWithTurnHeld()
         vm.send("첫째 말") // the turn starts (the engine answers on the IO thread; its result is not delivered in this test)
         assertTrue(vm.busy)
+        vm.flushWrites()
         assertNotNull(Journal(files).readInflight())
         val card = vm.board.card("k1")!!
         vm.toggle(card, card.items.first())
         vm.send("둘째 말")
         vm.send("셋째 말")
+        vm.flushWrites()
         val q = Journal(files).readQueue()
         assertEquals(listOf("둘째 말", "셋째 말"), q.pending)
         assertEquals(listOf("upd k1 i1 done | 여권"), q.events)
@@ -209,6 +254,7 @@ class KiteViewModelTest {
         // the restarted ViewModel asks the same fake Jev server (never answering), which keeps its turn running while we look
         com.fidenit.kite.engine.Jev.baseUrl = jevServer.url("/v1/systemone").toString()
         val again = vm()
+        again.flushWrites()
         assertTrue(again.busy) // the queued words were started as a turn
         val sent = Journal(files).readInflight()!!.turnText
         assertTrue(sent, sent.contains("<input>둘째 말\n셋째 말</input>"))
@@ -233,8 +279,10 @@ class KiteViewModelTest {
         val vm = vmWithTurnHeld()
         vm.send("첫째 말")
         vm.send("둘째 말")
+        vm.flushWrites()
         assertTrue(exists("inflight.json") && exists("queue.json"))
         vm.clearAll()
+        vm.flushWrites()
         assertFalse(exists("inflight.json"))
         assertFalse(exists("queue.json"))
         assertTrue(vm.board.cards.isEmpty())
@@ -245,6 +293,92 @@ class KiteViewModelTest {
         assertFalse(again.busy)
         assertNull(again.error)
         assertTrue(again.board.cards.isEmpty())
+    }
+
+    // RV-3: a tap made during an interrupted server turn is applied after the replay, so a tap on a card that turn created survives
+    @Test
+    fun aTapOnACardTheInterruptedTurnCreatedSurvivesTheReplay() {
+        serverSettings()
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        Journal(files).writeQueue(emptyList(), listOf("upd k3 i1 done | 가"))
+        val vm = vm()
+        vm.runnerOverride = Fake(lines = "card k3 checklist t2 3x2 새 목록\nadd k3 i1 todo | 가\n")
+        assertTrue(vm.busy)
+        assertNull(vm.board.card("k3")) // the pre-turn board is back; the tap is not applied yet
+        until("replay ends") { !vm.busy }
+        assertEquals("done", vm.board.card("k3")!!.items.first().cells.first())
+    }
+
+    // RV-1c: killed after the save but before the record was deleted: the replay must not add the same exchange twice
+    @Test
+    fun aTurnThatWasAlreadySavedIsNotAddedToTheConversationAgain() {
+        serverSettings()
+        write("board.txt", board)
+        write("recent.json", "[[\"안녕\",\"반가워요\"],[\"둘째 말\",\"마지막 한마디\"],[\"여행 짐 정리해 줘\",\"끝\"]]")
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 2))
+        val vm = vm()
+        vm.runnerOverride = Fake(lines = "say 끝\n")
+        until("replay ends") { !vm.busy }
+        assertEquals(3, vm.recent.size)
+        assertEquals("여행 짐 정리해 줘" to "끝", vm.recent.last())
+        vm.flushWrites()
+        assertFalse(exists("inflight.json"))
+    }
+
+    // RV-1b: a run that was finished and cleaned on the server is not run again: the board saved on disk is shown
+    @Test
+    fun aRunThatIsGoneShowsTheSavedBoardAndRunsNothing() {
+        serverSettings()
+        write("board.txt", board + "card k3 note t2 끝난 턴이 만든 카드\n") // saved after the turn
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        val vm = vm()
+        vm.runnerOverride = Fake(failWith = GONE)
+        until("replay ends") { !vm.busy }
+        assertNotNull(vm.board.card("k3")) // not the pre-turn board
+        assertNull(vm.error)
+        vm.flushWrites()
+        assertFalse(exists("inflight.json"))
+    }
+
+    // RV-8: clearing the screen while a turn runs: its lines do not land on the cleared board
+    @Test
+    fun clearAllDuringATurnKeepsItsLinesOffTheNewBoard() {
+        write("board.txt", board)
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val fake = Fake(lines = "card k9 note t2 늦게 온 카드\n", gate = gate)
+        val vm = vm()
+        vm.runnerOverride = fake
+        vm.send("뭔가 해 줘")
+        until("the engine has the turn") { fake.started.count == 0L }
+        vm.clearAll()
+        gate.countDown()
+        until("turn ends") { !vm.busy }
+        assertTrue(vm.board.cards.isEmpty())
+        vm.flushWrites()
+        assertFalse(File(files, "board.txt").readText().contains("k9"))
+        assertFalse(exists("inflight.json"))
+    }
+
+    // RV-7: the engine is now the phone's own: say that, and send the queued words by themselves
+    @Test
+    fun aServerRecordWhenTheEngineIsNowThePhoneSaysSoAndQueuedWordsGo() {
+        jevServer.start()
+        jevServer.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = okhttp3.mockwebserver.MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE)
+        }
+        com.fidenit.kite.engine.Jev.baseUrl = jevServer.url("/v1/systemone").toString()
+        Store(app).jevKey = "test-key-not-real"
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        Journal(files).writeQueue(listOf("둘째 말"), emptyList())
+        val vm = vm()
+        val e = vm.error!!
+        assertTrue(e, e.contains("폰에서 바로") && e.contains("여행 짐 정리해 줘"))
+        until("the queued words' turn ends") { !vm.busy }
+        assertTrue("the queued words were sent by themselves", vm.recent.any { it.first == "둘째 말" })
+        vm.flushWrites()
+        assertEquals(listOf("a-1"), Journal(files).readToClean()) // the server run is cleaned up on the next connect
     }
 
     // (8)

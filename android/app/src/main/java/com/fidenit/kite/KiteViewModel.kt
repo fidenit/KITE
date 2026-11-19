@@ -26,8 +26,10 @@ import com.fidenit.kite.core.partsTable
 import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import com.fidenit.kite.engine.Api
 import com.fidenit.kite.engine.ApiConfig
+import com.fidenit.kite.engine.ABANDONED
 import com.fidenit.kite.engine.ClaudeCode
 import com.fidenit.kite.engine.EngineConfig
+import com.fidenit.kite.engine.GONE
 import com.fidenit.kite.engine.Decide
 import com.fidenit.kite.engine.Detached
 import com.fidenit.kite.engine.Ev
@@ -69,7 +71,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private val files: File = app.filesDir
 
     /** 앱이 꺼져도 남는 기록: 돌고 있는 턴, 줄 세워 둔 말, 카드 조작 알림, 서버에서 못 치운 실행, 보던 주제 */
-    private val journal = Journal(files)
+    private val journal = Journal(files, async = true)
 
     // ---------------------------------------------------------------- 화면이 보는 상태
     var board = Board()
@@ -157,6 +159,35 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private var lines = LineStream()
     private var eventTimer: Job? = null
 
+    /** 화면을 비울 때마다 1씩 는다. 비우기 전에 시작한 턴의 줄과 끝맺음은 새 화면에 닿지 않는다. */
+    private var generation = 0
+
+    @Volatile
+    private var cleared = false
+
+    /** 턴이 시작될 때마다 1씩 는다 (멈춤 뒤 10초 감시가 다른 턴을 건드리지 않게). */
+    private var turnSeq = 0
+
+    /** 지금 도는 턴의 서버 실행 번호 */
+    @Volatile
+    private var currentRunId: String? = null
+
+    /** 엔진에 맡겨 둔, 서버에서 아직 멈추고 치우지 못한 실행 번호 (끝난 뒤 목록에서 뺄 것을 가리려고) */
+    private val handed: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
+
+    /** 다시 붙는 동안 만진 카드: 따라잡기가 끝난 뒤에 순서대로 반영한다 (그 턴이 만든 카드를 만졌을 수 있다) */
+    private var replayTaps: List<String> = emptyList()
+    private var reportUserRejects = false
+
+    /** 시험에서 엔진 대신 쓴다 */
+    internal var runnerOverride: Runner? = null
+
+    /**
+     * TypeSafe Jev 의 주소. 시험에서 가짜 서버로 바꾼다 (앱은 바꾸지 않는다).
+     * `init` 보다 먼저 선언해야 한다: 켤 때 줄 세워 둔 말로 시작하는 턴이 init 안에서 이미 이 값을 읽는다.
+     */
+    internal var jevUrl: String = Jev.baseUrl
+
     // 소리
     private val speech = ArrayDeque<Pair<String, MutableList<String>>>()
     private val turnSpoken = mutableListOf<String>()
@@ -211,20 +242,19 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val i = journal.readInflight()
         if (i == null) {
             // 턴은 끝났는데 줄 세워 둔 말이 남았다 (그 말을 넘기기 전에 꺼졌다)
-            if (pending.isNotEmpty()) {
-                val next = pending.joinToString("\n")
-                pending.clear()
-                startTurn(next)
-            }
+            startPendingWords()
             return
         }
         try {
             board = Lang.load(i.board)
         } catch (_: Exception) {
         }
-        events.forEach { applyLine(it, Author.User) }
+        // 저장은 했는데 기록을 지우기 전에 꺼졌다면 주고받은 말에 이 턴이 이미 들어 있다: 턴 시작 전 길이로 되돌린다
+        if (i.recentLen >= 0) while (recent.size > i.recentLen) recent.removeAt(recent.size - 1)
         restoreView()
         if (i.engine == "ssh" && i.id.isNotEmpty() && useSsh && !needsSetup()) {
+            // 그 사이 만진 카드는 따라잡은 뒤에 반영한다 (그 턴이 만든 카드를 만졌을 수 있다)
+            replayTaps = events.toList()
             busy = true
             error = null
             activity = ""
@@ -237,24 +267,84 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             runTurn(i, resume = true)
             return
         }
-        // 이어 받을 수 없다: 서버 설정이 바뀌었거나, API 엔진이거나, 서버에 올리기 전에 끊겼다
-        if (i.id.isNotEmpty()) journal.writeToClean((journal.readToClean() + i.id).distinct())
+        // 이어 받을 수 없다: 서버 설정이 바뀌었거나, 엔진이 바뀌었거나, API 엔진이거나, 서버에 올리기 전에 끊겼다
+        events.forEach { applyLine(it, Author.User) }
+        if (i.id.isNotEmpty()) journal.addToClean(listOf(i.id))
         journal.clearInflight()
         save()
-        val why = if (i.engine == "ssh" && i.id.isNotEmpty()) {
-            if (english) "The server settings changed, so the last message cannot be picked up again" else "서버 설정이 바뀌어 마지막 말을 이어 받을 수 없습니다"
-        } else {
-            if (english) "The app was closed in the middle of the last message" else "앱이 꺼지면서 마지막 말이 끊겼습니다"
+        val why = when {
+            i.engine == "ssh" && i.id.isNotEmpty() && !useSsh ->
+                if (english) "The engine is now \"directly from the phone\", so the message that was running on the server cannot be picked up again" else "엔진이 '폰에서 바로'로 바뀌어 서버에서 돌던 말을 이어 받을 수 없습니다"
+            i.engine == "ssh" && i.id.isNotEmpty() ->
+                if (english) "The server settings changed, so the last message cannot be picked up again" else "서버 설정이 바뀌어 마지막 말을 이어 받을 수 없습니다"
+            else -> if (english) "The app was closed in the middle of the last message" else "앱이 꺼지면서 마지막 말이 끊겼습니다"
         }
-        error = if (english) "$why → the board is back to before it → send it again: \"${i.shown}\"" else "$why → 화면은 그 말 이전으로 되돌렸습니다 → 다시 보내 주세요: \"${i.shown}\""
+        val line = if (english) "$why → the board is back to before it → send it again: \"${i.shown}\"" else "$why → 화면은 그 말 이전으로 되돌렸습니다 → 다시 보내 주세요: \"${i.shown}\""
+        startPendingWords() // 줄 세워 둔 말은 저절로 보낸다 (턴이 시작하면 오류 줄이 지워지므로 그다음에 적는다)
+        error = line
+    }
+
+    /** 줄 세워 둔 말이 남아 있으면 지금 보낸다 (돌고 있는 턴이 없을 때). */
+    private fun startPendingWords() {
+        if (pending.isEmpty() || busy) return
+        val next = pending.joinToString("\n")
+        pending.clear()
+        startTurn(next)
+    }
+
+    /** 앱이 저장해 둔 보드와 대화를 다시 읽는다 (이미 끝나 저장된 턴에 다시 붙었을 때). */
+    private fun reloadFromDisk() {
+        journal.flush()
+        try {
+            board = Lang.load(File(files, "board.txt").readText())
+        } catch (_: Exception) {
+            board = Board()
+        }
+        recent.clear()
+        try {
+            val a = JSONArray(File(files, "recent.json").readText())
+            for (k in 0 until a.length()) a.getJSONArray(k).let { recent.add(it.getString(0) to it.getString(1)) }
+        } catch (_: Exception) {
+        }
+        restoreView()
+        rev++
+    }
+
+    /** 서버에서 멈추고 치워야 할 실행으로 적어 둔다 (파일에 합쳐 쓰고, 지금 엔진에도 알린다). */
+    private fun markToClean(id: String) {
+        journal.addToClean(listOf(id))
+        handed.add(id)
+        (engine as? ClaudeCode)?.addToClean(id)
+    }
+
+    /** 엔진이 서버에서 멈추고 치웠다고 확인한 것만 파일 목록에서 빼고, 엔진에 남은 것은 파일에 합친다. */
+    private fun syncToClean(cc: ClaudeCode) {
+        val now = cc.toClean.toSet()
+        journal.addToClean(now)
+        val settled = synchronized(handed) { handed.filter { it !in now } }
+        if (settled.isNotEmpty()) journal.removeToClean(settled)
+        synchronized(handed) {
+            handed.removeAll(settled.toSet())
+            handed.addAll(now)
+        }
+    }
+
+    /** 턴을 다 저장하고 기록을 지운 뒤: 밀린 쓰기가 디스크에 닿은 다음에야 서버의 실행 파일을 치운다. */
+    private fun finishServerRun(cc: ClaudeCode?, id: String?) {
+        if (cc == null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            journal.flush()
+            if (id != null) cc.cleanRun(id)
+            syncToClean(cc)
+        }
     }
 
     private fun save() {
         try {
-            Journal.writeAtomic(File(files, "board.txt"), Lang.save(board))
+            journal.writeFile("board.txt", Lang.save(board))
             val a = JSONArray()
             recent.takeLast(40).forEach { a.put(JSONArray().put(it.first).put(it.second)) }
-            Journal.writeAtomic(File(files, "recent.json"), a.toString())
+            journal.writeFile("recent.json", a.toString())
             journal.writeCurrent(current)
         } catch (_: Exception) {
         }
@@ -267,16 +357,21 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 설정이 바뀌었으면 엔진을 새로 만든다. (입출력 스레드에서 부른다) */
     private fun engine(): Runner {
+        runnerOverride?.let { return it }
         val sig = store.signature()
         var e = engine
         if (e == null || sig != engineSig) {
+            (engine as? ClaudeCode)?.abandon() // 바꾸는 엔진은 따라 읽기를 그만둔다 (새 엔진이 따라 읽는 실행을 치우지 못하게)
             ssh?.close()
             ssh = null
             e = if (useSsh) {
                 val s = Ssh(Server(store.host, store.port.toIntOrNull() ?: 22, store.user, store.password, store.privateKey, store.passphrase, store.fingerprint)) { store.fingerprint = it }
                 ssh = s
                 ClaudeCode(s, EngineConfig(store.claude, store.dir, store.permission, store.effort, store.extra)).also { cc ->
-                    journal.readToClean().forEach { cc.addToClean(it) } // 멈추고 치우지 못한 실행: 다음에 붙을 때 처리한다
+                    cc.cleanAfterRun = false // 서버 파일은 앱이 보드를 저장하고 기록을 지운 뒤에 치운다 (finishServerRun)
+                    val ids = journal.readToClean()
+                    handed.addAll(ids)
+                    ids.forEach { cc.addToClean(it) } // 멈추고 치우지 못한 실행: 다음에 붙을 때 처리한다
                 }
             } else {
                 // 무료 앱: 사용자의 키로 Anthropic 에 바로. Pro: 같은 요청을 중계 서버로 (키는 서버가 갖고 있다).
@@ -433,7 +528,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val text = turnText(input)
         val shown = input.ifEmpty { if (english) "(screen action)" else "(화면 조작)" }
         // 네트워크를 쓰기 전에 남긴다: 앱이 이 턴 도중 꺼져도 다음에 켤 때 이어 받거나, 끊겼다고 알릴 수 있다.
-        val record = Inflight(if (useSsh) "ssh" else "api", "", text, shown, before, System.currentTimeMillis())
+        val record = Inflight(if (useSsh) "ssh" else "api", "", text, shown, before, System.currentTimeMillis(), minOf(recent.size, 39))
         journal.writeInflight(record)
         saveQueue()
         runTurn(record, resume = false, input = input)
@@ -442,10 +537,15 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     /** 한 턴을 돌려 결과를 반영한다. `resume` 이면 서버에서 돌던 그 턴에 다시 붙는다 (앱이 다시 켜졌을 때). */
     private fun runTurn(record: Inflight, resume: Boolean, input: String = "") {
         val shown = record.shown
+        val gen = generation
+        val seq = ++turnSeq
+        currentRunId = if (resume) record.id else null
         val evs = Channel<Ev>(Channel.UNLIMITED)
         viewModelScope.launch {
             val reader = launch {
-                for (ev in evs) handle(ev)
+                for (ev in evs) {
+                    if (gen == generation) handle(ev) else if (ev is Ev.Screen) ev.reply.complete("반영되지 않음")
+                }
             }
             // 판단 모델(Jev)이 먼저 요청의 종류·주제를 보고 받았다는 한마디를 고른다. 입출력 스레드에서, 엔진을 부르기 전에.
             // 키가 없거나 입력이 비었거나 서버에서 돌던 턴에 다시 붙는 것이면 부르지 않는다.
@@ -455,7 +555,10 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                     val e = if (resume) engineWhenReachable(record.id, evs) else engine()
                     if (e is ClaudeCode) {
                         // 서버에서 떼어 돌린다: 실행 번호가 정해지면 (서버에 닿기 전에) 기록에 적는다.
-                        e.onRunId = { id -> journal.writeInflight(Inflight("ssh", id, turn.turnText, turn.shown, turn.board, turn.startedAt)) }
+                        e.onRunId = { id ->
+                            currentRunId = id
+                            if (gen == generation) journal.writeInflight(turn.copy(engine = "ssh", id = id))
+                        }
                         if (resume) e.resume(record.id, turn.turnText, 0, { stopFlag }) { evs.trySend(it) }
                         else e.run(turn.turnText, { stopFlag }) { evs.trySend(it) }
                     } else {
@@ -465,9 +568,44 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             }
             evs.close()
             reader.join()
+            val cc = engine as? ClaudeCode
+            val runId = currentRunId
+            val msg = result.exceptionOrNull()?.message
+            if (gen != generation) {
+                // 화면을 비운 뒤에 끝났다: 새 화면에는 아무것도 반영하지 않고, 서버 실행만 치운다
+                activity = ""
+                busy = false
+                finishServerRun(cc, runId)
+                startPendingWords()
+                return@launch
+            }
+            if (msg == ABANDONED) {
+                // 엔진이 바뀌어 따라 읽기를 그만뒀다: 서버의 실행은 그대로고 기록도 남는다 (앱을 다시 열면 이어 받는다)
+                activity = ""
+                busy = false
+                error = if (english) "The connection settings changed, so this message is no longer followed → it keeps running on the server → open the app again to pick it up" else "연결 설정이 바뀌어 이 말을 더 따라 받지 않습니다 → 서버에서는 계속 일합니다 → 앱을 다시 열면 이어서 받습니다"
+                return@launch
+            }
+            if (msg == GONE) {
+                // 이 턴은 이미 끝나 저장되고 서버에서도 치워졌다: 저장된 보드를 그대로 보여 주고, 다시 돌리지 않는다
+                reloadFromDisk()
+                journal.clearInflight()
+                replayTaps = emptyList()
+                activity = ""
+                busy = false
+                startPendingWords()
+                return@launch
+            }
             lines.finish()?.let { aiLine(it) }
             liveSay = null
             board.cards.forEach { it.live = null }
+            if (replayTaps.isNotEmpty()) {
+                // 다시 붙는 동안 만진 카드: 이제 그 카드가 있다. 아직도 거부되는 것은 다음 턴에 알린다.
+                reportUserRejects = true
+                replayTaps.forEach { applyLine(it, Author.User) }
+                reportUserRejects = false
+                replayTaps = emptyList()
+            }
             // 다른 말이 없었으면 남겨 둔 한마디를 읽는다.
             quietSay?.let {
                 if (voice && !hush && !standby) speech.addLast(it to mutableListOf())
@@ -479,15 +617,15 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 val cost = if (!BuildConfig.PRO && !useSsh && s.costUsd > 0) " · 약 $${"%.3f".format(s.costUsd)}" else ""
                 statsLine = "${s.model} · ${"%.1f".format(s.totalMs / 1000.0)}초 · 첫 반응 ${"%.1f".format(s.firstMs / 1000.0)}초$cost" + if (s.limit.isNotEmpty()) " · ${s.limit}" else ""
             }.onFailure { e ->
-                if (e.message != STOPPED) error = e.message ?: e.toString()
+                if (e.message != STOPPED && !stopFlag) error = e.message ?: e.toString()
             }
             recent.add(shown to board.say)
             activity = ""
             busy = false
             rev++
-            save() // 반영한 것을 먼저 저장하고, 그다음에 돌던 턴의 기록을 지운다
+            save() // 반영한 것을 먼저 저장하고, 그다음에 돌던 턴의 기록을 지우고, 그다음에야 서버의 실행 파일을 치운다
             journal.clearInflight()
-            (engine as? ClaudeCode)?.let { journal.writeToClean(it.toClean) }
+            finishServerRun(cc, runId)
             if (result.isSuccess) reviewTurn() else touched.clear()
             // 기억이 바뀌었을 수 있으니 다음 턴을 위해 다시 읽어 둔다.
             launch(Dispatchers.IO) {
@@ -527,11 +665,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             speech.addLast(ack to mutableListOf())
             advanceSpeech()
         }
-        return Inflight(record.engine, record.id, record.turnText + Decide.alreadySaid(ack), record.shown, record.board, record.startedAt)
+        return record.copy(turnText = record.turnText + Decide.alreadySaid(ack))
     }
-
-    /** TypeSafe Jev 의 주소. 시험에서 가짜 서버로 바꾼다 (앱은 바꾸지 않는다). */
-    internal var jevUrl: String = Jev.baseUrl
 
     /**
      * 턴 뒤의 판단: 이번 턴에 AI 가 건드린 카드(최대 20장)가 화면만 보고 분명한지, 얼마나 중요한지를 Jev 에게 묻는다.
@@ -573,6 +708,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private fun engineWhenReachable(runId: String, evs: Channel<Ev>): Runner {
         var attempt = 0
         while (true) {
+            if (cleared) throw Exception(ABANDONED)
             try {
                 return engine()
             } catch (e: SshFatal) {
@@ -580,14 +716,15 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: RemoteFail) {
                 throw e
             } catch (e: Exception) {
+                if (cleared) throw Exception(ABANDONED)
                 if (stopFlag) {
                     // 서버에 멈춤을 보내지 못했다: 다음에 붙을 때 멈추고 치운다
-                    journal.writeToClean((journal.readToClean() + runId).distinct())
+                    markToClean(runId)
                     throw Exception(STOPPED)
                 }
                 val wait = Detached.delayMs(attempt++)
                 evs.trySend(Ev.Activity(if (english) "The server cannot be reached → the last message continues once it can → nothing to do" else "서버에 닿지 않습니다 → 닿으면 하던 말을 이어 받습니다 → 할 일은 없습니다"))
-                resumeWaker.sleep(wait) { stopFlag }
+                resumeWaker.sleep(wait) { stopFlag || cleared }
             }
         }
     }
@@ -631,7 +768,19 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         pending.clear()
         saveQueue()
         silence()
-        if (busy) stopFlag = true
+        if (busy) {
+            stopFlag = true
+            currentRunId?.let { markToClean(it) } // 서버에 닿지 않아 멈춤을 못 보내도 다음에 붙을 때 멈추고 치운다
+            // 서버에 닿는 단계(연결·준비)에서 멈추지 못하고 매달려 있으면 10초 뒤 연결을 끊어 풀어 준다
+            val seq = turnSeq
+            viewModelScope.launch {
+                delay(10_000)
+                if (busy && seq == turnSeq) {
+                    val s = ssh
+                    withContext(Dispatchers.IO) { s?.close() }
+                }
+            }
+        }
     }
 
     /** 줄 하나를 보드에 반영한다. AI 의 줄이 거부되면 다음 턴에 알려 준다. */
@@ -654,7 +803,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (by == Author.Ai && topic != null) current = topic
         } catch (e: Rejected) {
-            if (by == Author.Ai) rejects.add("${line.trim().take(80)} → ${e.line}")
+            if (by == Author.Ai || reportUserRejects) rejects.add("${line.trim().take(80)} → ${e.line}")
         }
         if (current == null || board.topics.none { it.id == current }) current = board.topics.lastOrNull()?.id
         rev++
@@ -924,11 +1073,13 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- 카드를 직접 만질 때
 
-    private fun userLine(line: String) {
+    private fun userLine(line: String, persist: Boolean = true) {
         applyLine(line, Author.User)
         events.add(line)
-        saveQueue()
-        save() // 카드를 만진 것은 바로 저장한다
+        if (persist) {
+            saveQueue()
+            save() // 카드를 만진 것은 바로 저장한다 (일꾼 스레드가 쓰고, 앱이 정상적으로 멈추기 전에 디스크에 닿는다)
+        }
     }
 
     private fun safe(s: String) = s.replace('|', '/').replace('\n', ' ').trim()
@@ -962,9 +1113,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     fun submit(card: Card, values: Map<String, String>) {
         for (item in card.items) {
             val v = safe(values[item.id].orEmpty())
-            userLine("upd ${card.id} ${item.id} ${item.cells.getOrElse(0) { "" }} | ${item.cells.getOrElse(1) { "" }} | $v")
+            userLine("upd ${card.id} ${item.id} ${item.cells.getOrElse(0) { "" }} | ${item.cells.getOrElse(1) { "" }} | $v", persist = false)
         }
-        userLine("set ${card.id} sent yes")
+        userLine("set ${card.id} sent yes") // 저장은 한 번
         send("")
     }
 
@@ -975,7 +1126,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 화면을 비운다 (대화 기록도 지운다). */
     fun clearAll() {
+        currentRunId?.takeIf { busy }?.let { markToClean(it) } // 돌던 서버 실행은 멈추고 치운다
         stop()
+        generation++ // 돌던 턴의 줄과 끝맺음이 새 화면에 닿지 않게
         board = Board()
         recent.clear()
         events.clear()
@@ -998,15 +1151,22 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     /** 앱이 뒤로 갔다: 보드를 저장하고, 말로 대화하기는 끈다 (마이크가 뒤에서 계속 돌지 않게). */
     fun background() {
         save()
+        journal.flush() // 앱이 멈추기 전에 디스크에 닿게 한다
         if (converse) converse(false)
     }
 
+    /** 시험용: 밀린 쓰기가 끝나기를 기다린다. */
+    internal fun flushWrites() = journal.flush()
+
     override fun onCleared() {
+        cleared = true
+        resumeWaker.wake()
         (engine as? ClaudeCode)?.abandon() // 서버의 실행은 그대로 두고 따라 읽기만 그만둔다 (다음에 켜면 inflight.json 으로 다시 붙는다)
         converse(false)
         player?.release()
         deviceTts?.shutdown()
         val s = ssh
         Thread { s?.close() }.start()
+        journal.flush()
     }
 }
