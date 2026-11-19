@@ -54,6 +54,31 @@ class KiteViewModelJevTest {
         return KiteViewModel(app).also { it.jevUrl = server.url("/v1/systemone").toString() }
     }
 
+    /**
+     * Holds the engine step: the server engine connects to a socket that accepts and never answers, so the turn stays in the
+     * engine (after the decision) for as long as the test looks at it. Nothing depends on how fast anything runs.
+     */
+    private inner class Hold : AutoCloseable {
+        private val sock = java.net.ServerSocket(0)
+        private val accepted = java.util.Collections.synchronizedList(mutableListOf<java.net.Socket>())
+
+        init {
+            Thread { try { while (true) accepted.add(sock.accept()) } catch (_: Exception) {} }.apply { isDaemon = true }.start()
+            Store(app).apply { engineKind = "ssh"; host = "127.0.0.1"; port = sock.localPort.toString(); user = "u" }
+        }
+
+        override fun close() {
+            sock.close()
+            accepted.forEach { try { it.close() } catch (_: Exception) {} }
+        }
+    }
+
+    /** The turn text of the running turn, as the file has it (the writer thread is waited for). */
+    private fun inflightText(vm: KiteViewModel): String {
+        vm.flushWrites()
+        return Journal(files).readInflight()!!.turnText
+    }
+
     /** Runs the main looper one task at a time until `cond` holds (so a state in between can be looked at). */
     private fun until(what: String, cond: () -> Boolean) {
         val looper = shadowOf(Looper.getMainLooper())
@@ -88,6 +113,7 @@ class KiteViewModelJevTest {
 
     @Test
     fun kindTopicAndAcknowledgementAreShownBeforeTheEngineAnswers() {
+        val hold = Hold()
         server.enqueue(answer("작업", 0.9))
         val vm = vm("test-key-not-real")
         assertEquals("t2", vm.current) // the last topic
@@ -97,6 +123,8 @@ class KiteViewModelJevTest {
         assertEquals("네, 바로 해볼게요.", vm.liveSay)
         assertEquals("작업 · 생각하는 중", vm.activity)
         assertEquals("t2", vm.current)
+        assertTrue("the turn is still held in the engine step", vm.busy)
+        hold.close()
         until("turn ends") { !vm.busy }
         assertEquals("t2", vm.current) // the topic stays
         assertEquals(1, server.requestCount)
@@ -113,13 +141,15 @@ class KiteViewModelJevTest {
 
     @Test
     fun aSureConversationKindShowsNoAcknowledgement() {
-        server.enqueue(answer("대화", 0.9))
-        val vm = vm("k")
-        vm.send("안녕")
-        until("the decision is shown") { vm.activity.isNotEmpty() }
-        assertEquals("대화 · 생각하는 중", vm.activity)
-        assertNull(vm.liveSay)
-        until("turn ends") { !vm.busy }
+        Hold().use {
+            server.enqueue(answer("대화", 0.9))
+            val vm = vm("k")
+            vm.send("안녕")
+            until("the decision is shown") { vm.activity.isNotEmpty() }
+            assertEquals("대화 · 생각하는 중", vm.activity)
+            assertNull(vm.liveSay)
+            assertTrue("the turn is still held in the engine step", vm.busy)
+        }
     }
 
     @Test
@@ -193,14 +223,14 @@ class KiteViewModelJevTest {
         // the next turn carries the review once (the key is taken away so that this send asks nothing)
         Store(app).jevKey = ""
         vm.send("다음 말")
-        val text = Journal(files).readInflight()!!.turnText
+        val text = inflightText(vm)
         assertTrue(text, text.contains("<review>\ncard k3: hard to tell what it is about from the screen alone (probability it is clear: 0.20)\n</review>\n"))
         until("turn ends") { !vm.busy }
         // a second turn: a fake Jev answer that never comes keeps it running while its text is read
         Store(app).jevKey = "k"
         server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE))
         vm.send("또 다음 말")
-        assertFalse(Journal(files).readInflight()!!.turnText.contains("<review>"))
+        assertFalse(inflightText(vm).contains("<review>"))
     }
 
     @Test
@@ -212,9 +242,19 @@ class KiteViewModelJevTest {
         until("the review is in") { vm.importance.isNotEmpty() }
         assertEquals(0.0, vm.importance["k3"]!!, 1e-9)
         Store(app).jevKey = ""
+        // the engine is a fake that keeps the turn text it gets (what the model would be sent)
+        val sent = mutableListOf<String>()
+        vm.runnerOverride = object : com.fidenit.kite.engine.Runner {
+            override val label = "fake"
+            override fun run(turnText: String, stopped: () -> Boolean, send: (com.fidenit.kite.engine.Ev) -> Unit): com.fidenit.kite.engine.Stats {
+                sent.add(turnText)
+                return com.fidenit.kite.engine.Stats()
+            }
+        }
         vm.send("다음 말")
-        assertFalse(Journal(files).readInflight()!!.turnText.contains("<review>"))
         until("turn ends") { !vm.busy }
+        assertEquals(1, sent.size)
+        assertFalse(sent[0], sent[0].contains("<review>"))
         // without a key: nothing is asked
         vm.aiLine("card k4 note t1 2x1 또")
         vm.reviewTurn()
@@ -252,6 +292,6 @@ class KiteViewModelJevTest {
         assertTrue(vm.importance.isEmpty())
         Store(app).jevKey = ""
         vm.send("다음 말")
-        assertFalse(Journal(files).readInflight()!!.turnText.contains("<review>"))
+        assertFalse(inflightText(vm).contains("<review>"))
     }
 }
