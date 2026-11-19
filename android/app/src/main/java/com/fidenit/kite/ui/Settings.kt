@@ -144,7 +144,7 @@ fun SettingsScreen(vm: KiteViewModel, onBack: () -> Unit) {
         }
 
         Section("음성")
-        Hint("말로 대화하려면 ElevenLabs 키가 필요합니다. 키가 없으면 글로 쓰고, 대답은 폰의 기본 음성으로 읽습니다.")
+        Hint("말로 대화하려면 ElevenLabs 키가 필요합니다.")
         Field("ElevenLabs 키", s.elevenKey, secret = true) { s.elevenKey = it.trim() }
         Field("목소리 ID (비우면 기본 목소리)", s.voiceId) { s.voiceId = it.trim() }
         Text("대화 언어", color = C.text, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
