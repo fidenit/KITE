@@ -287,9 +287,23 @@ pub fn explain(err: &str) -> String {
     if what.is_empty() { tail } else { format!("{what} ({tail})") }
 }
 
+/// What ssh said, for this server: when it refused a sign-in and there was neither a key file nor a password,
+/// say that a password (or a key) is what is missing.
+pub fn explain_for(s: &Server, err: &str, password: Option<&str>) -> String {
+    let none = s.key.trim().is_empty() && password.map(|p| p.trim().is_empty()).unwrap_or(true) && s.password().is_none();
+    if none && err.to_lowercase().contains("permission denied") {
+        return crate::sys::tr(
+            "로그인하지 못했습니다. 비밀번호도 키 파일도 없어서 이 컴퓨터의 ssh 키로 시도했는데 서버가 받지 않았습니다. 설정 → 서버에 비밀번호(또는 키 파일)를 넣어 주세요.",
+            "Could not sign in. There was no password and no key file, so this computer's own ssh keys were tried, and the server refused them. Add the password (or a key file) under Settings → A server.",
+        )
+        .into();
+    }
+    explain(err)
+}
+
 /// Connect and ask the server's Claude Code for its version: what the Settings window's test button shows.
 pub fn check(s: &Server, password: Option<&str>) -> Result<String, String> {
-    let out = run(s, &format!("{} && {} --version", s.cd(), s.claude()), b"", password)?;
+    let out = run(s, &format!("{} && {} --version", s.cd(), s.claude()), b"", password).map_err(|e| if e.to_lowercase().contains("permission denied") { explain_for(s, &e, password) } else { e })?;
     let version = out.lines().last().unwrap_or("").trim().to_string();
     if version.is_empty() { Err(crate::sys::tr("연결은 됐지만 Claude Code 버전을 읽지 못했습니다.", "Connected, but Claude Code did not say its version.").into()) } else { Ok(version) }
 }

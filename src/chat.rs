@@ -627,6 +627,8 @@ impl App {
         let width = (screen.width() - 48.0).clamp(660.0, 1080.0);
         let frame = egui::Frame::new().fill(PANEL()).stroke(egui::Stroke::new(1.0, FIELD_EDGE())).corner_radius(24).inner_margin(egui::Margin::same(26));
         let (mut save, mut close) = (false, false);
+        // Save on a server: test first (the button), or the test just passed (save now).
+        let (mut test_then_save, mut save_now) = (false, false);
         egui::Modal::new(egui::Id::unique("key-window")).frame(frame).backdrop_color(egui::Color32::from_black_alpha(170)).show(ctx, |ui| {
             let inner = width - 52.0;
             ui.set_width(inner);
@@ -667,6 +669,32 @@ impl App {
             });
             ui.add_space(20.0);
             let ready = self.keys_ready(current, &cc_version);
+            // On a server, Save first tests the connection with what is typed, and saves only when it works.
+            // A test is good only for the fields it was run with.
+            let on_server = self.engine_pick.as_deref() == Some("ssh");
+            if on_server && self.ssh_tested != self.ssh_input.join("\u{1}") && !self.ssh_test.lock().unwrap().is_empty() && self.ssh_test.lock().unwrap().as_str() != "…" {
+                self.ssh_test.lock().unwrap().clear();
+                self.ssh_save_waiting = false;
+            }
+            let status = self.ssh_test.lock().unwrap().clone();
+            let (testing, tested_ok, failed) = (status == "…", status.starts_with("ok "), !status.is_empty() && status != "…" && !status.starts_with("ok "));
+            if on_server && self.ssh_save_waiting && !testing {
+                self.ssh_save_waiting = false;
+                if tested_ok {
+                    save_now = true;
+                }
+            }
+            let save_label = if !on_server {
+                if first { crate::sys::tr("저장하고 시작", "Save and start") } else { crate::sys::tr("저장", "Save") }
+            } else if testing && self.ssh_save_waiting {
+                crate::sys::tr("연결 확인 중…", "Checking…")
+            } else if failed {
+                crate::sys::tr("그래도 저장", "Save anyway")
+            } else if first {
+                crate::sys::tr("확인하고 시작", "Check and start")
+            } else {
+                crate::sys::tr("확인하고 저장", "Check and save")
+            };
             if first {
                 ui.label(egui::RichText::new(crate::sys::tr("데모에서는 무엇을 입력해도 준비된 장면이 재생됩니다. AI가 실제로 답하지는 않습니다.", "In the demo, anything you type plays prepared scenes. The AI does not actually answer.")).size(11.5).color(ui::FAINT()));
                 ui.add_space(8.0);
@@ -675,9 +703,13 @@ impl App {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (r, p) = ui.allocate_painter(egui::vec2(170.0, 40.0), egui::Sense::click());
                     p.rect_filled(r.rect, 20.0, if ready { ui::TEXT() } else { FIELD() });
-                    p.text(r.rect.center(), egui::Align2::CENTER_CENTER, if first { crate::sys::tr("저장하고 시작", "Save and start") } else { crate::sys::tr("저장", "Save") }, ui::bold(13.5), if ready { PANEL() } else { ui::FAINT() });
-                    if ready && r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                        save = true;
+                    p.text(r.rect.center(), egui::Align2::CENTER_CENTER, save_label, ui::bold(13.5), if ready { PANEL() } else { ui::FAINT() });
+                    if ready && !testing && r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        if on_server && !failed && !tested_ok {
+                            test_then_save = true;
+                        } else {
+                            save = true;
+                        }
                     }
                     ui.add_space(10.0);
                     let label = if first { crate::sys::tr("키 없이 데모 둘러보기", "Look around the demo without a key") } else { crate::sys::tr("닫기", "Close") };
@@ -691,7 +723,11 @@ impl App {
                 });
             });
         });
-        if save {
+        if test_then_save {
+            self.start_ssh_test(ctx);
+            self.ssh_save_waiting = true;
+        }
+        if save || save_now {
             self.save_keys();
         }
         if close {
@@ -726,7 +762,9 @@ impl App {
     /// the user's to decide: the Settings window opens with the change made, and nothing changes until they save.
     pub fn settings_request(&mut self, change: &str, value: &str) -> String {
         let v = value.trim().to_lowercase();
-        let in_window = "The Settings window is open with this change made. It takes effect when the user presses Save there; tell them so.";
+        // What the model is told back ends with one short line to say, so that the caption (80 characters) is not cut.
+        let say = |ko: &'static str, en: &'static str| format!(" Say this as it is, nothing longer: \"{}\"", crate::sys::tr(ko, en));
+        let in_window = format!("The Settings window is open with this change made; it takes effect when the user presses Save.{}", say("설정 창에 맞춰 뒀어요. 저장을 누르면 바뀝니다.", "It is set in Settings. Press Save to apply it."));
         match change.trim() {
             "language" => {
                 let english = match v.as_str() {
@@ -783,7 +821,7 @@ impl App {
                     _ => {
                         self.open_settings(None);
                         self.limit_input = new.map(|n| format!("{n}")).unwrap_or_default();
-                        in_window.into()
+                        in_window
                     }
                 }
             }
@@ -805,13 +843,16 @@ impl App {
                         self.open_settings(Some("ssh"));
                         self.fill_ssh(None);
                         self.ssh_input = [host, user, port, String::new(), String::new(), String::new(), String::new()];
-                        return "The Settings window is open on a new server with the address filled in. The user adds the key file or the password there, can test the connection, and presses Save; tell them so.".into();
+                        return format!(
+                            "The Settings window is open on a new server with the address filled in. The password or key file goes there, never into the conversation.{}",
+                            say("설정 창에 주소를 넣었어요. 비밀번호를 넣고 저장을 누르세요.", "The address is in Settings. Add the password and press Save.")
+                        );
                     }
                     _ => match crate::ssh::find(value.trim()) {
                         Some(s) => {
                             self.open_settings(Some("ssh"));
                             self.fill_ssh(Some(s));
-                            return in_window.into();
+                            return in_window;
                         }
                         None => {
                             let servers: Vec<String> = crate::ssh::servers().0.iter().map(|s| s.id()).collect();
@@ -820,7 +861,7 @@ impl App {
                     },
                 };
                 self.open_settings(Some(pick));
-                in_window.into()
+                in_window
             }
             "permission" => {
                 let level = match v.as_str() {
@@ -836,7 +877,7 @@ impl App {
                 } else {
                     self.level_pick = Some(level.into());
                 }
-                in_window.into()
+                in_window
             }
             "open" | "" => {
                 self.open_settings(None);
@@ -875,6 +916,25 @@ impl App {
         self.model_pick = Some(self.cfg.model.clone());
         self.limit_input = crate::usage::limit().map(|v| format!("{v}")).unwrap_or_default();
         self.keys_loaded = true;
+    }
+
+    /// Connect with what is in the SSH fields and ask the server's Claude Code for its version, in the background.
+    /// The answer goes to `ssh_test`: "…" while it runs, then "ok …" or what went wrong.
+    fn start_ssh_test(&mut self, ctx: &egui::Context) {
+        let server = server_from(&self.ssh_input);
+        let password = self.ssh_input[5].trim().to_string();
+        let out = self.ssh_test.clone();
+        *out.lock().unwrap() = "…".into();
+        self.ssh_tested = self.ssh_input.join("\u{1}");
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let said = match crate::ssh::check(&server, Some(&password)) {
+                Ok(v) => format!("ok {} · Claude Code {v}", crate::sys::tr("연결됨", "Connected")),
+                Err(e) => e,
+            };
+            *out.lock().unwrap() = said;
+            ctx.request_repaint();
+        });
     }
 
     /// Show a saved server in the SSH fields (None: empty fields for a new one).
@@ -1009,7 +1069,7 @@ impl App {
                 pair(ui, (crate::sys::tr("사용자", "User"), user, "ubuntu", false, 0.4), (crate::sys::tr("키 파일 (선택)", "Key file (optional)"), key, crate::sys::tr("비우면 ssh 에이전트", "empty: the ssh agent"), false, 0.6));
                 pair(
                     ui,
-                    (crate::sys::tr("비밀번호 (선택)", "Password (optional)"), password, if saved_password { crate::sys::tr("저장됨", "saved") } else { crate::sys::tr("키로 로그인하면 비움", "empty with a key") }, true, 0.5),
+                    (crate::sys::tr("비밀번호 (선택)", "Password (optional)"), password, if saved_password { crate::sys::tr("저장됨", "saved") } else { crate::sys::tr("로그인 비밀번호", "sign-in password") }, true, 0.5),
                     (crate::sys::tr("작업 폴더 (선택)", "Folder (optional)"), dir, "~/work", false, 0.5),
                 );
                 // Try it before saving: connect and ask the server's Claude Code for its version.
@@ -1020,27 +1080,7 @@ impl App {
                     p.rect_stroke(r.rect, 15.0, egui::Stroke::new(1.0, if r.hovered() { ui::DIM() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
                     p.text(r.rect.center(), egui::Align2::CENTER_CENTER, if testing { crate::sys::tr("연결하는 중…", "Connecting…") } else { crate::sys::tr("연결 시험", "Test the connection") }, ui::bold(12.0), ui::TEXT());
                     if !testing && !self.ssh_input[0].trim().is_empty() && r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                        let server = server_from(&self.ssh_input);
-                        let password = self.ssh_input[5].trim().to_string();
-                        let out = self.ssh_test.clone();
-                        *out.lock().unwrap() = "…".into();
-                        let ctx = ctx.clone();
-                        std::thread::spawn(move || {
-                            let said = match crate::ssh::check(&server, Some(&password)) {
-                                Ok(v) => format!("ok {} · Claude Code {v}", crate::sys::tr("연결됨", "Connected")),
-                                Err(e) => e,
-                            };
-                            *out.lock().unwrap() = said;
-                            ctx.request_repaint();
-                        });
-                    }
-                    if !status.is_empty() && !testing {
-                        let (good, text) = match status.strip_prefix("ok ") {
-                            Some(t) => (true, t.to_string()),
-                            None => (false, status.clone()),
-                        };
-                        ui.add_space(8.0);
-                        ui.label(egui::RichText::new(text).size(11.5).color(if good { ui::GREEN() } else { ui::RED() }));
+                        self.start_ssh_test(ctx);
                     }
                     // Forget the server being shown (and its password).
                     if let Some(id) = self.ssh_pick.clone().filter(|_| status.is_empty() || testing) {
@@ -1055,6 +1095,15 @@ impl App {
                         });
                     }
                 });
+                // What the test said, under the button, wrapped to the column (an error can be long).
+                if !status.is_empty() && !testing {
+                    let (good, text) = match status.strip_prefix("ok ") {
+                        Some(t) => (true, t.to_string()),
+                        None => (false, status.clone()),
+                    };
+                    ui.add_space(6.0);
+                    ui.add(egui::Label::new(egui::RichText::new(text).size(11.5).color(if good { ui::GREEN() } else { ui::RED() })).wrap());
+                }
                 ui.add_space(12.0);
                 self.permission_cc(ui);
             }

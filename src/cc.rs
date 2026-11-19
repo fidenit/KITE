@@ -477,8 +477,8 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
         let code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
         let tail: String = errors.trim().chars().rev().take(300).collect::<String>().chars().rev().collect();
         crate::sys::log("cc.log", &format!("끝남 {code}: {errors}"));
-        if remote.is_some() && code == 255 {
-            return Err(format!("{}: {}", crate::sys::tr("서버", "Server"), crate::ssh::explain(errors.trim())));
+        if let (Some(s), 255) = (&remote, code) {
+            return Err(format!("{}: {}", crate::sys::tr("서버", "Server"), crate::ssh::explain_for(s, errors.trim(), None)));
         }
         return Err(format!("{} ({code}) {tail}", crate::sys::tr("Claude Code 가 답 없이 끝났습니다. 로그인되어 있는지 확인해 주세요.", "Claude Code ended without an answer. Check that it is logged in.")));
     }

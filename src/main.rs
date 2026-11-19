@@ -118,6 +118,9 @@ struct App {
     ssh_input: [String; 7],
     /// The saved server shown in those fields (None: a new one).
     ssh_pick: Option<String>,
+    /// The SSH fields the last connection test ran with, and whether Save waits for that test.
+    ssh_tested: String,
+    ssh_save_waiting: bool,
     /// What the last connection test said (empty: none yet; "…": running).
     ssh_test: std::sync::Arc<std::sync::Mutex<String>>,
     /// The Settings window: the model chosen, the daily limit typed, and whether the window was filled from what is saved.
@@ -566,6 +569,8 @@ impl App {
             agui_input: String::new(),
             ssh_input: Default::default(),
             ssh_pick: None,
+            ssh_tested: String::new(),
+            ssh_save_waiting: false,
             ssh_test: Default::default(),
             model_pick: None,
             limit_input: String::new(),

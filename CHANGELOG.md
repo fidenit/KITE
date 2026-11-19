@@ -25,6 +25,7 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 
 - **Keys** is now **Settings**, at the bottom left.
 - Settings can be asked for in the conversation. The language, light or dark, the model and a lower daily limit change at once; the engine, what may be done without asking, and a higher or no limit open **Settings** with the change made, for you to save. A key pasted into the conversation is not sent anywhere: **Settings** opens with it filled in. "Connect to my server" (or an address, `root@1.2.3.4`) opens **Settings** on a new server with what was said filled in: the fields, the connection test and the password box are there, not in a card.
+- On a server, **Save** first tests the connection with what is typed and saves only when it works; if not, the reason shows under the test button and the button becomes **Save anyway**. Refused with neither a password nor a key file, it says that a password (or key) is what is missing.
 - A question the AI asks just now comes first in "my turn", before older questions still waiting (they stay, one **Next** away).
 - One wide window with everything in view: the ways in on the left, what the chosen one needs in the middle, spending and the optional keys on the right. Nothing to unfold, nothing to scroll, and the window keeps its size when you switch.
 - **Model**: Opus 5.5 (the default), Sonnet 5.5 or Haiku 5.5 for the Claude API engine, each with what a turn roughly costs. Saved in `model.txt`; `APERIT_MODEL` still wins.
