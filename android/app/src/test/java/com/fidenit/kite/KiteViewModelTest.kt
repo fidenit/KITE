@@ -7,6 +7,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -30,9 +31,33 @@ class KiteViewModelTest {
         app = RuntimeEnvironment.getApplication()
         files = app.filesDir
         files.listFiles()?.forEach { it.deleteRecursively() }
+        for (n in listOf("kite-settings", "kite-settings-plain")) app.getSharedPreferences(n, 0).edit().clear().commit() // no settings left over from another test
     }
 
     private fun vm() = KiteViewModel(app)
+
+    private val jevServer = okhttp3.mockwebserver.MockWebServer()
+
+    @After
+    fun stopJevServer() {
+        try {
+            jevServer.shutdown()
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * A ViewModel whose first turn stays running for a while: the decision call (a fake Jev server that never answers) takes its
+     * 2.5 s before the engine is asked, so `busy` is true when the test looks at it. Without this the engine (no key) fails at once.
+     */
+    private fun vmWithTurnHeld(): KiteViewModel {
+        jevServer.start()
+        jevServer.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) = okhttp3.mockwebserver.MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE)
+        }
+        Store(app).jevKey = "test-key-not-real"
+        return KiteViewModel(app).also { it.jevUrl = jevServer.url("/v1/systemone").toString() }
+    }
 
     private fun write(name: String, text: String) = File(files, name).writeText(text)
 
@@ -167,7 +192,7 @@ class KiteViewModelTest {
     @Test
     fun queuedInputsAndEventsAreRestoredAndStartedAfterARestart() {
         write("board.txt", board)
-        val vm = vm()
+        val vm = vmWithTurnHeld()
         vm.send("첫째 말") // the turn starts (the engine answers on the IO thread; its result is not delivered in this test)
         assertTrue(vm.busy)
         assertNotNull(Journal(files).readInflight())
@@ -180,6 +205,7 @@ class KiteViewModelTest {
         assertEquals(listOf("upd k1 i1 done | 여권"), q.events)
         // the app is killed here; the turn record went with it (a finished turn deletes it before the queue is started)
         Journal(files).clearInflight()
+        Store(app).jevKey = "" // the restarted ViewModel must not call out
         val again = vm()
         assertTrue(again.busy) // the queued words were started as a turn
         val sent = Journal(files).readInflight()!!.turnText
@@ -202,7 +228,7 @@ class KiteViewModelTest {
     fun clearAllRemovesTheJournalRecords() {
         write("board.txt", board)
         write("recent.json", recent)
-        val vm = vm()
+        val vm = vmWithTurnHeld()
         vm.send("첫째 말")
         vm.send("둘째 말")
         assertTrue(exists("inflight.json") && exists("queue.json"))
@@ -212,6 +238,7 @@ class KiteViewModelTest {
         assertTrue(vm.board.cards.isEmpty())
         assertTrue(vm.recent.isEmpty())
         // a new start finds nothing to resume
+        Store(app).jevKey = "" // the restarted ViewModel must not call out
         val again = vm()
         assertFalse(again.busy)
         assertNull(again.error)

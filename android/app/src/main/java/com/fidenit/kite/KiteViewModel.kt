@@ -28,8 +28,10 @@ import com.fidenit.kite.engine.Api
 import com.fidenit.kite.engine.ApiConfig
 import com.fidenit.kite.engine.ClaudeCode
 import com.fidenit.kite.engine.EngineConfig
+import com.fidenit.kite.engine.Decide
 import com.fidenit.kite.engine.Detached
 import com.fidenit.kite.engine.Ev
+import com.fidenit.kite.engine.Jev
 import com.fidenit.kite.engine.NOTE
 import com.fidenit.kite.engine.PHONE_NOTE
 import com.fidenit.kite.engine.PhoneTools
@@ -420,27 +422,30 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val record = Inflight(if (useSsh) "ssh" else "api", "", text, shown, before, System.currentTimeMillis())
         journal.writeInflight(record)
         saveQueue()
-        runTurn(record, resume = false)
+        runTurn(record, resume = false, input = input)
     }
 
     /** 한 턴을 돌려 결과를 반영한다. `resume` 이면 서버에서 돌던 그 턴에 다시 붙는다 (앱이 다시 켜졌을 때). */
-    private fun runTurn(record: Inflight, resume: Boolean) {
+    private fun runTurn(record: Inflight, resume: Boolean, input: String = "") {
         val shown = record.shown
         val evs = Channel<Ev>(Channel.UNLIMITED)
         viewModelScope.launch {
             val reader = launch {
                 for (ev in evs) handle(ev)
             }
+            // 판단 모델(Jev)이 먼저 요청의 종류·주제를 보고 받았다는 한마디를 고른다. 입출력 스레드에서, 엔진을 부르기 전에.
+            // 키가 없거나 입력이 비었거나 서버에서 돌던 턴에 다시 붙는 것이면 부르지 않는다.
+            val turn = if (resume) record else beforeTurn(record, input)
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val e = if (resume) engineWhenReachable(record.id, evs) else engine()
                     if (e is ClaudeCode) {
                         // 서버에서 떼어 돌린다: 실행 번호가 정해지면 (서버에 닿기 전에) 기록에 적는다.
-                        e.onRunId = { id -> journal.writeInflight(Inflight("ssh", id, record.turnText, record.shown, record.board, record.startedAt)) }
-                        if (resume) e.resume(record.id, record.turnText, 0, { stopFlag }) { evs.trySend(it) }
-                        else e.run(record.turnText, { stopFlag }) { evs.trySend(it) }
+                        e.onRunId = { id -> journal.writeInflight(Inflight("ssh", id, turn.turnText, turn.shown, turn.board, turn.startedAt)) }
+                        if (resume) e.resume(record.id, turn.turnText, 0, { stopFlag }) { evs.trySend(it) }
+                        else e.run(turn.turnText, { stopFlag }) { evs.trySend(it) }
                     } else {
-                        e.run(record.turnText, { stopFlag }) { evs.trySend(it) }
+                        e.run(turn.turnText, { stopFlag }) { evs.trySend(it) }
                     }
                 }
             }
@@ -481,6 +486,51 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 pending.clear()
                 startTurn(next)
             }
+        }
+    }
+
+    /**
+     * 턴 앞의 판단: 종류는 상태 줄에, 주제는 바로 보여 주고, 일을 시킨 말이면 받았다는 한마디를 먼저 건넨다 (말로 대화 중이면 읽고,
+     * 아니면 화면 아래 한마디로). 한마디를 건넸으면 턴 글에 `<already_said>` 를 붙여 모델이 같은 인사를 되풀이하지 않게 한다.
+     * 판단이 없으면(키 없음·늦음·오류) 턴은 그대로 돈다. 메인 스레드에서 부르고, Jev 호출은 입출력 스레드에서 한다.
+     */
+    private suspend fun beforeTurn(record: Inflight, input: String): Inflight {
+        val key = store.jevKey.trim()
+        if (key.isEmpty() || input.isBlank()) return record
+        val topics = board.topics.map { it.id to it.name }
+        val recentText = Decide.recentText(recent.toList())
+        val en = english
+        val pre = withContext(Dispatchers.IO) { runCatching { Decide.before(key, input, topics, recentText, en, jevUrl, log = ::jevLog) }.getOrNull() } ?: return record
+        pre.kind?.let { activity = if (en) "Thinking…" else "$it · 생각하는 중" }
+        pre.topic?.takeIf { id -> board.topics.any { it.id == id } }?.let {
+            current = it
+            rev++
+        }
+        val ack = pre.ack ?: return record
+        liveSay = ack
+        if (voice && !hush && !standby) {
+            speech.addLast(ack to mutableListOf())
+            advanceSpeech()
+        }
+        return Inflight(record.engine, record.id, record.turnText + Decide.alreadySaid(ack), record.shown, record.board, record.startedAt)
+    }
+
+    /** TypeSafe Jev 의 주소. 시험에서 가짜 서버로 바꾼다 (앱은 바꾸지 않는다). */
+    internal var jevUrl: String = Jev.URL
+
+    private val jevLogLock = Any()
+
+    /** Jev 를 부른 기록 (입력 앞부분, 고른 값, 걸린 시간, 앱 버전). 키는 적지 않는다. 기록이 실패해도 아무 일도 없다. */
+    private fun jevLog(line: String) {
+        try {
+            synchronized(jevLogLock) {
+                val f = File(files, "jev.log")
+                val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(Date())
+                // 너무 커지면 뒷부분만 남긴다
+                if (f.length() > 256 * 1024) f.writeText(f.readText().takeLast(128 * 1024))
+                f.appendText("$stamp v${BuildConfig.VERSION_NAME}  $line\n")
+            }
+        } catch (_: Exception) {
         }
     }
 
