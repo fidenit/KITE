@@ -4,6 +4,13 @@ APERIT was called KITE up to version 0.3; the entries below 0.4.0 use the name o
 
 The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://github.com/fidenit/patet/blob/main/CHANGELOG.md).
 
+## Android 0.1.1 (not released yet)
+
+- **A turn on your server no longer depends on the connection.** With the Claude Code (SSH) engine, each turn now runs detached on the server and the app follows its output. If the connection drops, the app reconnects by itself and continues where it was; if the app is closed or killed, it takes the turn up again when it is opened and the result lands on the board. Stop ends Claude Code and the tools it started on the server.
+- Card taps are saved at once; queued words, card-tap notices, the topic you were on and the last line spoken survive a restart. Going to the background saves the board and turns talking off.
+- If the server account is root and the permission is "everything", Claude Code refuses it: the app now says so and what to change.
+- Not included: a notification or foreground service (open the app to get the result), resuming a turn of the API engine, a check on a real phone.
+
 ## 0.4.0 (not released yet)
 
 **The app has a new name, APERIT, works with agents and models other than Claude, and the language it speaks is a specification of its own, PATET.**
