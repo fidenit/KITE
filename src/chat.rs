@@ -401,6 +401,9 @@ impl App {
             } else {
                 crate::sys::tr("받았어요", "Got it").to_string()
             }
+        } else if !self.approvals.is_empty() {
+            // A tool waits for the user's OK: this is not the AI being slow.
+            crate::sys::tr("허용을 기다리는 중 · 위 카드에서 골라 주세요", "Waiting for your OK · choose on the card above").to_string()
         } else if !self.activity.is_empty() {
             plain(&self.activity)
         } else if !self.got_output {
@@ -431,7 +434,8 @@ impl App {
                 None => crate::sys::tr("화면에 쓰는 중", "Writing to the board").to_string(),
             }
         };
-        let text = if self.busy { format!("{what} · {}{}", self.sent_at.elapsed().as_secs(), crate::sys::tr("초", "s")) } else { what };
+        // No running time while it waits for the user: the time is theirs, not the AI's.
+        let text = if self.busy && self.approvals.is_empty() { format!("{what} · {}{}", self.sent_at.elapsed().as_secs(), crate::sys::tr("초", "s")) } else { what };
         // 멈춤: 도는 턴을 그만두게 한다. 글자는 이 버튼 왼쪽까지만 그려서 겹치지 않게 한다.
         let mut right = r.rect.right();
         if self.busy {
