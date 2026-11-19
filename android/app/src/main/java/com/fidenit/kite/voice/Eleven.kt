@@ -9,7 +9,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 object Eleven {
-    private const val API = "https://api.elevenlabs.io"
+    /** 서버 주소. 시험에서 가짜 서버로 바꾼다 (앱은 바꾸지 않는다). */
+    @Volatile
+    internal var api = "https://api.elevenlabs.io"
 
     /** 기본 목소리 (George). */
     const val DEFAULT_VOICE = "JBFqnCBsd6RMkjVDRZzb"
@@ -40,7 +42,7 @@ object Eleven {
      * `stopped` 가 참을 돌려주면 즉시 멈춘다.
      */
     fun speak(key: String, voice: String, text: String, player: Player, stopped: () -> Boolean) {
-        val c = open("$API/v1/text-to-speech/${voice.ifBlank { DEFAULT_VOICE }}/stream?output_format=pcm_$TTS_RATE", key, "application/json")
+        val c = open("$api/v1/text-to-speech/${voice.ifBlank { DEFAULT_VOICE }}/stream?output_format=pcm_$TTS_RATE", key, "application/json")
         try {
             c.outputStream.use { it.write(JSONObject().put("text", text).put("model_id", TTS_MODEL).toString().toByteArray()) }
             if (c.responseCode != 200) throw Exception(failure(c))
@@ -85,7 +87,7 @@ object Eleven {
     /** 녹음한 소리(16kHz, 16비트, 한 채널)를 글로 바꾼다. */
     fun transcribe(key: String, pcm: ShortArray, english: Boolean): String {
         val audio = ByteBuffer.allocate(pcm.size * 2).order(ByteOrder.LITTLE_ENDIAN).also { it.asShortBuffer().put(pcm) }.array()
-        var last = ""
+        var first = ""
         for (model in listOf("scribe_v3", "scribe_v2")) {
             val boundary = "----ali7d81b3c9f2a44e6f"
             val body = ByteArrayOutputStream()
@@ -98,18 +100,21 @@ object Eleven {
             body.write("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"speech.pcm\"\r\nContent-Type: application/octet-stream\r\n\r\n".toByteArray())
             body.write(audio)
             body.write("\r\n--$boundary--\r\n".toByteArray())
-            val c = open("$API/v1/speech-to-text", key, "multipart/form-data; boundary=$boundary")
+            val c = open("$api/v1/speech-to-text", key, "multipart/form-data; boundary=$boundary")
             try {
                 c.setFixedLengthStreamingMode(body.size())
                 c.outputStream.use { body.writeTo(it) }
                 if (c.responseCode == 200) {
                     return JSONObject(c.inputStream.bufferedReader().readText()).optString("text").trim()
                 }
-                last = failure(c)
+                val failed = failure(c)
+                if (first.isEmpty()) first = failed
+                // 키가 거절됐거나 한도에 닿았으면 다른 모델로 다시 불러도 소용없다: 첫 오류 글을 그대로 알린다
+                if (c.responseCode == 401 || c.responseCode == 403 || c.responseCode == 429) throw Exception(first)
             } finally {
                 c.disconnect()
             }
         }
-        throw Exception(last)
+        throw Exception(first)
     }
 }
