@@ -53,6 +53,12 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"
     }
+    testOptions {
+        unitTests {
+            // Robolectric (ViewModel smoke tests) reads the app's resources and manifest from the build
+            isIncludeAndroidResources = true
+        }
+    }
     packaging {
         resources {
             excludes += setOf("META-INF/versions/**", "META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/INDEX.LIST")
@@ -87,4 +93,6 @@ dependencies {
     testImplementation("org.json:json:20240303")
     // API 엔진 시험: 가짜 Claude 서버로 한 턴을 돌려 본다 (SDK 가 쓰는 OkHttp 와 같은 판)
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // ViewModel smoke tests on the JVM (start-up and restore code runs before it reaches a phone). Test-only: nothing is added to the app.
+    testImplementation("org.robolectric:robolectric:4.13")
 }
