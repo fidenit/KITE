@@ -706,23 +706,44 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- 소리 내어 읽기
 
+    /** ElevenLabs 읽기가 실패했다고 이미 알렸는가 (문장마다 같은 오류를 되풀이해 띄우지 않는다). 다시 잘 읽으면 풀린다. */
+    private var elevenFailShown = false
+
     private fun speak(text: String) {
         speaking = true
         val epoch = ++speakEpoch
         val key = store.elevenKey.trim()
         viewModelScope.launch {
+            var elevenFailed: Throwable? = null
             val failed = withContext(Dispatchers.IO) {
                 runCatching {
                     if (key.isNotEmpty()) {
                         val p = player ?: Player().also { player = it }
-                        Eleven.speak(key, store.voiceId.trim(), board.show(text), p) { epoch != speakEpoch }
+                        try {
+                            Eleven.speak(key, store.voiceId.trim(), board.show(text), p) { epoch != speakEpoch }
+                        } catch (e: Exception) {
+                            // 키 오류·한도·끊김: 이 문장은 폰의 기본 음성으로 읽는다
+                            elevenFailed = e
+                            if (epoch == speakEpoch) speakWithDevice(board.show(text), epoch)
+                        }
                     } else {
                         speakWithDevice(board.show(text), epoch)
                     }
                 }.exceptionOrNull()
             }
             if (epoch != speakEpoch) return@launch
-            if (failed != null) error = (if (english) "Could not speak: " else "소리 내어 읽지 못함: ") + failed.message
+            val why = elevenFailed
+            if (failed != null) {
+                error = (if (english) "Could not speak: " else "소리 내어 읽지 못함: ") + failed.message
+            } else if (why != null) {
+                if (!elevenFailShown) {
+                    error = if (english) "The ElevenLabs voice did not work (${why.message}) → this sentence was read with the phone's own voice → check the ElevenLabs key and usage in Settings"
+                    else "ElevenLabs 목소리를 쓰지 못했습니다 (${why.message}) → 이 문장은 폰의 기본 음성으로 읽었습니다 → 설정에서 ElevenLabs 키와 사용량을 확인해 주세요"
+                }
+                elevenFailShown = true
+            } else if (key.isNotEmpty()) {
+                elevenFailShown = false
+            }
             speaking = false
             advanceSpeech()
         }
@@ -778,6 +799,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (converse == on) return
         converse = on
+        if (on) elevenFailShown = false
         talkMode(getApplication(), on)
         if (on) {
             player?.release()
