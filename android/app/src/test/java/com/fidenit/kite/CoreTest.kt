@@ -10,6 +10,7 @@ import com.fidenit.kite.core.Rejected
 import com.fidenit.kite.core.partsTable
 import com.fidenit.kite.engine.ClaudeCode
 import com.fidenit.kite.engine.EngineConfig
+import com.fidenit.kite.engine.failureMessage
 import com.fidenit.kite.engine.Ev
 import com.fidenit.kite.engine.Server
 import com.fidenit.kite.engine.Ssh
@@ -192,6 +193,20 @@ class CoreTest {
         // 도구를 쓰고 난 뒤 이어지는 글은 새 줄에서 시작한다
         assertEquals("say 확인해 볼게요\ntopic s 서버\n", out.filterIsInstance<Ev.Delta>().joinToString("") { it.text })
         assertEquals(listOf("명령 실행: ", "명령 실행: df -h", ""), out.filterIsInstance<Ev.Activity>().map { it.text })
+    }
+
+    @Test
+    fun failureMessagesNameTheCause() {
+        val root = "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons"
+        // 서버 계정이 root 인데 권한이 '전부': 엉뚱한 "로그인" 안내 대신 이유와 할 일
+        val m = failureMessage("1", false, root)
+        assertEquals("서버 계정이 root라 권한 '전부'는 Claude Code가 거절합니다 → 이 말은 실행되지 않았습니다 → 설정의 권한을 '파일 수정'이나 '기본'으로 바꾸세요.", m)
+        assertEquals(m, failureMessage("1", true, "x\n$root\n"))
+        assertFalse(failureMessage("0", false, root).contains("root라"))
+        // 다른 경우는 그대로
+        assertTrue(failureMessage("127", false, "bash: claude: command not found").contains("찾지 못했습니다"))
+        assertTrue(failureMessage("1", false, "").contains("로그인"))
+        assertTrue(failureMessage("1", true, "").contains("오류로 끝났습니다"))
     }
 
     @Test

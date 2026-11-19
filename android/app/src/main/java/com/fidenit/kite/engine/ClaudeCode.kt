@@ -157,6 +157,18 @@ class StreamParser(private val send: (Ev) -> Unit, private val now: () -> Long =
     }
 }
 
+/**
+ * 서버에서 claude 가 결과 없이, 또는 오류로 끝났을 때 보여 줄 글. `code` 는 끝난 코드, `tail` 은 서버가 남긴 표준 오류의 끝.
+ * 서버 계정이 root 이면 Claude Code 가 권한 '전부'를 거절하는데, 그때 나는 글자를 알아보고 이유를 말해 준다.
+ */
+fun failureMessage(code: String, gotResult: Boolean, tail: String): String = when {
+    code != "0" && tail.contains("cannot be used with root") ->
+        "서버 계정이 root라 권한 '전부'는 Claude Code가 거절합니다 → 이 말은 실행되지 않았습니다 → 설정의 권한을 '파일 수정'이나 '기본'으로 바꾸세요."
+    !gotResult && (code == "127" || tail.contains("command not found")) -> "서버에서 Claude Code 를 찾지 못했습니다. 설정에서 claude 경로를 확인해 주세요. $tail"
+    !gotResult -> "Claude Code 가 답 없이 끝났습니다. 서버에서 로그인되어 있는지 확인해 주세요. ($code) $tail"
+    else -> "Claude Code 가 오류로 끝났습니다 → 받은 데까지는 화면에 반영했습니다 → 같은 말을 다시 보내 보세요. $tail"
+}
+
 class EngineConfig(
     /** 서버에서 Claude Code 를 부르는 이름이나 경로 */
     val claude: String,
@@ -555,15 +567,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
             val tail = if (ok) "" else errTail()
             cleanQuiet()
             parser.failure?.let { throw Exception("Claude Code: $it") }
-            if (!ok) {
-                throw Exception(
-                    when {
-                        !parser.gotResult && (code == "127" || tail.contains("command not found")) -> "서버에서 Claude Code 를 찾지 못했습니다. 설정에서 claude 경로를 확인해 주세요. $tail"
-                        !parser.gotResult -> "Claude Code 가 답 없이 끝났습니다. 서버에서 로그인되어 있는지 확인해 주세요. ($code) $tail"
-                        else -> "Claude Code 가 오류로 끝났습니다 → 받은 데까지는 화면에 반영했습니다 → 같은 말을 다시 보내 보세요. $tail"
-                    },
-                )
-            }
+            if (!ok) throw Exception(failureMessage(code, parser.gotResult, tail))
             return parser.stats
         }
 
