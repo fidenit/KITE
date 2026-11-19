@@ -172,6 +172,8 @@ class Ssh(private val server: Server, private val remember: (String) -> Unit) {
     fun run(command: String, stdin: String? = null): String {
         val sb = StringBuilder()
         val (code, err) = exec(command, stdin) { sb.append(it).append('\n') }
+        // 끝난 코드가 없다 = 명령이 끝나기 전에 연결이 끊겼다 (명령이 실패한 것이 아니다)
+        if (code < 0) throw java.io.IOException("서버와의 연결이 끊겼습니다")
         if (code != 0 && sb.isEmpty()) throw RemoteFail(err.trim().takeLast(300).ifEmpty { "끝난 코드 $code" })
         return sb.toString()
     }

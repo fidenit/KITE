@@ -24,6 +24,17 @@ sealed class FollowLine {
     object Other : FollowLine()
 }
 
+/** 올리기·시작 명령의 결과를 어떻게 다룰지. */
+sealed class Step {
+    object Ok : Step()
+
+    /** 연결이 끊겨 결과를 모른다: 다시 붙어 같은 단계를 다시 한다 (시작은 같은 번호로 다시 해도 두 번 돌지 않는다). */
+    object Retry : Step()
+
+    /** 서버가 분명히 거절했다: 다시 해도 소용없다. `kind` 는 cd / noin / start / remote. */
+    data class Fail(val kind: String, val detail: String) : Step()
+}
+
 /** 로그인 셸의 설정을 읽고, 흔한 설치 자리를 PATH 에 더한다 (ssh 로 바로 돌린 명령은 PATH 가 짧다). */
 fun serverShell(script: String): String =
     "bash -lc " + shq("export PATH=\"\$HOME/.local/bin:\$HOME/.claude/local:\$HOME/.npm-global/bin:/usr/local/bin:\$PATH\"; $script")
@@ -64,6 +75,24 @@ object Detached {
 
     /** 다시 붙는 간격(ms): 1·2·4·8·15·30초, 그 뒤 30초. `attempt` 는 0부터. */
     fun delayMs(attempt: Int): Long = longArrayOf(1, 2, 4, 8, 15, 30)[attempt.coerceIn(0, 5)] * 1000
+
+    /** 올리기 명령의 끝난 코드로 판단한다. 끝난 코드가 없으면(-1, 연결이 끊김) 다시 한다. */
+    fun judgeUpload(code: Int, err: String): Step = when {
+        code == 0 -> Step.Ok
+        code < 0 -> Step.Retry
+        else -> Step.Fail("remote", err.trim().takeLast(200))
+    }
+
+    /** 시작 명령의 결과로 판단한다: `APERITRUN` 이면 됐고, `APERITFAIL` 이나 분명한 오류 코드만 실패, 나머지는 다시. */
+    fun judgeStart(code: Int, out: List<String>, err: String, id: String): Step {
+        val lines = out.map { classify(it) }
+        if (lines.contains(FollowLine.Run(id))) return Step.Ok
+        lines.filterIsInstance<FollowLine.Fail>().firstOrNull()?.let { return Step.Fail(it.reason.ifEmpty { "start" }, "") }
+        return if (code > 0) Step.Fail("remote", err.trim().takeLast(200)) else Step.Retry
+    }
+
+    /** 이어 읽는 명령이 고장 난 끝난 코드(문법 오류 2, 실행 못 함 126, 명령 없음 127)인가. 그 밖에는 끊김으로 본다. */
+    fun followBroken(code: Int): Boolean = code == 2 || code == 126 || code == 127
 
     /** 40초 동안 아무 줄도 없으면 연결이 죽은 것으로 본다. */
     const val IDLE_MS = 40_000L

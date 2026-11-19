@@ -4,6 +4,7 @@ import com.fidenit.kite.engine.Detached
 import com.fidenit.kite.engine.DetachedCommands
 import com.fidenit.kite.engine.EngineConfig
 import com.fidenit.kite.engine.FollowLine
+import com.fidenit.kite.engine.Step
 import com.fidenit.kite.engine.Waker
 import com.fidenit.kite.engine.readLines
 import org.junit.Assert.assertEquals
@@ -95,6 +96,31 @@ class DetachedTest {
         val got = mutableListOf<String>()
         readLines(java.io.StringReader("a\r\nb"), false) { got.add(it) }
         assertEquals(listOf("a", "b"), got)
+    }
+
+    /** 올리기·시작 중에 연결이 끊기면 실패가 아니라 다시 하기: 서버가 분명히 거절했을 때만 실패. */
+    @Test
+    fun uploadAndStartDecisions() {
+        assertEquals(Step.Ok, Detached.judgeUpload(0, ""))
+        assertEquals(Step.Retry, Detached.judgeUpload(-1, ""))
+        assertEquals(Step.Fail("remote", "No space left"), Detached.judgeUpload(1, " No space left\n"))
+        val id = "a-1"
+        assertEquals(Step.Ok, Detached.judgeStart(0, listOf("APERITRUN a-1"), "", id))
+        assertEquals(Step.Ok, Detached.judgeStart(-1, listOf("APERITRUN a-1"), "", id)) // 줄은 왔는데 코드만 못 받음: 시작은 됐다
+        assertEquals(Step.Retry, Detached.judgeStart(-1, emptyList(), "", id))
+        assertEquals(Step.Retry, Detached.judgeStart(0, emptyList(), "", id))
+        assertEquals(Step.Retry, Detached.judgeStart(0, listOf("APERITRUN other"), "", id)) // 남의 번호
+        assertEquals(Step.Fail("cd", ""), Detached.judgeStart(0, listOf("APERITFAIL cd"), "", id))
+        assertEquals(Step.Fail("noin", ""), Detached.judgeStart(-1, listOf("Last login", "APERITFAIL noin"), "", id))
+        assertEquals(Step.Fail("start", ""), Detached.judgeStart(0, listOf("APERITFAIL"), "", id))
+        assertEquals(Step.Fail("remote", "bash: x: not found"), Detached.judgeStart(127, emptyList(), "bash: x: not found", id))
+    }
+
+    /** 이어 읽는 명령이 고장 난 것은 끝난 코드로만 안다. 글자가 났다고 고장이 아니고, 모르는 코드는 끊김이다. */
+    @Test
+    fun brokenFollowIsDecidedByExitStatus() {
+        for (c in listOf(2, 126, 127)) assertTrue(c.toString(), Detached.followBroken(c))
+        for (c in listOf(-1, 0, 1, 255, 143)) assertFalse(c.toString(), Detached.followBroken(c))
     }
 
     @Test
