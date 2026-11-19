@@ -480,6 +480,15 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
         if let (Some(s), 255) = (&remote, code) {
             return Err(format!("{}: {}", crate::sys::tr("서버", "Server"), crate::ssh::explain_for(s, errors.trim(), None)));
         }
+        // Claude Code refuses to skip its permission checks as root (a safety rule of its own; APERIT does not get
+        // around it). Say so, and what to do.
+        if errors.contains("cannot be used with root") {
+            return Err(crate::sys::tr(
+                "서버에 root로 접속해 있어서, Claude Code가 '전부'(권한 확인 건너뛰기)를 보안상 막았습니다. 설정에서 '파일 수정'이나 '내 설정대로'를 고르거나, 서버에 일반 사용자를 만들어 그 사용자로 접속하세요.",
+                "Signed in to the server as root, so Claude Code refused 'Everything' (skipping its permission checks) for safety. In Settings choose 'File edits' or 'My settings', or sign in to the server as an ordinary user.",
+            )
+            .into());
+        }
         return Err(format!("{} ({code}) {tail}", crate::sys::tr("Claude Code 가 답 없이 끝났습니다. 로그인되어 있는지 확인해 주세요.", "Claude Code ended without an answer. Check that it is logged in.")));
     }
     Ok((stats, last_text))

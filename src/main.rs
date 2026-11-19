@@ -268,6 +268,10 @@ struct App {
     /// (`fix_pending`), and while it runs (`fixing`) it does not start another.
     fix_pending: bool,
     fixing: bool,
+    /// A change in Settings the next turn should act on (more was allowed: retry what was refused).
+    settings_note: Option<String>,
+    /// This turn is that retry (for its line in the conversation).
+    retrying: bool,
     /// The focus last seen on the board: when the AI focuses a question card anew, it comes to the front.
     focus_seen: Option<String>,
     /// The question cards already seen (None until the first look). A question asked since then comes first.
@@ -652,6 +656,8 @@ impl App {
             say_full: (String::new(), String::new()),
             fix_pending: false,
             fixing: false,
+            settings_note: None,
+            retrying: false,
             focus_seen: None,
             asks_known: None,
             pics: Vec::new(),
@@ -1396,6 +1402,11 @@ impl App {
         // 구성 정리 턴: 판단 모델이 짚은 것을 전한다.
         // 사용자가 말했거나 화면을 조작해서 시작된 턴에는 끼워 넣지 않는다 (그 턴은 그 요청만 처리한다).
         let own_turn = input.is_empty() && self.events.is_empty() && self.job_turn.is_none();
+        let retry = own_turn.then(|| self.settings_note.take()).flatten();
+        self.retrying = retry.is_some();
+        if let Some(note) = &retry {
+            t += &format!("<settings>{note}</settings>\n");
+        }
         if own_turn && self.fix_pending {
             self.fix_pending = false;
             self.fixing = true;
@@ -1524,6 +1535,8 @@ impl App {
         let auto = input.is_empty(); // 사용자가 말한 것이 아니라 프로그램이 시작한 턴
         self.cur_input = if let Some(names) = &self.job_turn {
             format!("({}) {names}", sys::tr("맡긴 작업이 끝남", "delegated work finished"))
+        } else if self.retrying {
+            sys::tr("(권한을 넓힘, 다시 시도)", "(more allowed, trying again)").to_string()
         } else if self.fixing {
             sys::tr("(잘린 글자 고치기)", "(fixing cut text)").to_string()
         } else if self.tidying {

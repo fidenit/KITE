@@ -1258,6 +1258,7 @@ impl App {
 
     /// What Claude Code may do without asking (its own permission modes).
     fn permission_cc(&mut self, ui: &mut egui::Ui) {
+        let root = self.engine_pick.as_deref() == Some("ssh") && self.ssh_input[1].trim() == "root";
         label(ui, crate::sys::tr("묻지 않고 해도 되는 일", "What it may do without asking"));
         let now = self.perm_pick.get_or_insert_with(crate::cc::permission).clone();
         if let Some(v) = three(ui, &now, [("default", crate::sys::tr("내 설정대로", "My settings")), ("acceptEdits", crate::sys::tr("파일 수정", "File edits")), ("bypassPermissions", crate::sys::tr("전부", "Everything"))]) {
@@ -1267,11 +1268,12 @@ impl App {
         ui.label(
             egui::RichText::new(match now.as_str() {
                 "acceptEdits" => crate::sys::tr("파일을 만들고 고치는 것은 묻지 않습니다. 그 밖의 명령은 Claude Code 설정을 따릅니다.", "Creates and edits files without asking. Other commands follow Claude Code's settings."),
+                "bypassPermissions" if root => crate::sys::tr("root로 접속하면 Claude Code가 '전부'를 보안상 막습니다. 일반 사용자로 접속하거나 다른 것을 고르세요.", "As root, Claude Code refuses 'Everything' for safety. Sign in as an ordinary user, or choose another."),
                 "bypassPermissions" => crate::sys::tr("명령 실행과 파일 수정을 전부 묻지 않고 합니다.", "Runs commands and edits files without asking."),
                 _ => crate::sys::tr("Claude Code에서 허용해 둔 것만 합니다. 나머지는 거절되고, 그렇다고 알려 줍니다.", "Does only what Claude Code's settings allow. The rest is refused, and it says so."),
             })
             .size(11.5)
-            .color(ui::FAINT()),
+            .color(if root && now == "bypassPermissions" { ui::RED() } else { ui::FAINT() }),
         );
     }
 
@@ -1371,11 +1373,30 @@ impl App {
             _ => "api",
         };
         let _ = std::fs::write(base.join("engine.txt"), engine);
+        // More was allowed than before: what was refused for lack of permission is tried again at once.
+        let rank = |p: &str| match p {
+            "acceptEdits" | "edits" => 1,
+            "bypassPermissions" | "all" => 2,
+            _ => 0,
+        };
+        let mut widened = None;
         if let Some(p) = self.perm_pick.take() {
+            if rank(&p) > rank(&crate::cc::permission()) {
+                widened = Some(p.clone());
+            }
             let _ = std::fs::write(base.join("claude-permission.txt"), p);
         }
         if let Some(l) = self.level_pick.take() {
+            if rank(&l) > rank(crate::permit::level().name()) {
+                widened = Some(l.clone());
+            }
             let _ = std::fs::write(base.join("permission.txt"), l);
+        }
+        if let (Some(w), false, false) = (widened, was_demo, self.recent.is_empty()) {
+            self.settings_note = Some(format!(
+                "The user just allowed more in Settings: what may be done without asking is now '{w}'. If something in the last turns was refused for lack of permission, do it now, without asking again."
+            ));
+            self.react_at = Some(std::time::Instant::now() + std::time::Duration::from_millis(400));
         }
         if let Some(m) = self.media_pick.take() {
             let _ = std::fs::write(base.join("outside-media.txt"), if m { "yes" } else { "no" });
