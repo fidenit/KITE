@@ -11,6 +11,8 @@ mod chat;
 mod decide;
 mod eleven;
 mod secret;
+mod ssh;
+mod loader;
 mod feed;
 mod hub;
 mod jev;
@@ -102,6 +104,10 @@ struct App {
     /// What is typed in the keys window for another model (base address, model, key) and for an AG-UI agent (its address).
     openai_input: [String; 3],
     agui_input: String,
+    /// The Keys window, a server over SSH: host, user, port, key file, folder, password.
+    ssh_input: [String; 6],
+    /// What the last connection test said (empty: none yet; "…": running).
+    ssh_test: std::sync::Arc<std::sync::Mutex<String>>,
     /// The keys window: are the less common choices (a local model, an agent of your own, the Jev key) unfolded?
     more_open: bool,
     /// 키 창에서 고른 Claude Code 권한 방식
@@ -538,6 +544,8 @@ impl App {
             engine_pick: None,
             openai_input: Default::default(),
             agui_input: String::new(),
+            ssh_input: Default::default(),
+            ssh_test: Default::default(),
             more_open: false,
             perm_pick: None,
             react_at: None,
@@ -2197,6 +2205,14 @@ impl App {
         if self.cfg.demo() && self.promo.is_none() {
             parts.push(if crate::sys::var("DEMO").is_ok() { sys::tr("시연 모드 · 무엇을 입력해도 준비된 장면이 재생됩니다", "Demo mode · any input plays the prepared scenes") } else { sys::tr("데모 · API 키 없음", "Demo · no API key") }.to_string());
         }
+        let workers = jobs::running();
+        if workers > 0 {
+            parts.push(if sys::english() { format!("{workers} workers running") } else { format!("작업자 {workers}명이 일하는 중") });
+        }
+        // Numbers for whoever develops APERIT (model, time, tokens, counts): only with APERIT_DEBUG set.
+        if crate::sys::var("DEBUG").is_err() {
+            return parts.join("   ·   ");
+        }
         if let Some(s) = self.stats.as_ref().filter(|_| self.promo.is_none()) {
             parts.push(s.model.clone());
             parts.push(if sys::english() { format!("first {:.1}s · total {:.1}s", s.first_ms as f32 / 1000.0, s.total_ms as f32 / 1000.0) } else { format!("첫 반응 {:.1}초 · 전체 {:.1}초", s.first_ms as f32 / 1000.0, s.total_ms as f32 / 1000.0) });
@@ -2212,10 +2228,6 @@ impl App {
         }
         let text: usize = self.board.cards.iter().map(card_chars).sum();
         parts.push(if sys::english() { format!("{} cards · {} characters", self.board.cards.len(), text) } else { format!("카드 {} · 화면 글자 {}", self.board.cards.len(), text) });
-        let workers = jobs::running();
-        if workers > 0 {
-            parts.push(if sys::english() { format!("{workers} workers running") } else { format!("작업자 {workers}명이 일하는 중") });
-        }
         parts.push(if sys::english() {
             format!("{} · zoom {:.0}% (scroll: one level up/down, drag empty space to move, double-click to go back)", self.view.level_name(), self.view.zoom * 100.0)
         } else {
@@ -2700,12 +2712,27 @@ fn setup_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
+/// The window's icon: the same picture as the program's icon in Explorer.
+fn window_icon() -> std::sync::Arc<egui::IconData> {
+    let picture = image::load_from_memory(include_bytes!("../assets/aperit.png")).map(|i| i.to_rgba8());
+    std::sync::Arc::new(match picture {
+        Ok(p) => egui::IconData { width: p.width(), height: p.height(), rgba: p.into_raw() },
+        Err(_) => egui::IconData::default(),
+    })
+}
+
 fn main() -> eframe::Result {
+    // Started by ssh to give it the server's password (ssh.rs): answer and stop, with no window.
+    if ssh::askpass() {
+        return Ok(());
+    }
+    loader::prepare();
     // 자동 재생으로 띄울 때는 사용자가 쓰던 창의 입력을 가로채지 않도록 포커스를 가져오지 않는다.
     let quiet = crate::sys::var("AUTOPLAY").is_ok();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(title())
+            .with_icon(window_icon())
             // 확인용: 창의 크기 (APERIT_SIZE="가로,세로")
             .with_inner_size(crate::sys::var("SIZE").ok().and_then(|v| v.split_once(',').and_then(|(w, h)| Some([w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?]))).unwrap_or([1560.0, 920.0]))
             .with_active(!quiet)

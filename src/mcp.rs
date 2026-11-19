@@ -74,6 +74,19 @@ fn listen(listener: std::net::TcpListener, door: Door) {
 
 /// Start the inside door (once) and return the path of the config file to hand to Claude Code.
 pub fn inside_config(stop: &Arc<AtomicBool>) -> Option<std::path::PathBuf> {
+    let (port, token) = inside_door(stop)?;
+    let path = crate::sys::data_dir().join("cc-mcp.json");
+    std::fs::write(&path, client_config(port, &token).to_string()).ok()?;
+    Some(path)
+}
+
+/// The client config as one line of JSON, for a client that reaches this door on `port` (a tunnel's end).
+pub fn config_line(port: u16, token: &str) -> String {
+    client_config(port, token).to_string()
+}
+
+/// The inside door: (port on 127.0.0.1, token). Opened on first use.
+pub fn inside_door(stop: &Arc<AtomicBool>) -> Option<(u16, String)> {
     *STOP.lock().unwrap_or_else(|e| e.into_inner()) = Some(stop.clone());
     static SERVER: OnceLock<Option<(u16, String)>> = OnceLock::new();
     let (port, token) = SERVER
@@ -86,9 +99,7 @@ pub fn inside_config(stop: &Arc<AtomicBool>) -> Option<std::path::PathBuf> {
             Some((port, token))
         })
         .clone()?;
-    let path = crate::sys::data_dir().join("cc-mcp.json");
-    std::fs::write(&path, client_config(port, &token).to_string()).ok()?;
-    Some(path)
+    Some((port, token))
 }
 
 fn client_config(port: u16, token: &str) -> Value {

@@ -618,7 +618,7 @@ impl App {
             // The buttons stay below it, always in view.
             let room = room - 150.0;
             ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
-            let (pick, current, has_key, pick_cc, pick_openai, pick_agent) = egui::ScrollArea::vertical().max_height(room).min_scrolled_height(room).auto_shrink([false, true]).show(ui, |ui| {
+            let (pick, current, has_key, pick_cc, pick_openai, pick_agent, pick_ssh) = egui::ScrollArea::vertical().max_height(room).min_scrolled_height(room).auto_shrink([false, true]).show(ui, |ui| {
             ui.set_width(420.0);
             let has_key = self.cfg.key.is_some();
             let has_jev = crate::jev::key().is_some();
@@ -650,7 +650,9 @@ impl App {
             // The engine: who answers. Claude through the API or through Claude Code, another model behind an
             // OpenAI-compatible API, or an agent outside APERIT that uses this board as its screen.
             let cc_version = crate::cc::version();
-            let current = if self.cfg.cc {
+            let current = if self.cfg.ssh {
+                "ssh"
+            } else if self.cfg.cc {
                 "claude-code"
             } else if self.cfg.openai.is_some() {
                 "openai"
@@ -668,7 +670,12 @@ impl App {
                     self.openai_input = [p.url, p.model, String::new()];
                 }
                 self.agui_input = crate::agui::settings().map(|s| s.url).unwrap_or_default();
-                self.more_open |= current == "agent";
+                if let Some(s) = crate::ssh::settings() {
+                    let port = if s.port == 0 { String::new() } else { s.port.to_string() };
+                    self.ssh_input = [s.host, s.user, port, s.key, s.dir, String::new()];
+                }
+                *self.ssh_test.lock().unwrap() = String::new();
+                self.more_open |= current == "agent" || current == "ssh";
             }
             // Two ways in: sign in, or paste a key. Everything else is under "More options".
             let signed = cc_version.is_some() && crate::cc::signed_in();
@@ -741,12 +748,14 @@ impl App {
             ui.add_space(6.0);
             let pick = self.engine_pick.clone().unwrap_or_default();
             if self.more_open {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    let half = (ui.available_width() - 8.0) / 2.0;
+                // Two tiles a row: the third goes under them.
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                    let half = (ui.available_width() - 9.0) / 2.0;
                     for (id, title, sub) in [
                         ("openai", crate::sys::tr("로컬·다른 모델", "Local or other model"), crate::sys::tr("주소와 모델을 직접 적기", "give the address and the model")),
                         ("agent", crate::sys::tr("내 에이전트", "Your own agent"), crate::sys::tr("MCP 또는 AG-UI로 연결", "connects over MCP or AG-UI")),
+                        ("ssh", crate::sys::tr("서버 (SSH)", "A server (SSH)"), crate::sys::tr("서버의 Claude Code", "Claude Code on a server")),
                     ] {
                         let on = pick == id;
                         let (r, p) = ui.allocate_painter(egui::vec2(half, 52.0), egui::Sense::click());
@@ -765,8 +774,73 @@ impl App {
             let more_open = self.more_open;
             let pick = self.engine_pick.clone().unwrap_or_default();
             let pick_cc = pick == "claude-code" && cc_version.is_some();
-            let (pick_openai, pick_agent) = (pick == "openai", pick == "agent");
+            let (pick_openai, pick_agent, pick_ssh) = (pick == "openai", pick == "agent", pick == "ssh");
             ui.add_space(4.0);
+            if pick_ssh {
+                ui.label(
+                    egui::RichText::new(crate::sys::tr(
+                        "서버에 SSH로 붙어 그 서버의 Claude Code에 맡깁니다. 파일과 명령은 서버의 것이고, 기억·경로 지도·작업자 같은 APERIT 기능은 이 컴퓨터에서 그대로 씁니다. 서버에 Claude Code가 설치되고 로그인되어 있어야 합니다.",
+                        "APERIT connects to a server over SSH and hands each turn to the Claude Code there. Files and commands are the server's; APERIT's own features such as memory, route maps and workers stay on this computer. Claude Code must be installed and signed in on the server.",
+                    ))
+                    .size(12.0)
+                    .color(ui::DIM()),
+                );
+                ui.add_space(10.0);
+                let label = |ui: &mut egui::Ui, text: &str| {
+                    ui.label(egui::RichText::new(text).font(ui::bold(12.0)).color(ui::TEXT()));
+                    ui.add_space(2.0);
+                };
+                label(ui, crate::sys::tr("서버 주소", "Server address"));
+                field_as(ui, &mut self.ssh_input[0], "example.com · 203.0.113.7", false);
+                ui.add_space(6.0);
+                ui.columns(2, |cols| {
+                    label(&mut cols[0], crate::sys::tr("사용자", "User"));
+                    field_as(&mut cols[0], &mut self.ssh_input[1], "ubuntu", false);
+                    label(&mut cols[1], crate::sys::tr("포트", "Port"));
+                    field_as(&mut cols[1], &mut self.ssh_input[2], "22", false);
+                });
+                ui.add_space(6.0);
+                label(ui, crate::sys::tr("키 파일 (선택)", "Key file (optional)"));
+                field_as(ui, &mut self.ssh_input[3], crate::sys::tr("비워 두면 ssh 에이전트와 기본 키를 씁니다", "Empty: the ssh agent and your usual keys"), false);
+                ui.add_space(6.0);
+                let saved_password = crate::secret::get(crate::secret::SSH_PASSWORD).is_some();
+                label(ui, crate::sys::tr("비밀번호 (선택)", "Password (optional)"));
+                field(ui, &mut self.ssh_input[5], if saved_password { crate::sys::tr("저장됨 · 비워 두면 그대로 씁니다", "Saved · leave empty to keep it") } else { crate::sys::tr("키로 로그인하면 비워 둡니다", "Leave empty when a key signs you in") });
+                ui.add_space(6.0);
+                label(ui, crate::sys::tr("서버의 작업 폴더 (선택)", "Folder on the server (optional)"));
+                field_as(ui, &mut self.ssh_input[4], "~/work", false);
+                ui.add_space(8.0);
+                // Try it before saving: connect and ask the server's Claude Code for its version.
+                let status = self.ssh_test.lock().unwrap().clone();
+                let testing = status == "…";
+                let (r, p) = ui.allocate_painter(egui::vec2(150.0, 30.0), if testing { egui::Sense::hover() } else { egui::Sense::click() });
+                p.rect_stroke(r.rect, 15.0, egui::Stroke::new(1.0, if r.hovered() { ui::DIM() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
+                p.text(r.rect.center(), egui::Align2::CENTER_CENTER, if testing { crate::sys::tr("연결하는 중…", "Connecting…") } else { crate::sys::tr("연결 시험", "Test the connection") }, ui::bold(12.0), ui::TEXT());
+                if !testing && !self.ssh_input[0].trim().is_empty() && r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    let server = server_from(&self.ssh_input);
+                    let password = self.ssh_input[5].trim().to_string();
+                    let out = self.ssh_test.clone();
+                    *out.lock().unwrap() = "…".into();
+                    let ctx = ctx.clone();
+                    std::thread::spawn(move || {
+                        let said = match crate::ssh::check(&server, Some(&password)) {
+                            Ok(v) => format!("ok {} · Claude Code {v}", crate::sys::tr("연결됨", "Connected")),
+                            Err(e) => e,
+                        };
+                        *out.lock().unwrap() = said;
+                        ctx.request_repaint();
+                    });
+                }
+                if !status.is_empty() && !testing {
+                    let (good, text) = match status.strip_prefix("ok ") {
+                        Some(t) => (true, t.to_string()),
+                        None => (false, status.clone()),
+                    };
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(text).size(11.5).color(if good { ui::GREEN() } else { ui::RED() }));
+                }
+                ui.add_space(12.0);
+            }
             if pick_cc {
                 ui.label(
                     egui::RichText::new(crate::sys::tr(
@@ -779,6 +853,8 @@ Files, commands and the web go through Claude Code's tools; APERIT's own feature
                     .color(ui::DIM()),
                 );
                 ui.add_space(12.0);
+            }
+            if pick_cc || pick_ssh {
                 // 권한: Claude Code 가 파일을 고치거나 명령을 실행할 때 어디까지 묻지 않고 하게 할지.
                 ui.label(egui::RichText::new(crate::sys::tr("묻지 않고 해도 되는 일", "What it may do without asking")).font(ui::bold(12.5)).color(ui::TEXT()));
                 ui.add_space(4.0);
@@ -946,11 +1022,13 @@ Files, commands and the web go through Claude Code's tools; APERIT's own feature
                 .color(ui::FAINT()),
             );
             }
-            (pick, current, has_key, pick_cc, pick_openai, pick_agent)
+            (pick, current, has_key, pick_cc, pick_openai, pick_agent, pick_ssh)
             }).inner;
             ui.add_space(12.0);
             let jev_typed = self.jev_input.trim().len() > 8 || self.eleven_input.trim().len() > 8 || self.level_pick.as_deref().map(|l| l != crate::permit::level().name()).unwrap_or(false);
-            let ready = if pick_cc {
+            let ready = if pick_ssh {
+                !self.ssh_input[0].trim().is_empty() && self.ssh_input[2].trim().parse::<u16>().map(|_| true).unwrap_or(self.ssh_input[2].trim().is_empty())
+            } else if pick_cc {
                 pick != current || jev_typed || self.perm_pick.as_deref().map(|p| p != crate::cc::permission()).unwrap_or(false)
             } else if pick_openai {
                 // An address and a model, and something changed.
@@ -1010,6 +1088,18 @@ Files, commands and the web go through Claude Code's tools; APERIT's own feature
                     "ag-ui"
                 }
                 Some("agent") => "external",
+                Some("ssh") => {
+                    if let Err(e) = crate::ssh::save(&server_from(&self.ssh_input)) {
+                        self.error = Some(e);
+                    }
+                    if !self.ssh_input[5].trim().is_empty() {
+                        if let Err(e) = crate::secret::set(crate::secret::SSH_PASSWORD, self.ssh_input[5].trim()) {
+                            self.error = Some(e);
+                        }
+                    }
+                    self.ssh_input[5].clear();
+                    "ssh"
+                }
                 _ => "api",
             };
             let _ = std::fs::write(base.join("engine.txt"), engine);
@@ -1058,4 +1148,9 @@ Files, commands and the web go through Claude Code's tools; APERIT's own feature
             self.media_pick = None;
         }
     }
+}
+
+/// The server typed in the Keys window: host, user, port, key file, folder (the password is kept apart).
+fn server_from(input: &[String; 6]) -> crate::ssh::Server {
+    crate::ssh::Server { host: input[0].trim().into(), user: input[1].trim().into(), port: input[2].trim().parse().unwrap_or(0), key: input[3].trim().into(), dir: input[4].trim().into(), claude: crate::ssh::settings().map(|s| s.claude).unwrap_or_default() }
 }

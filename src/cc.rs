@@ -186,11 +186,38 @@ pub fn worker(id: &str, system: &str, dir: &str, effort: &str, order: &str, stop
     exec(&format!("cc-worker-{id}.txt"), &(system.to_string() + WORKER_NOTE), std::path::Path::new(dir), effort, order, &[], stop, send)
 }
 
+/// What the model is told when Claude Code runs on a server.
+fn remote_note(s: &crate::ssh::Server) -> String {
+    format!(
+        "
+
+# Claude Code runs on a server
+
+You run on the server `{}`, reached over SSH, in the folder `{}`. Files, commands and paths are the server's. The home folder and operating system named in `<env>` are the user's own computer, where APERIT runs and where the memory notes are: use the note tools for memory, and the server's paths for work.
+",
+        s.target(),
+        if s.dir.trim().is_empty() { "~" } else { s.dir.trim() }
+    )
+}
+
 /// `agent::ask` 에서 키 자리에 이 값을 주면 API 대신 Claude Code 로 묻는다.
 pub const VIA: &str = "\u{1}claude-code";
 
 /// 도구 없이 한 번 묻고 답을 받는다 (기억 정리 같은 작은 일). 작은 모델을 쓴다.
 pub fn ask(system: &str, user: &str) -> Result<String, String> {
+    if let Some(s) = crate::ssh::chosen() {
+        let script = format!(
+            "mkdir -p ~/.aperit && head -c {} > ~/.aperit/ask.txt && exec {} -p --output-format json --no-session-persistence --tools '' --strict-mcp-config --model haiku --system-prompt-file \"$HOME/.aperit/ask.txt\"",
+            system.len(),
+            s.claude()
+        );
+        let out = crate::ssh::run(&s, &script, format!("{system}{user}").as_bytes(), None)?;
+        let v: Value = serde_json::from_str(out.trim()).map_err(|e| format!("Claude Code 의 답을 읽지 못함: {e}"))?;
+        if v["is_error"].as_bool().unwrap_or(false) {
+            return Err(v["result"].as_str().unwrap_or("Claude Code error").chars().take(300).collect());
+        }
+        return Ok(v["result"].as_str().unwrap_or("").to_string());
+    }
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let dir = crate::sys::data_dir();
     let _ = std::fs::create_dir_all(&dir);
@@ -222,19 +249,34 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
     let started = Instant::now();
     let dir = crate::sys::data_dir();
     let _ = std::fs::create_dir_all(&dir);
-    let system = dir.join(tag);
-    std::fs::write(&system, system_text).map_err(|e| format!("지시문을 쓰지 못함: {e}"))?;
+    // On a server (engine "ssh"), everything below happens there; APERIT's own tools stay here.
+    let remote = crate::ssh::chosen();
+    let system_text = match &remote {
+        Some(s) => format!("{system_text}{}", remote_note(s)),
+        None => system_text.to_string(),
+    };
 
-    // 붙인 사진은 파일로 내려 주고 경로를 알려 준다 (Claude Code 가 Read 로 본다).
+    // 붙인 사진은 파일로 내려 주고 경로를 알려 준다 (Claude Code 가 Read 로 본다). 서버라면 서버에 올린다.
     let mut text = turn_text.to_string();
     if !images.is_empty() {
         let mut paths = Vec::new();
+        let home = remote.as_ref().and_then(crate::ssh::home);
         for (i, (media, data)) in images.iter().enumerate() {
             let ext = if media.contains("png") { "png" } else { "jpg" };
-            let path = dir.join(format!("cc-image-{i}.{ext}"));
-            if let Some(bytes) = unbase64(data) {
-                if std::fs::write(&path, bytes).is_ok() {
-                    paths.push(path.display().to_string());
+            let Some(bytes) = unbase64(data) else { continue };
+            match (&remote, &home) {
+                (Some(s), Some(h)) => {
+                    let name = format!("cc-image-{i}.{ext}");
+                    if crate::ssh::run(s, &format!("mkdir -p ~/.aperit && cat > ~/.aperit/{name}"), &bytes, None).is_ok() {
+                        paths.push(format!("{h}/.aperit/{name}"));
+                    }
+                }
+                (Some(_), None) => {}
+                (None, _) => {
+                    let path = dir.join(format!("cc-image-{i}.{ext}"));
+                    if std::fs::write(&path, bytes).is_ok() {
+                        paths.push(path.display().to_string());
+                    }
                 }
             }
         }
@@ -243,40 +285,71 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
         }
     }
 
-    let mut cmd = command();
-    cmd.args(["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--no-session-persistence", "--append-system-prompt-file"]).arg(&system);
+    let mut args: Vec<String> = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--no-session-persistence"].map(String::from).to_vec();
     // 사용자가 더 주고 싶은 옵션 (예: --permission-mode acceptEdits, --model sonnet). 한 줄에 하나씩 또는 띄어서.
     let extra = std::fs::read_to_string(crate::sys::base_dir().join("claude-args.txt")).unwrap_or_default();
     // 화면이 빨리 나와야 하므로 생각의 깊이는 APERIT 가 정한 값을 넘긴다 (사용자가 따로 적었으면 그것을 따른다).
     if !extra.contains("--effort") && !effort.is_empty() {
-        cmd.args(["--effort", effort]);
+        args.extend(["--effort".into(), effort.to_string()]);
     }
     // Claude Code 의 도구는 꼭 필요한 것만 싣는다. 전부 실으면 턴마다 보내는 양이 늘어 첫 반응이 늦어진다 (실측 10.6초 → 6.4초).
     // 사용자가 붙여 둔 MCP 서버의 도구는 그대로 남는다. ToolSearch 를 빼면 안 된다: 그것이 없으면 MCP 도구의 설명이
     // 전부 매 턴 실려 간다 (도구 200개짜리 서버가 붙은 PC에서 턴당 39만 토큰 → 4만 토큰).
     if !extra.contains("--tools") {
-        cmd.args(["--tools", if cfg!(windows) { "Bash,PowerShell,Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,ToolSearch" } else { "Bash,Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,ToolSearch" }]);
+        let windows_here = cfg!(windows) && remote.is_none();
+        args.extend(["--tools".into(), if windows_here { "Bash,PowerShell,Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,ToolSearch" } else { "Bash,Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,ToolSearch" }.into()]);
     }
     // 권한: 기본은 사용자의 Claude Code 설정 그대로다 (허용해 두지 않은 파일 수정과 명령은 거절된다).
     // 키 창에서 풀어 줄 수 있다.
     let mode = permission();
     if !extra.contains("--permission-mode") && mode != "default" {
-        cmd.args(["--permission-mode", &mode]);
+        args.extend(["--permission-mode".into(), mode.clone()]);
     }
-    // APERIT 자체 도구를 MCP 로 내준다.
-    if let Some(config) = crate::mcp::inside_config(stop) {
-        cmd.arg("--mcp-config").arg(config).args(["--allowedTools", "mcp__aperit"]);
-    }
-    cmd.args(extra.split_whitespace());
+    let (mut cmd, input) = match &remote {
+        None => {
+            let system = dir.join(tag);
+            std::fs::write(&system, &system_text).map_err(|e| format!("지시문을 쓰지 못함: {e}"))?;
+            let mut cmd = command();
+            cmd.args(&args).arg("--append-system-prompt-file").arg(&system);
+            // APERIT 자체 도구를 MCP 로 내준다.
+            if let Some(config) = crate::mcp::inside_config(stop) {
+                cmd.arg("--mcp-config").arg(config).args(["--allowedTools", "mcp__aperit"]);
+            }
+            cmd.args(extra.split_whitespace()).current_dir(cwd);
+            (cmd, text.into_bytes())
+        }
+        Some(s) => {
+            // The instructions travel first on the same connection (head -c takes exactly their bytes), the
+            // turn after them. APERIT's tools come through a reverse tunnel to this computer's inside door.
+            let mut forward = None;
+            let mut tail: Vec<String> = Vec::new();
+            if let Some((local, token)) = crate::mcp::inside_door(stop) {
+                let remote_port = 20000 + (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0) % 20000) as u16;
+                forward = Some((remote_port, local));
+                tail.extend(["--mcp-config".into(), crate::ssh::shq(&crate::mcp::config_line(remote_port, &token)), "--allowedTools".into(), "mcp__aperit".into()]);
+            }
+            let quoted: Vec<String> = args.iter().map(|a| crate::ssh::shq(a)).chain(tail).chain(extra.split_whitespace().map(crate::ssh::shq)).collect();
+            let tag = tag.replace(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_'), "-");
+            let script = format!(
+                "mkdir -p ~/.aperit && head -c {} > ~/.aperit/{tag} && {} && echo \"APERITPID $$\" && exec {} {} --append-system-prompt-file \"$HOME/.aperit/{tag}\"",
+                system_text.len(),
+                s.cd(),
+                s.claude(),
+                quoted.join(" ")
+            );
+            let mut input = system_text.clone().into_bytes();
+            input.extend_from_slice(text.as_bytes());
+            (crate::ssh::command(s, &script, forward, None), input)
+        }
+    };
     let mut child = cmd
-        .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("{} ({e})", crate::sys::tr("Claude Code 를 실행하지 못했습니다. 설치되어 있는지 확인해 주세요.", "Could not start Claude Code. Check that it is installed.")))?;
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(text.as_bytes());
+        let _ = stdin.write_all(&input);
     }
     let stdout = child.stdout.take().ok_or("출력을 받지 못함")?;
     let mut stderr = child.stderr.take();
@@ -287,14 +360,18 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
         }
         s
     });
-    // 멈춤 버튼: 따로 지켜보다가 Claude Code 를 끝낸다.
+    // 멈춤 버튼: 따로 지켜보다가 Claude Code 를 끝낸다. 서버라면 서버의 Claude Code 도 끝낸다.
     let child = Arc::new(Mutex::new(child));
     let finished = Arc::new(AtomicBool::new(false));
+    let remote_pid: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(None));
     let watcher = {
-        let (child, finished, stop) = (child.clone(), finished.clone(), stop.clone());
+        let (child, finished, stop, remote, remote_pid) = (child.clone(), finished.clone(), stop.clone(), remote.clone(), remote_pid.clone());
         std::thread::spawn(move || {
             while !finished.load(Ordering::Relaxed) {
                 if stop.load(Ordering::Relaxed) {
+                    if let (Some(s), Some(pid)) = (&remote, *remote_pid.lock().unwrap_or_else(|e| e.into_inner())) {
+                        let _ = crate::ssh::run(s, &format!("kill {pid} 2>/dev/null; true"), b"", None);
+                    }
                     let _ = child.lock().unwrap_or_else(|e| e.into_inner()).kill();
                     return;
                 }
@@ -303,18 +380,23 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
         })
     };
 
-    let mut stats = Stats { model: "Claude Code".into(), ..Default::default() };
+    let place = remote.as_ref().map(|s| format!(" · {}", s.label())).unwrap_or_default();
+    let mut stats = Stats { model: format!("Claude Code{place}"), ..Default::default() };
     let mut failure: Option<String> = None;
     let mut last_text = String::new();
     let mut got_result = false;
     let mut line_open = false; // 마지막으로 보낸 글자가 줄 끝이 아닌가
     for line in BufReader::new(stdout).lines() {
         let Ok(line) = line else { break };
+        if let Some(pid) = line.strip_prefix("APERITPID ") {
+            *remote_pid.lock().unwrap_or_else(|e| e.into_inner()) = pid.trim().parse().ok();
+            continue;
+        }
         let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
         match v["type"].as_str().unwrap_or("") {
             "system" if v["subtype"] == "init" => {
                 if let Some(m) = v["model"].as_str() {
-                    stats.model = format!("Claude Code · {m}");
+                    stats.model = format!("Claude Code · {m}{place}");
                 }
             }
             "stream_event" => {
@@ -394,6 +476,9 @@ fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_
         let code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
         let tail: String = errors.trim().chars().rev().take(300).collect::<String>().chars().rev().collect();
         crate::sys::log("cc.log", &format!("끝남 {code}: {errors}"));
+        if remote.is_some() && code == 255 {
+            return Err(format!("{}: {}", crate::sys::tr("서버", "Server"), crate::ssh::explain(errors.trim())));
+        }
         return Err(format!("{} ({code}) {tail}", crate::sys::tr("Claude Code 가 답 없이 끝났습니다. 로그인되어 있는지 확인해 주세요.", "Claude Code ended without an answer. Check that it is logged in.")));
     }
     Ok((stats, last_text))

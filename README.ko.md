@@ -100,6 +100,7 @@ Linux: GTK와 WebKit 라이브러리(`glib-sys`)가 없는 컴퓨터에서는 �
 | 데모 | 없음 | 준비된 장면만. 키 없이 시작한다 |
 | Claude API | [Claude API 키](https://console.anthropic.com/settings/keys). 요금은 본인 계정에 청구된다 | APERIT의 기능 전부. **키**에 붙여넣거나(앱 안에 암호화해서 보관한다) 환경 변수 `ANTHROPIC_API_KEY` |
 | Claude Code | [Claude Code](https://claude.com/claude-code)가 깔려 있고 로그인된 상태. API 키는 필요 없다 | 전부. Claude Code의 로그인, `CLAUDE.md`, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용된다 |
+| 서버의 Claude Code | SSH로 붙는 서버(키 또는 비밀번호)에 Claude Code가 깔려 있고 로그인된 상태 | 같은 기능을 서버의 파일·명령으로. 기억과 APERIT 도구는 내 컴퓨터에 남는다 ([방법](docs/DRIVING.md#a-server-claude-code-over-ssh)) |
 | 다른 모델 | OpenAI 호환 주소: OpenAI, Ollama·LM Studio의 로컬 모델, OpenRouter | APERIT 자체 엔진을 그 모델로 돌린다. 웹 검색은 Claude에서만 된다 |
 | 내 에이전트 | MCP 또는 AG-UI를 쓰는 에이전트 | 보드를 그 에이전트의 화면으로 쓴다. APERIT 안의 모델은 돌지 않는다 |
 

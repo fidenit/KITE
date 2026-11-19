@@ -3,6 +3,7 @@
 #   .\run.ps1 build      빌드만
 #   .\run.ps1 test       테스트
 #   .\run.ps1 pack       들고 다닐 수 있는 폴더 portable\APERIT 를 만들거나 갱신
+#   .\run.ps1 dist       배포 파일: dist\APERIT-Setup-<버전>.exe (설치 파일)와 dist\APERIT-<버전>-windows-x64.zip (aperit.exe 하나)
 #
 # portable\APERIT 폴더는 그 자체로 완결이다. 통째로 어디에 복사해도 그대로 동작한다.
 #   aperit.exe         프로그램 (설치 불필요)
@@ -23,6 +24,26 @@ function Copy-Loader($dest) {
 
 switch ($args[0]) {
     'build' { cargo build --release; Copy-Loader target\release }
+    'dist'  {
+        # The installer (Inno Setup 6) and a zip. aperit.exe carries WebView2Loader.dll inside, so it is one file.
+        cargo build --release
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+        $iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $iscc) { 'Inno Setup 6 is needed: winget install JRSoftware.InnoSetup'; exit 1 }
+        New-Item -ItemType Directory -Force dist | Out-Null
+        & $iscc /Q "/DAppVersion=$version" installer\aperit.iss
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        $stage = Join-Path $env:TEMP "aperit-zip-$version"
+        Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force (Join-Path $stage 'APERIT') | Out-Null
+        Copy-Item target\release\aperit.exe, LICENSE, NOTICE (Join-Path $stage 'APERIT')
+        $zip = "dist\APERIT-$version-windows-x64.zip"
+        Remove-Item $zip -ErrorAction SilentlyContinue
+        Compress-Archive -Path (Join-Path $stage 'APERIT') -DestinationPath $zip
+        Remove-Item -Recurse -Force $stage
+        Get-ChildItem dist | Select-Object Name, Length
+    }
     'test'  { cargo test --workspace; if (Get-Command node -ErrorAction SilentlyContinue) { node protocol\js\test.mjs } }
     'pack'  {
         cargo build --release

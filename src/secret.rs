@@ -19,6 +19,8 @@ pub const CLAUDE: &str = "claude";
 pub const JEV: &str = "jev";
 pub const ELEVEN: &str = "elevenlabs";
 pub const OPENAI: &str = "openai";
+/// The password for the SSH server, when it takes one (`ssh.rs`).
+pub const SSH_PASSWORD: &str = "ssh-password";
 /// `Header-Name: value` lines, one per line, sent to an AG-UI agent.
 pub const AGUI_HEADERS: &str = "agui-headers";
 

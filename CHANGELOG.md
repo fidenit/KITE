@@ -17,6 +17,16 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 - On Android the app is shown as APERIT and APERIT Pro. Its package name is unchanged, so it updates in place.
 - Say "Aperit" (or, as before, "Kite") to call it back while it waits.
 
+### Claude Code on a server
+
+- A new engine: **Keys** → **More options** → **A server (SSH)** hands each turn to the Claude Code on a server, with the server's files and commands. APERIT's memory, route maps and workers stay on your computer and reach it through the SSH connection. A key, the ssh agent or a password (kept encrypted) signs in; **Test the connection** checks it first.
+
+### A cleaner window
+
+- The line at the bottom left no longer shows numbers meant for development (model, time, tokens, card and character counts, the zoom hint). Set `APERIT_DEBUG` to see them.
+- APERIT has an icon of its own, in the window, the taskbar and Explorer, and `aperit.exe` says what it is (name, version, maker) in its properties.
+- `aperit.exe` runs on its own: WebView2Loader.dll, which web cards need, is carried inside it.
+
 ### Keys stay inside the app
 
 - Keys are no longer written to plain files. On Windows they are encrypted for your user account on this computer (`data/keys.bin`); on macOS they go to the login keychain. Key files from earlier versions are moved in on the first start and removed.

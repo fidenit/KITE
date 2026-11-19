@@ -8,3 +8,4 @@ eleven.txt
 voice.txt
 vault.txt
 *.WebView2/
+/dist

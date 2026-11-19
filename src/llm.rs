@@ -66,6 +66,8 @@ pub struct Config {
     pub effort: String,
     /// Claude Code 엔진을 쓰는가 (API 를 직접 부르지 않고 이 컴퓨터의 Claude Code 에 맡긴다)
     pub cc: bool,
+    /// Claude Code runs on a server over SSH (`ssh.rs`); `cc` is true too.
+    pub ssh: bool,
     /// No model inside APERIT: an agent outside drives the board (MCP or the protocol socket),
     /// and what the user types or does goes out to it as events.
     pub external: bool,
@@ -85,12 +87,15 @@ impl Config {
         let key = if env("DEMO").is_some() { None } else { key };
         // 엔진: 프로그램 폴더의 engine.txt 에 claude-code 라고 적혀 있으면 Claude Code 에 맡긴다.
         let engine = env("ENGINE").or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("engine.txt")).ok().map(|s| s.trim().to_string()));
-        let cc = engine.as_deref() == Some("claude-code") && env("DEMO").is_none();
+        // Claude Code on this computer, or on a server over SSH (ssh.rs): the same engine, run in another place.
+        let ssh = engine.as_deref() == Some("ssh") && env("DEMO").is_none() && crate::ssh::settings().is_some();
+        let cc = (engine.as_deref() == Some("claude-code") && env("DEMO").is_none()) || ssh;
         let external = engine.as_deref() == Some("external") && env("DEMO").is_none();
         let agui = crate::agui::settings().filter(|_| engine.as_deref() == Some("ag-ui") && env("DEMO").is_none());
         let openai = crate::openai::settings().filter(|_| engine.as_deref() == Some("openai") && env("DEMO").is_none());
         Config {
             cc,
+            ssh,
             external,
             agui,
             openai,
