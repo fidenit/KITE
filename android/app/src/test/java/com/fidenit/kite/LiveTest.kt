@@ -153,8 +153,10 @@ class LiveTest {
         val a = Applier()
         var dropped = 0L
         var gotTool = false
+        val fed = mutableListOf<String>() // 엔진이 처리한 `.out` 줄 그대로
         val t0 = System.currentTimeMillis()
         val input = "먼저 say 한 줄을 내고, Bash 로 \"for i in 1 2 3 4 5 6 7 8; do date; sleep 3; done\" 를 한 번 실행한 다음, 카드 한 장에 '끝'이라고 써 줘."
+        r.cc.onDataLine = { fed.add(it) }
         val stats = r.cc.run(turn(r, input), { false }) { ev ->
             if (ev is Ev.Activity && ev.text.startsWith("명령 실행") && !gotTool) {
                 gotTool = true
@@ -173,20 +175,24 @@ class LiveTest {
         assertTrue("도구를 쓰는 것이 보여야 한다: ${a.activity}", gotTool)
         assertTrue("스스로 다시 붙었다고 알려야 한다: ${a.activity}", a.activity.any { it.contains("다시 붙습니다") })
         assertTrue("카드가 있어야 한다", a.board.cards.isNotEmpty())
-        assertTrue("result 를 받아야 한다", stats.outputTokens > 0 || stats.totalMs > 0)
-        val serverOut = r.ssh.run("cat ~/.kite/runs/$id.out").lines().filter { it.isNotEmpty() }
+        assertTrue("result 의 사용량을 받아야 한다: ${stats.model}", stats.outputTokens > 0 && stats.model.startsWith("Claude Code · "))
+        val serverOut = r.ssh.run("cat ~/.kite/runs/$id.out").removeSuffix("\n").lines()
         val exit = r.ssh.run("cat ~/.kite/runs/$id.exit").trim()
         println("(a) 서버 .exit=$exit 서버 .out ${serverOut.size}줄, 앱이 받은 줄 ${r.cc.linesReceived}")
         assertEquals("끝난 코드", "0", exit)
         assertEquals("앱이 받은 줄 수 = 서버 .out 줄 수", serverOut.size, r.cc.linesReceived)
+        assertEquals("앱이 처리한 줄이 서버 .out 과 줄마다 같아야 한다 (빠지거나 겹치면 안 된다)", serverOut, fed)
         assertTrue("result 줄이 서버에 있어야 한다", serverOut.any { it.contains("\"type\":\"result\"") })
 
         // (b) 처음부터 다시 받기
         val b = Applier()
+        val fed2 = mutableListOf<String>()
+        r.cc.onDataLine = { fed2.add(it) }
         r.cc.resume(id, null, 0, { false }, b::send)
         b.finish()
         println("(b) 다시 받은 줄 ${r.cc.linesReceived}")
         assertEquals("(b) 다시 받은 줄 수", serverOut.size, r.cc.linesReceived)
+        assertEquals("(b) 다시 받은 줄이 서버 .out 과 줄마다 같아야 한다", serverOut, fed2)
         assertEquals("(b) 처음부터 다시 받은 보드가 처음과 같아야 한다", Lang.serialize(a.board), Lang.serialize(b.board))
         println("(b) 같음: 카드 ${b.board.cards.size}장")
 
