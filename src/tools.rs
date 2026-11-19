@@ -198,10 +198,10 @@ pub fn definitions(worker: bool) -> Value {
         tool("job_list", "See the state of the delegated jobs.", json!({}), &[]),
         tool(
             "settings",
-            "Change a setting of APERIT when the user asks you to. `language`, `theme`, `model`, and a daily limit lower than the one set, change at once. `engine` (who answers, or which saved server), `permission` (what may be done without asking), a higher or no daily limit, and keys are never changed by you: the Settings window opens with the change already made, and it takes effect when the user presses Save there; say so in `say`. Keys and passwords never go through the conversation: if the user wants to give one, use `open` and tell them to paste it in the window.",
+            "Change a setting of APERIT when the user asks you to. `language`, `theme`, `model`, and a daily limit lower than the one set, change at once. `engine` (who answers, or which saved server), `permission` (what may be done without asking), a higher or no daily limit, and keys are never changed by you: the Settings window opens with the change already made, and it takes effect when the user presses Save there; say so in `say`. Keys and passwords never go through the conversation: if the user wants to give one, use `open` and tell them to paste it in the window. To connect to a server over SSH, use `engine` with `ssh`, or with the address if the user gave one: the window has the fields, a connection test and the password box. Never ask for server details or passwords with a card.",
             json!({
                 "change": { "type": "string", "enum": ["language", "theme", "model", "daily_limit", "engine", "permission", "open"] },
-                "value": { "type": "string", "description": "language: ko or en. theme: light or dark. model: opus, sonnet or haiku. daily_limit: dollars a day, or none. engine: api, claude-code, local, agent, or the name of a saved server. permission: ask, edits or all. open: nothing" },
+                "value": { "type": "string", "description": "language: ko or en. theme: light or dark. model: opus, sonnet or haiku. daily_limit: dollars a day, or none. engine: api, claude-code, local, agent, ssh (a new server), an address such as root@1.2.3.4:22 (a new server, filled in), or the name of a saved server. permission: ask, edits or all. open: nothing" },
             }),
             &["change"],
         ),

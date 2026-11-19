@@ -258,6 +258,10 @@ struct App {
     pub pics: Vec<(pics::Pic, egui::TextureHandle)>,
     /// 방금까지 사용자 앞에 있던 일의 주제 (다음 일을 고를 때 같은 주제의 것부터 가져온다)
     task_topic: Option<String>,
+    /// The focus last seen on the board: when the AI focuses a question card anew, it comes to the front.
+    focus_seen: Option<String>,
+    /// The question cards already seen (None until the first look). A question asked since then comes first.
+    asks_known: Option<std::collections::HashSet<String>>,
     /// 왼쪽 구역에 보관함 목록을 펼쳐 놓았는가
     pub show_shelf: bool,
     /// 끝난 작업의 보고서 (작업 ID, 제목, 성공했는가, 보고서). 다음 턴에 메인 모델에게 전한다.
@@ -633,6 +637,8 @@ impl App {
             replay_date: None,
             recall_cands: Vec::new(),
             task_topic: None,
+            focus_seen: None,
+            asks_known: None,
             pics: Vec::new(),
             reset_armed: None,
             probe: None,
@@ -1179,6 +1185,31 @@ impl App {
     /// 앞에 있던 일이 처리되어 사라졌으면 다음 일을 가져오고, 보드는 그 일이 속한 구역을 바로 옆에 붙여 보여 준다.
     fn pick_task(&mut self) {
         let asks: Vec<(String, String)> = self.board.cards.iter().filter(|c| c.kind.asks()).map(|c| (c.id.clone(), c.topic.clone())).collect();
+        // A question asked just now (most often about what the user said last), or one the AI focused anew, goes
+        // before the questions that were already waiting. Once the turn is over, and never ahead of a permission
+        // question.
+        if !self.busy && self.react_at.is_none() && !asks.iter().any(|a| self.approvals.contains_key(&a.0)) {
+            let known = self.asks_known.get_or_insert_with(|| asks.iter().map(|a| a.0.clone()).collect());
+            let newest = asks.iter().rev().find(|a| !known.contains(&a.0)).cloned();
+            known.extend(asks.iter().map(|a| a.0.clone()));
+            let focused = if self.board.focus != self.focus_seen {
+                self.focus_seen = self.board.focus.clone();
+                asks.iter().find(|a| Some(&a.0) == self.board.focus.as_ref()).cloned()
+            } else {
+                None
+            };
+            if let Some((id, topic)) = focused.or(newest) {
+                if self.view.task.as_ref() != Some(&id) {
+                    if self.view.picked.is_some() {
+                        self.unpick();
+                    }
+                    self.view.task = Some(id);
+                    self.task_topic = Some(topic.clone());
+                    self.view.dock_topic(topic);
+                    return;
+                }
+            }
+        }
         if let Some(cur) = &self.view.task {
             if asks.iter().any(|a| &a.0 == cur) {
                 return;

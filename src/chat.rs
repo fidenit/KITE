@@ -794,6 +794,19 @@ impl App {
                     "local" | "openai" | "other" => "local",
                     "agent" | "mcp" | "ag-ui" => "agent",
                     "ssh" | "server" => "ssh",
+                    // A new server the user named: "ssh root@1.2.3.4:2222", "me@example.com", "1.2.3.4".
+                    _ if crate::ssh::find(value.trim()).is_none() && looks_like_host(value) => {
+                        let target = value.trim().trim_start_matches("ssh ").trim();
+                        let (user, rest) = target.split_once('@').map(|(u, r)| (u.to_string(), r)).unwrap_or((String::new(), target));
+                        let (host, port) = match rest.rsplit_once(':') {
+                            Some((h, p)) if p.parse::<u16>().is_ok() => (h.to_string(), p.to_string()),
+                            _ => (rest.to_string(), String::new()),
+                        };
+                        self.open_settings(Some("ssh"));
+                        self.fill_ssh(None);
+                        self.ssh_input = [host, user, port, String::new(), String::new(), String::new(), String::new()];
+                        return "The Settings window is open on a new server with the address filled in. The user adds the key file or the password there, can test the connection, and presses Save; tell them so.".into();
+                    }
                     _ => match crate::ssh::find(value.trim()) {
                         Some(s) => {
                             self.open_settings(Some("ssh"));
@@ -1400,6 +1413,12 @@ fn fields(ui: &mut egui::Ui, row: Vec<(&str, &mut String, &str, bool, f32)>) {
         }
     });
     ui.add_space(8.0);
+}
+
+/// "root@1.2.3.4:22", "example.com", "ssh me@host": an address of a server, not a name.
+fn looks_like_host(value: &str) -> bool {
+    let v = value.trim().trim_start_matches("ssh ").trim();
+    !v.is_empty() && !v.contains(char::is_whitespace) && (v.contains('@') || v.contains('.') || v.contains(':'))
 }
 
 /// A small choice drawn as a pill, as wide as its text. `in_use` marks what is saved now.
