@@ -30,6 +30,30 @@ class SshFatal(message: String) : Exception(message)
 /** 서버에서 명령이 오류로 끝났다 (연결이 끊긴 것이 아니다). */
 class RemoteFail(message: String) : Exception(message)
 
+/**
+ * 줄 단위로 읽는다. `completeLinesOnly` 가 참이면 줄바꿈으로 끝난 줄만 넘기고 끝에 남은 조각은 버린다
+ * (연결이 줄 한가운데서 끊겼을 때 반쪽 줄을 한 줄로 세지 않으려고). 거짓이면 마지막 줄에 줄바꿈이 없어도 넘긴다.
+ */
+fun readLines(r: java.io.Reader, completeLinesOnly: Boolean, onLine: (String) -> Unit) {
+    val buf = CharArray(8192)
+    val line = StringBuilder()
+    while (true) {
+        val n = r.read(buf)
+        if (n < 0) break
+        for (i in 0 until n) {
+            val c = buf[i]
+            if (c == '\n') {
+                if (line.isNotEmpty() && line[line.length - 1] == '\r') line.setLength(line.length - 1)
+                onLine(line.toString())
+                line.setLength(0)
+            } else {
+                line.append(c)
+            }
+        }
+    }
+    if (!completeLinesOnly && line.isNotEmpty()) onLine(line.toString())
+}
+
 /** 작은따옴표로 감싸 셸에 그대로 넘긴다. */
 fun shq(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
@@ -103,9 +127,10 @@ class Ssh(private val server: Server, private val remember: (String) -> Unit) {
 
     /**
      * 명령을 돌린다. 표준 입력으로 `stdin` 을 주고 닫는다. 표준 출력은 한 줄씩 `onLine` 으로 넘긴다.
+     * `completeLinesOnly` 가 참이면 줄바꿈으로 끝난 줄만 넘기고, 연결이 끊겨 잘린 마지막 조각은 버린다 (이어 읽기용).
      * (끝난 코드, 표준 오류)를 돌려준다.
      */
-    fun exec(command: String, stdin: String?, onLine: (String) -> Unit): Pair<Int, String> {
+    fun exec(command: String, stdin: String?, completeLinesOnly: Boolean = false, onLine: (String) -> Unit): Pair<Int, String> {
         connect()
         val ch = session!!.openChannel("exec") as ChannelExec
         ch.setCommand(command)
@@ -130,7 +155,7 @@ class Ssh(private val server: Server, private val remember: (String) -> Unit) {
             }
         }
         try {
-            out.bufferedReader(Charsets.UTF_8).forEachLine(onLine)
+            readLines(out.bufferedReader(Charsets.UTF_8), completeLinesOnly, onLine)
             errReader.join(2000)
             var waited = 0
             while (!ch.isClosed && waited < 3000) {

@@ -5,6 +5,7 @@ import com.fidenit.kite.engine.DetachedCommands
 import com.fidenit.kite.engine.EngineConfig
 import com.fidenit.kite.engine.FollowLine
 import com.fidenit.kite.engine.Waker
+import com.fidenit.kite.engine.readLines
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -38,7 +39,11 @@ class DetachedTest {
 
     @Test
     fun linesAreClassifiedAndCounted() {
-        assertEquals(FollowLine.Data("""{"type":"result"}"""), Detached.classify("""{"type":"result"}"""))
+        assertEquals(FollowLine.Data("""{"type":"result"}"""), Detached.classify(""">{"type":"result"}"""))
+        assertEquals(FollowLine.Data("not json"), Detached.classify(">not json")) // 서버가 센 줄은 JSON 이 아니어도 센다
+        assertEquals(FollowLine.Data(""), Detached.classify(">"))
+        assertEquals(FollowLine.Data("APERITEXIT 0"), Detached.classify(">APERITEXIT 0")) // .out 안의 글이 제어 줄로 오해되지 않는다
+        assertEquals(FollowLine.Other, Detached.classify("""{"type":"result"}""")) // 앞에 > 가 없으면 인사말 같은 것: 무시
         assertEquals(FollowLine.Exit("0"), Detached.classify("APERITEXIT 0"))
         assertEquals(FollowLine.Exit("stopped"), Detached.classify("APERITEXIT stopped"))
         assertEquals(FollowLine.Exit("none"), Detached.classify("APERITEXIT none\r"))
@@ -49,8 +54,47 @@ class DetachedTest {
         assertEquals(FollowLine.Other, Detached.classify("Welcome to the server"))
         assertEquals(FollowLine.Other, Detached.classify(""))
         assertEquals(FollowLine.Other, Detached.classify("APERITEXIT"))
-        val lines = listOf("APERITRUN x", """{"a":1}""", "motd", "APERITBEAT", """{"a":2}""", "", """{"a":3}""", "APERITEXIT 0")
+        val lines = listOf("APERITRUN x", ">{\"a\":1}", "motd", "APERITBEAT", ">{\"a\":2}", "", ">oops", "APERITEXIT 0")
         assertEquals(3, Detached.countData(lines))
+    }
+
+    /** 이어 읽기 채널에서 줄 한가운데서 끊기면: 반쪽 줄은 세지도 처리하지도 않고, 다시 붙으면 그 줄이 통째로 온다. */
+    @Test
+    fun cutInTheMiddleOfALineIsNeitherCountedNorActedOn() {
+        val l1 = ">" + """{"type":"stream_event","n":1}"""
+        val l2 = ">" + """{"type":"result","result":"ok"}"""
+        fun read(text: String, n0: Int, complete: Boolean): Triple<Int, String?, List<String>> {
+            var n = n0
+            var exit: String? = null
+            val fed = mutableListOf<String>()
+            readLines(java.io.StringReader(text), complete) { raw ->
+                when (val c = Detached.classify(raw)) {
+                    is FollowLine.Data -> { n++; fed.add(c.text) }
+                    is FollowLine.Exit -> exit = c.code
+                    else -> {}
+                }
+            }
+            return Triple(n, exit, fed)
+        }
+        // 첫 연결: 줄 하나와 둘째 줄의 반쪽
+        val (n1, e1, f1) = read("motd\n" + l1 + "\n" + l2.take(15), 0, true)
+        assertEquals(1, n1)
+        assertEquals(null, e1)
+        assertEquals(listOf(l1.substring(1)), f1)
+        // 다시 붙음: 서버는 n1 줄 다음부터 다시 준다 -> 둘째 줄이 통째로 온다
+        val (n2, e2, f2) = read("Last login: x\n" + l2 + "\nAPERITEXIT 0\n", n1, true)
+        assertEquals(2, n2)
+        assertEquals("0", e2)
+        assertEquals(listOf(l2.substring(1)), f2)
+        // 끝나는 줄이 `APERITEXIT 14` 에서 잘렸다: 143 으로 읽지도 14 로 읽지도 않는다
+        assertEquals(null, read("APERITEXIT 14", 0, true).second)
+        assertEquals("143", read("APERITEXIT 143\n", 0, true).second)
+        // JSON 이 아닌 .out 줄도 한 줄로 센다 (서버도 센다): 다시 붙어도 한 줄이 두 번 오지 않는다
+        assertEquals(3, read(">{\"a\":1}\n>not json\n>{\"b\":2}\n", 0, true).first)
+        // 짧은 명령(Ssh.run)은 마지막 줄에 줄바꿈이 없어도 받는다
+        val got = mutableListOf<String>()
+        readLines(java.io.StringReader("a\r\nb"), false) { got.add(it) }
+        assertEquals(listOf("a", "b"), got)
     }
 
     @Test
@@ -134,13 +178,14 @@ class DetachedTest {
             // 처음부터 따라 읽기: 줄 6개와 끝
             val all = sh(home, c.follow(id, 0)).lines
             assertEquals(all.toString(), "APERITEXIT 0", all.last())
-            val data = all.filter { Detached.classify(it) is FollowLine.Data }
+            val data = all.filter { Detached.classify(it) is FollowLine.Data }.map { (Detached.classify(it) as FollowLine.Data).text }
             assertEquals(all.toString(), 6, data.size)
+            assertTrue(all.toString(), all.filter { it.startsWith(">") }.size == 6)
             assertEquals(File(home, ".kite/runs/$id.out").readLines(), data)
             assertTrue(data.last().contains("\"result\""))
             // k 줄 뒤부터
             val rest = sh(home, c.follow(id, 4)).lines
-            assertEquals(data.drop(4) + "APERITEXIT 0", rest)
+            assertEquals(data.drop(4).map { ">$it" } + "APERITEXIT 0", rest)
             assertEquals(listOf("APERITEXIT 0"), sh(home, c.follow(id, 6)).lines)
 
             // 옛 command() 시험에서 옮겨 온 것: 인자·작업 폴더·표준 입력

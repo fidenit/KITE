@@ -449,7 +449,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
                 send(Ev.Activity(""))
             }
             try {
-                val (_, err) = ssh.exec(cmds.follow(id, received), null) { raw ->
+                val (_, err) = ssh.exec(cmds.follow(id, received), null, completeLinesOnly = true) { raw ->
                     lastLine = System.currentTimeMillis()
                     any = true
                     attempt = 0

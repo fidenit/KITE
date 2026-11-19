@@ -11,7 +11,7 @@ import kotlin.random.Random
 
 /** 따라 읽기가 내는 줄의 종류. */
 sealed class FollowLine {
-    /** `.out` 의 자료 줄 (`{` 로 시작). 줄 수에 들어간다. */
+    /** `.out` 의 줄 하나 (서버가 앞에 `>` 를 붙여 보낸다). 이 줄만 줄 수에 들어간다. */
     data class Data(val text: String) : FollowLine()
 
     /** 프로세스가 끝났다: 숫자 코드 / stopped / lost / none */
@@ -20,7 +20,7 @@ sealed class FollowLine {
     data class Run(val id: String) : FollowLine()
     data class Fail(val reason: String) : FollowLine()
 
-    /** 셸 시작 글 따위 제어 줄도 자료 줄도 아닌 것 — 줄 수에 넣지 않는다. */
+    /** 로그인 셸이 내는 인사말 따위, 제어 줄도 `>` 줄도 아닌 것 — 무시하고 줄 수에 넣지 않는다. */
     object Other : FollowLine()
 }
 
@@ -43,10 +43,10 @@ object Detached {
         return id
     }
 
-    /** 줄 한 개를 분류한다. 자료 줄은 `{` 로 시작한다. 그 밖의 `APERIT…` 는 제어 줄. */
+    /** 줄 한 개를 분류한다. `.out` 의 줄은 `>` 로 시작하고, `APERIT…` 는 제어 줄이다. 그 밖의 것은 무시한다. */
     fun classify(line: String): FollowLine {
         val l = line.trimEnd('\r', '\n')
-        if (l.startsWith("{")) return FollowLine.Data(l)
+        if (l.startsWith(">")) return FollowLine.Data(l.substring(1))
         if (!l.startsWith("APERIT")) return FollowLine.Other
         val word = l.substringBefore(' ')
         val rest = l.substringAfter(' ', "").trim()
@@ -150,7 +150,7 @@ class DetachedCommands(private val cfg: EngineConfig) {
               size=${'$'}(( ${'$'}(wc -c < "${'$'}f.out" 2>/dev/null || echo 0) ))
               if [ "${'$'}size" != "${'$'}last" ]; then
                 last=${'$'}size; total=${'$'}(( ${'$'}(wc -l < "${'$'}f.out" 2>/dev/null || echo 0) ))
-                if [ "${'$'}total" -gt "${'$'}n" ]; then sed -n "${'$'}((n+1)),${'$'}{total}p" "${'$'}f.out"; n=${'$'}total; beat=0; fi
+                if [ "${'$'}total" -gt "${'$'}n" ]; then sed -n "${'$'}((n+1)),${'$'}{total}s/^/>/p" "${'$'}f.out"; n=${'$'}total; beat=0; fi
               fi
               if [ "${'$'}fin" = 1 ]; then echo "APERITEXIT ${'$'}(cat "${'$'}f.exit")"; exit 0; fi
               if ! kill -0 "${'$'}(cat "${'$'}f.pid" 2>/dev/null)" 2>/dev/null; then
