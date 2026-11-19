@@ -170,7 +170,7 @@ fn describe(name: &str, input: &Value) -> String {
 /// 한 턴을 돌린다. 글자는 나오는 대로 `send` 로 보낸다. `stop` 이 켜지면 Claude Code 를 끝낸다.
 pub fn run(effort: &str, turn_text: &str, images: &[(String, String)], stop: &Arc<AtomicBool>, send: &dyn Fn(Msg)) -> Result<Stats, String> {
     let system = crate::agent::system().to_string() + NOTE;
-    exec("cc-system.txt", &system, &crate::sys::base_dir(), effort, turn_text, images, stop, send).map(|(stats, _)| stats)
+    exec("cc-system.txt", &system, &crate::sys::base_dir(), effort, turn_text, images, crate::ssh::chosen(), stop, send).map(|(stats, _)| stats)
 }
 
 /// 작업자에게만 덧붙이는 지시.
@@ -181,9 +181,11 @@ const WORKER_NOTE: &str = "
 You are running through Claude Code. The tools named above (shell, read_file, write_file, edit_file, list_dir, find_text, web_search, web_fetch, view_image) do not exist here: use your Claude Code tools instead (Bash or PowerShell, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch). The note tools are reached as `mcp__aperit__note_search`, `mcp__aperit__note_read`, `mcp__aperit__note_write` and `mcp__aperit__note_append`. There is no `progress` tool and no messages from the main session arrive while you work; what you are doing is shown to the user automatically. If a tool is refused for lack of permission, do not retry it: say so in your report. Your final message is your report.
 ";
 
-/// 작업자 한 명을 Claude Code 로 돌린다. 마지막 글(보고서)도 돌려준다.
-pub fn worker(id: &str, system: &str, dir: &str, effort: &str, order: &str, stop: &Arc<AtomicBool>, send: &dyn Fn(Msg)) -> Result<(Stats, String), String> {
-    exec(&format!("cc-worker-{id}.txt"), &(system.to_string() + WORKER_NOTE), std::path::Path::new(dir), effort, order, &[], stop, send)
+/// 작업자 한 명을 Claude Code 로 돌린다. 마지막 글(보고서)도 돌려준다. `server`: the Claude Code on that server
+/// instead of this computer's (its `dir` is the folder there).
+#[allow(clippy::too_many_arguments)]
+pub fn worker(id: &str, system: &str, dir: &str, effort: &str, order: &str, server: Option<crate::ssh::Server>, stop: &Arc<AtomicBool>, send: &dyn Fn(Msg)) -> Result<(Stats, String), String> {
+    exec(&format!("cc-worker-{id}.txt"), &(system.to_string() + WORKER_NOTE), std::path::Path::new(dir), effort, order, &[], server, stop, send)
 }
 
 /// What the model is told when Claude Code runs on a server.
@@ -245,12 +247,11 @@ pub fn ask(system: &str, user: &str) -> Result<String, String> {
 
 /// Claude Code 를 한 번 돌린다: 지시문을 덧붙이고, 글자는 나오는 대로 `send` 로 보낸다. (통계, 마지막 글)을 돌려준다.
 #[allow(clippy::too_many_arguments)]
-fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_text: &str, images: &[(String, String)], stop: &Arc<AtomicBool>, send: &dyn Fn(Msg)) -> Result<(Stats, String), String> {
+fn exec(tag: &str, system_text: &str, cwd: &std::path::Path, effort: &str, turn_text: &str, images: &[(String, String)], remote: Option<crate::ssh::Server>, stop: &Arc<AtomicBool>, send: &dyn Fn(Msg)) -> Result<(Stats, String), String> {
     let started = Instant::now();
     let dir = crate::sys::data_dir();
     let _ = std::fs::create_dir_all(&dir);
-    // On a server (engine "ssh"), everything below happens there; APERIT's own tools stay here.
-    let remote = crate::ssh::chosen();
+    // On a server (engine "ssh", or a worker sent there), everything below happens there; APERIT's own tools stay here.
     let system_text = match &remote {
         Some(s) => format!("{system_text}{}", remote_note(s)),
         None => system_text.to_string(),

@@ -98,7 +98,13 @@ APERIT can hand each turn to the Claude Code on a server instead of the one on t
 - A password is kept with the other keys, encrypted, and handed to ssh by APERIT itself (as its `SSH_ASKPASS`): it is never on a command line or in a file.
 - On the server, APERIT keeps the instructions it sends in `~/.aperit/`, and pictures you attach while it runs.
 
-The settings, other than the password, are in `ssh.txt` next to the program, one `name=value` per line: `host`, `port`, `user`, `key`, `dir`, and `claude` (how to call Claude Code there, when it is not on the PATH).
+Several servers can be kept. Each has a name; the Keys window shows them as chips above the fields, with a green dot on the one turns go to, and **+ New server** for another. Saving makes the one shown the one turns go to.
+
+The settings, other than the passwords, are in `ssh.txt` next to the program: a `use=<name>` line, then each server under a `[name]` line with one `name=value` per line: `host`, `port`, `user`, `key`, `dir`, and `claude` (how to call Claude Code there, when it is not on the PATH). A file from an earlier version (the lines without a `[name]`) is read as one server named after its host. Each server's password is kept apart, encrypted.
+
+## Where workers run
+
+The AI you talk to hands long work to workers, which run at the same time while it goes on talking with you. A worker runs where the AI runs, unless it is sent elsewhere: when there is more than one place, each turn lists them (`<places>`: the Claude API, the OpenAI-compatible service, the Claude Code on this computer, each saved server) and `job_start` takes `on`, the name of one. So a job on a server's repository can go to that server while another runs here. On a server, a worker's folder is a folder there (the server's `dir` unless the job names one); `worktree` is for workers on this computer only. The progress card says where a worker runs when it is not the default.
 
 ## Another model: APERIT's own loop
 
@@ -122,7 +128,7 @@ Everything can be set in the **Keys** window. The same choices as files next to 
 | File | Variable | Meaning |
 |---|---|---|
 | `engine.txt` | `APERIT_ENGINE` | `api`, `claude-code`, `ssh` (Claude Code on a server), `openai`, `external` (an agent over MCP or the socket), `ag-ui` |
-| `ssh.txt` | | the server for `ssh`: `host=`, `port=`, `user=`, `key=`, `dir=`, `claude=` lines |
+| `ssh.txt` | | the servers: `use=<name>`, then for each a `[name]` line and `host=`, `port=`, `user=`, `key=`, `dir=`, `claude=` lines |
 | (**Keys** window) | `ANTHROPIC_API_KEY` | Claude API key |
 | `openai.txt` | `APERIT_OPENAI_URL`, `APERIT_OPENAI_MODEL`, `OPENAI_API_KEY` | another model: base address and model (one per line in the file); the key from the **Keys** window |
 | `agui.txt` | `APERIT_AGUI_URL` | the AG-UI endpoint |

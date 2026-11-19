@@ -184,6 +184,7 @@ pub fn definitions(worker: bool) -> Value {
                 "topic": { "type": "string", "description": "Id of the topic for the progress card (a topic for delegated work if omitted)" },
                 "worktree": { "type": "boolean", "description": "true gives this job a branch and a working folder of its own in a git repository. Use it when several workers change the same repository at the same time." },
                 "effort": { "type": "string", "enum": ["low", "medium", "high"], "description": "How deeply to think while working. Default medium; high for hard coding" },
+                "on": { "type": "string", "description": "Where the worker runs: a name from <places> (a server, claude-code, api). Omit for the default, the first one listed. On a server, `dir` is a folder on that server." },
             }),
             &["title", "order"],
         ),

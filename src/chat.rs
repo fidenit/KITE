@@ -648,7 +648,7 @@ impl App {
             let w3 = rest - w1 - w2;
             ui.horizontal_top(|ui| {
                 // The same height whichever way is chosen, so the window does not jump.
-                ui.set_min_height(430.0);
+                ui.set_min_height(470.0);
                 ui.spacing_mut().item_spacing.x = 0.0;
                 ui.vertical(|ui| {
                     ui.set_width(w1);
@@ -730,14 +730,26 @@ impl App {
             self.openai_input = [p.url, p.model, String::new()];
         }
         self.agui_input = crate::agui::settings().map(|s| s.url).unwrap_or_default();
-        if let Some(s) = crate::ssh::settings() {
-            let port = if s.port == 0 { String::new() } else { s.port.to_string() };
-            self.ssh_input = [s.host, s.user, port, s.key, s.dir, String::new()];
-        }
-        *self.ssh_test.lock().unwrap() = String::new();
+        self.fill_ssh(crate::ssh::settings());
         self.model_pick = Some(self.cfg.model.clone());
         self.limit_input = crate::usage::limit().map(|v| format!("{v}")).unwrap_or_default();
         self.keys_loaded = true;
+    }
+
+    /// Show a saved server in the SSH fields (None: empty fields for a new one).
+    fn fill_ssh(&mut self, s: Option<crate::ssh::Server>) {
+        match s {
+            Some(s) => {
+                let port = if s.port == 0 { String::new() } else { s.port.to_string() };
+                self.ssh_pick = Some(s.id());
+                self.ssh_input = [s.host.clone(), s.user, port, s.key, s.dir, String::new(), s.name];
+            }
+            None => {
+                self.ssh_pick = None;
+                self.ssh_input = Default::default();
+            }
+        }
+        *self.ssh_test.lock().unwrap() = String::new();
     }
 
     /// Left column: the ways in.
@@ -820,12 +832,39 @@ impl App {
             "ssh" => {
                 section(ui, crate::sys::tr("서버의 Claude Code (SSH)", "Claude Code on a server (SSH)"));
                 note(ui, crate::sys::tr(
-                    "서버에 SSH로 붙어 그 서버의 Claude Code에 맡깁니다. 파일과 명령은 서버의 것이고, 기억과 APERIT 도구는 이 컴퓨터에 남습니다.",
-                    "APERIT signs in to a server over SSH and hands each turn to its Claude Code. Files and commands are the server's; memory and APERIT's tools stay on this computer.",
+                    "저장한 서버의 Claude Code에 턴을 맡깁니다. 서버를 여러 개 두면 작업자를 어느 서버로든 보낼 수 있습니다. 기억과 APERIT 도구는 이 컴퓨터에 남습니다.",
+                    "Turns go to the Claude Code on the server saved here. Keep several, and workers can be sent to any of them. Memory and APERIT's tools stay on this computer.",
                 ));
-                let saved_password = crate::secret::get(crate::secret::SSH_PASSWORD).is_some();
-                let [host, user, port, key, dir, password] = &mut self.ssh_input;
-                pair(ui, (crate::sys::tr("서버 주소", "Server address"), host, "example.com", false, 0.72), (crate::sys::tr("포트", "Port"), port, "22", false, 0.28));
+                // The saved servers (the green dot: the one turns go to), and a new one.
+                let (saved, using) = crate::ssh::servers();
+                if !saved.is_empty() {
+                    let mut clicked: Option<Option<crate::ssh::Server>> = None;
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                        for s in &saved {
+                            if chip(ui, &s.id(), self.ssh_pick.as_deref() == Some(s.id().as_str()), s.id() == using) {
+                                clicked = Some(Some(s.clone()));
+                            }
+                        }
+                        if chip(ui, crate::sys::tr("+ 새 서버", "+ New server"), self.ssh_pick.is_none(), false) {
+                            clicked = Some(None);
+                        }
+                    });
+                    if let Some(c) = clicked {
+                        self.fill_ssh(c);
+                    }
+                    ui.add_space(10.0);
+                }
+                let saved_password = self.ssh_pick.as_deref().and_then(crate::ssh::find).and_then(|s| s.password()).is_some();
+                let [host, user, port, key, dir, password, name] = &mut self.ssh_input;
+                fields(
+                    ui,
+                    vec![
+                        (crate::sys::tr("이름", "Name"), name, crate::sys::tr("비우면 주소", "empty: the address"), false, 0.28),
+                        (crate::sys::tr("서버 주소", "Server address"), host, "example.com", false, 0.52),
+                        (crate::sys::tr("포트", "Port"), port, "22", false, 0.2),
+                    ],
+                );
                 pair(ui, (crate::sys::tr("사용자", "User"), user, "ubuntu", false, 0.4), (crate::sys::tr("키 파일 (선택)", "Key file (optional)"), key, crate::sys::tr("비우면 ssh 에이전트", "empty: the ssh agent"), false, 0.6));
                 pair(
                     ui,
@@ -861,6 +900,18 @@ impl App {
                         };
                         ui.add_space(8.0);
                         ui.label(egui::RichText::new(text).size(11.5).color(if good { ui::GREEN() } else { ui::RED() }));
+                    }
+                    // Forget the server being shown (and its password).
+                    if let Some(id) = self.ssh_pick.clone().filter(|_| status.is_empty() || testing) {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let link = ui.add(egui::Label::new(egui::RichText::new(crate::sys::tr("이 서버 지우기", "Remove this server")).size(11.5).color(ui::FAINT())).sense(egui::Sense::click()));
+                            if link.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                if let Err(e) = crate::ssh::remove(&id) {
+                                    self.error = Some(e);
+                                }
+                                self.fill_ssh(crate::ssh::settings());
+                            }
+                        });
                     }
                 });
                 ui.add_space(12.0);
@@ -1111,15 +1162,18 @@ impl App {
             }
             Some("agent") => "external",
             Some("ssh") => {
-                if let Err(e) = crate::ssh::save(&server_from(&self.ssh_input)) {
+                // Saved under its name (replacing the one being edited) and made the one turns go to.
+                let server = server_from(&self.ssh_input);
+                if let Err(e) = crate::ssh::save_as(self.ssh_pick.as_deref(), &server) {
                     self.error = Some(e);
                 }
                 if !self.ssh_input[5].trim().is_empty() {
-                    if let Err(e) = crate::secret::set(crate::secret::SSH_PASSWORD, self.ssh_input[5].trim()) {
+                    if let Err(e) = server.set_password(self.ssh_input[5].trim()) {
                         self.error = Some(e);
                     }
                 }
                 self.ssh_input[5].clear();
+                self.ssh_pick = Some(server.id());
                 "ssh"
             }
             _ => "api",
@@ -1201,10 +1255,15 @@ fn input(ui: &mut egui::Ui, value: &mut String, hint: &str, secret: bool) {
 
 /// Two fields side by side: (name, value, hint, secret, share of the width).
 fn pair(ui: &mut egui::Ui, a: (&str, &mut String, &str, bool, f32), b: (&str, &mut String, &str, bool, f32)) {
-    let w = ui.available_width() - 10.0;
+    fields(ui, vec![a, b]);
+}
+
+/// Fields side by side: (name, value, hint, secret, share of the width).
+fn fields(ui: &mut egui::Ui, row: Vec<(&str, &mut String, &str, bool, f32)>) {
+    let w = ui.available_width() - 10.0 * (row.len() as f32 - 1.0);
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
-        for (name, value, hint, secret, share) in [a, b] {
+        for (name, value, hint, secret, share) in row {
             ui.vertical(|ui| {
                 ui.set_width(w * share);
                 label(ui, name);
@@ -1213,6 +1272,20 @@ fn pair(ui: &mut egui::Ui, a: (&str, &mut String, &str, bool, f32), b: (&str, &m
         }
     });
     ui.add_space(8.0);
+}
+
+/// A small choice drawn as a pill, as wide as its text. `in_use` marks what is saved now.
+fn chip(ui: &mut egui::Ui, text: &str, on: bool, in_use: bool) -> bool {
+    let tw = ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), ui::bold(12.0), ui::TEXT()).size().x);
+    let w = tw + 28.0 + if in_use { 12.0 } else { 0.0 };
+    let (r, p) = ui.allocate_painter(egui::vec2(w, 28.0), egui::Sense::click());
+    p.rect_filled(r.rect, 14.0, if on { ui::ORANGE().gamma_multiply(0.14) } else { FIELD() });
+    p.rect_stroke(r.rect, 14.0, egui::Stroke::new(1.0, if on { ui::ORANGE() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
+    p.text(r.rect.left_center() + egui::vec2(14.0, 0.0), egui::Align2::LEFT_CENTER, text, ui::bold(12.0), ui::TEXT());
+    if in_use {
+        p.circle_filled(egui::pos2(r.rect.right() - 14.0, r.rect.center().y), 3.5, ui::GREEN());
+    }
+    r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
 /// A choice drawn as a tile: a title and a line under it. `in_use` marks what is saved now.
@@ -1248,7 +1321,10 @@ fn three(ui: &mut egui::Ui, now: &str, options: [(&str, &str); 3]) -> Option<Str
     picked
 }
 
-/// The server typed in the Keys window: host, user, port, key file, folder (the password is kept apart).
-fn server_from(input: &[String; 6]) -> crate::ssh::Server {
-    crate::ssh::Server { host: input[0].trim().into(), user: input[1].trim().into(), port: input[2].trim().parse().unwrap_or(0), key: input[3].trim().into(), dir: input[4].trim().into(), claude: crate::ssh::settings().map(|s| s.claude).unwrap_or_default() }
+/// The server typed in the Keys window: host, user, port, key file, folder, -, name (the password is kept apart).
+fn server_from(input: &[String; 7]) -> crate::ssh::Server {
+    let name: String = input[6].trim().chars().filter(|c| !"[]=\r\n".contains(*c)).collect();
+    let host = input[0].trim().to_string();
+    let claude = crate::ssh::find(if name.is_empty() { &host } else { &name }).map(|s| s.claude).unwrap_or_default();
+    crate::ssh::Server { name, host, user: input[1].trim().into(), port: input[2].trim().parse().unwrap_or(0), key: input[3].trim().into(), dir: input[4].trim().into(), claude }
 }

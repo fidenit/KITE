@@ -21,6 +21,92 @@ fn worker_prompt() -> &'static str {
 /// 작업자 하나가 도구를 주고받는 횟수의 상한
 const MAX_STEPS: usize = 200;
 
+/// Where a worker runs.
+#[derive(Clone)]
+enum Place {
+    /// APERIT's own loop with the Claude API key
+    Api,
+    /// APERIT's own loop with the OpenAI-compatible service
+    OpenAi,
+    /// The Claude Code on this computer
+    Here,
+    /// The Claude Code on a saved server
+    Server(crate::ssh::Server),
+}
+
+impl Place {
+    fn name(&self) -> String {
+        match self {
+            Place::Api => "api".into(),
+            Place::OpenAi => "openai".into(),
+            Place::Here => "claude-code".into(),
+            Place::Server(s) => s.id(),
+        }
+    }
+}
+
+/// Where the main engine itself runs: a worker goes there unless told otherwise.
+fn default_place(cfg: &Config) -> Option<Place> {
+    if cfg.ssh {
+        crate::ssh::settings().map(Place::Server)
+    } else if cfg.cc {
+        Some(Place::Here)
+    } else if cfg.openai.is_some() {
+        Some(Place::OpenAi)
+    } else if cfg.key.is_some() {
+        Some(Place::Api)
+    } else {
+        None
+    }
+}
+
+/// Every place a worker can be sent to now, the default first: (name, what it is).
+fn places(cfg: &Config) -> Vec<(String, String)> {
+    let mut out: Vec<(Place, String)> = Vec::new();
+    if cfg.key.is_some() {
+        out.push((Place::Api, format!("Claude API ({}), APERIT's own tools", cfg.model)));
+    }
+    if let Some(p) = &cfg.openai {
+        out.push((Place::OpenAi, format!("{} at {}", p.model, p.url)));
+    }
+    if crate::cc::version().is_some() {
+        out.push((Place::Here, "Claude Code on this computer".into()));
+    }
+    for s in crate::ssh::servers().0 {
+        let what = format!("Claude Code on the server {} (its files, Linux shell)", s.label());
+        out.push((Place::Server(s), what));
+    }
+    let first = default_place(cfg).map(|p| p.name());
+    out.sort_by_key(|(p, _)| Some(p.name()) != first);
+    out.into_iter().map(|(p, what)| (p.name(), what)).collect()
+}
+
+/// For the main model's turn: where workers can go, when there is more than one place.
+pub fn places_text(cfg: &Config) -> String {
+    let all = places(cfg);
+    if all.len() < 2 {
+        return String::new();
+    }
+    all.iter().enumerate().map(|(i, (name, what))| format!("{name}: {what}{}\n", if i == 0 { " (the default)" } else { "" })).collect()
+}
+
+/// The place named in `on` (empty: the default).
+fn place_named(cfg: &Config, on: &str) -> Result<Place, String> {
+    let on = on.trim();
+    if on.is_empty() || on == "here" || on == "default" {
+        return default_place(cfg).ok_or_else(|| "API 키가 없어 작업자를 띄울 수 없음".to_string());
+    }
+    match on {
+        "api" if cfg.key.is_some() => Ok(Place::Api),
+        "openai" if cfg.openai.is_some() => Ok(Place::OpenAi),
+        "claude-code" if crate::cc::version().is_some() => Ok(Place::Here),
+        _ => crate::ssh::find(on).map(Place::Server).ok_or_else(|| {
+            let names: Vec<String> = places(cfg).into_iter().map(|p| p.0).collect();
+            format!("'{on}' 라는 곳이 없음. 고를 수 있는 곳: {}", names.join(", "))
+        }),
+    }
+}
+
 pub enum Event {
     Started { id: String, title: String, topic: Option<String> },
     Progress { id: String, pct: Option<u8>, text: Option<String> },
@@ -30,6 +116,8 @@ pub enum Event {
 struct Job {
     id: String,
     title: String,
+    /// Where it runs (a name from `places`)
+    place: String,
     dir: String,
     note: String,
     /// 진행 중 / 끝남 / 실패 / 중단함
@@ -115,7 +203,7 @@ pub fn tool(name: &str, input: &Value) -> Result<String, String> {
                 .iter()
                 .map(|j| {
                     let time = if j.state == "진행 중" { format!("{}분째", j.started.elapsed().as_secs() / 60) } else { format!("{}초 걸림", j.took_secs) };
-                    format!("{} [{} · {time}] {} — {} (작업 폴더: {}, 지시서: {})", j.id, j.state, j.title, if j.last.is_empty() { "-" } else { &j.last }, j.dir, j.note)
+                    format!("{} [{} · {time}] {} — {} (곳: {}, 작업 폴더: {}, 지시서: {})", j.id, j.state, j.title, if j.last.is_empty() { "-" } else { &j.last }, j.place, j.dir, j.note)
                 })
                 .collect::<Vec<_>>()
                 .join("\n"))
@@ -152,18 +240,34 @@ fn start(input: &Value) -> Result<String, String> {
         return Err("title 과 order 가 필요함".into());
     }
     let mut cfg = Config::load();
-    // 작업자는 지금 엔진으로 돈다: Claude Code 엔진이면 Claude Code 로, 아니면 API 키로.
-    if cfg.key.is_none() && !cfg.cc && cfg.openai.is_none() {
-        return Err("API 키가 없어 작업자를 띄울 수 없음".into());
-    }
+    // 작업자는 지금 엔진으로 돈다 (`on` 으로 다른 곳을 고르지 않으면): Claude Code 엔진이면 Claude Code 로, 서버면 그 서버로, 아니면 API 키로.
+    let place = place_named(&cfg, input["on"].as_str().unwrap_or(""))?;
     let key = cfg.key.clone().unwrap_or_default();
     cfg.effort = match input["effort"].as_str() {
         Some(e) if ["low", "medium", "high"].contains(&e) => e.to_string(),
         _ => "medium".into(),
     };
     let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_else(|_| ".".into());
-    let mut dir = input["dir"].as_str().map(str::trim).filter(|d| !d.is_empty()).unwrap_or(&home).to_string();
-    if !std::path::Path::new(&dir).is_dir() {
+    let asked_dir = input["dir"].as_str().map(str::trim).filter(|d| !d.is_empty());
+    // On a server the folder is the server's: the one given, or the server's own working folder.
+    let place = match place {
+        Place::Server(mut s) => {
+            if let Some(d) = asked_dir {
+                s.dir = d.to_string();
+            }
+            if input["worktree"].as_bool().unwrap_or(false) {
+                return Err("worktree 는 이 컴퓨터의 작업자만 쓸 수 있음. 서버에서는 dir 로 따로 떼어 둔 폴더를 준다".into());
+            }
+            Place::Server(s)
+        }
+        other => other,
+    };
+    let remote = matches!(place, Place::Server(_));
+    let mut dir = match &place {
+        Place::Server(s) => if s.dir.trim().is_empty() { "~".to_string() } else { s.dir.trim().to_string() },
+        _ => asked_dir.unwrap_or(&home).to_string(),
+    };
+    if !remote && !std::path::Path::new(&dir).is_dir() {
         std::fs::create_dir_all(&dir).map_err(|e| format!("작업 폴더를 만들 수 없음: {e}"))?;
     }
     let id = next_id();
@@ -189,6 +293,7 @@ fn start(input: &Value) -> Result<String, String> {
     jobs().push(Job {
         id: id.clone(),
         title: title.clone(),
+        place: place.name(),
         dir: dir.clone(),
         note: note.clone(),
         state: "진행 중",
@@ -202,10 +307,18 @@ fn start(input: &Value) -> Result<String, String> {
     emit(Event::Started { id: id.clone(), title: title.clone(), topic: input["topic"].as_str().map(str::to_string).filter(|t| !t.is_empty()) });
     let first = format!(
         "<order id=\"{id}\" title=\"{title}\">\n{order}\n</order>\n<env>\n지금: {date} {time}\n운영체제: {}\n작업 폴더: {dir}\n{note_extra}지시서 노트: {note}\n기억 보관함 폴더: {}\n</env>",
-        if cfg!(windows) { "Windows (shell 은 Windows PowerShell 5.1)" } else { "macOS" },
+        match &place {
+            Place::Server(s) => format!("서버 {} (작업은 서버에서, 기억 보관함은 사용자의 컴퓨터에)", s.target()),
+            _ if cfg!(windows) => "Windows (shell 은 Windows PowerShell 5.1)".to_string(),
+            _ => "macOS".to_string(),
+        },
         vault::root().display()
     );
+    if !matches!((&place, default_place(&cfg)), (p, Some(d)) if p.name() == d.name()) {
+        emit(Event::Progress { id: id.clone(), pct: None, text: Some(format!("{}: {}", crate::sys::tr("도는 곳", "Runs on"), place.name())) });
+    }
     let (jid, jtitle, jdir, jnote) = (id.clone(), title.clone(), dir.clone(), note.clone());
+    let place_name = place.name();
     std::thread::spawn(move || {
         let id = jid;
         let started = Instant::now();
@@ -242,22 +355,26 @@ fn start(input: &Value) -> Result<String, String> {
                 _ => None,
             }
         };
-        let result = if cfg.cc {
-            // Claude Code 가 하는 일을 진행 카드에 그대로 보여 준다 (이 엔진에는 progress 도구가 없다).
-            let shown = |m: Msg| {
-                if let Msg::Activity(a) = m {
-                    if !a.is_empty() {
-                        set(&id, |j| j.last = a.clone());
-                        emit(Event::Progress { id: id.clone(), pct: None, text: Some(a) });
+        let result = match &place {
+            Place::Here | Place::Server(_) => {
+                // Claude Code 가 하는 일을 진행 카드에 그대로 보여 준다 (이 엔진에는 progress 도구가 없다).
+                let shown = |m: Msg| {
+                    if let Msg::Activity(a) = m {
+                        if !a.is_empty() {
+                            set(&id, |j| j.last = a.clone());
+                            emit(Event::Progress { id: id.clone(), pct: None, text: Some(a) });
+                        }
                     }
+                };
+                let server = if let Place::Server(s) = &place { Some(s.clone()) } else { None };
+                crate::cc::worker(&id, worker_prompt(), &jdir, &cfg.effort, &first, server, &stop, &shown)
+            }
+            Place::OpenAi | Place::Api => {
+                let role = agent::Role { system: worker_prompt(), tools: tools::definitions(true), max_steps: MAX_STEPS, check: &check, tool: &tool };
+                match (&place, &cfg.openai) {
+                    (Place::OpenAi, Some(p)) => crate::openai::run_as(p, &role, &first, &[], &send),
+                    _ => agent::run_as(&cfg, &key, &role, &first, &[], &send),
                 }
-            };
-            crate::cc::worker(&id, worker_prompt(), &jdir, &cfg.effort, &first, &stop, &shown)
-        } else {
-            let role = agent::Role { system: worker_prompt(), tools: tools::definitions(true), max_steps: MAX_STEPS, check: &check, tool: &tool };
-            match &cfg.openai {
-                Some(p) => crate::openai::run_as(p, &role, &first, &[], &send),
-                None => agent::run_as(&cfg, &key, &role, &first, &[], &send),
             }
         };
         let secs = started.elapsed().as_secs();
@@ -280,5 +397,5 @@ fn start(input: &Value) -> Result<String, String> {
         });
         emit(Event::Finished { id: id.clone(), title: jtitle, ok, report });
     });
-    Ok(format!("작업 {id} 을 작업자에게 맡김. 작업 폴더: {dir}. 지시서: {note}. 화면에 진행 카드 {id} 가 자동으로 생겼다. 끝나면 보고서가 <job_done> 으로 온다. 기다리지 말고 이 턴을 마친다."))
+    Ok(format!("작업 {id} 을 작업자에게 맡김 ({place_name}). 작업 폴더: {dir}.") + &format!(" 지시서: {note}. 화면에 진행 카드 {id} 가 자동으로 생겼다. 끝나면 보고서가 <job_done> 으로 온다. 기다리지 말고 이 턴을 마친다."))
 }

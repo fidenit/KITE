@@ -105,8 +105,10 @@ struct App {
     /// What is typed in the keys window for another model (base address, model, key) and for an AG-UI agent (its address).
     openai_input: [String; 3],
     agui_input: String,
-    /// The Keys window, a server over SSH: host, user, port, key file, folder, password.
-    ssh_input: [String; 6],
+    /// The Keys window, a server over SSH: host, user, port, key file, folder, password, name.
+    ssh_input: [String; 7],
+    /// The saved server shown in those fields (None: a new one).
+    ssh_pick: Option<String>,
     /// What the last connection test said (empty: none yet; "…": running).
     ssh_test: std::sync::Arc<std::sync::Mutex<String>>,
     /// The Keys window: the model chosen, the daily limit typed, and whether the window was filled from what is saved.
@@ -550,6 +552,7 @@ impl App {
             openai_input: Default::default(),
             agui_input: String::new(),
             ssh_input: Default::default(),
+            ssh_pick: None,
             ssh_test: Default::default(),
             model_pick: None,
             limit_input: String::new(),
@@ -1301,6 +1304,11 @@ impl App {
         let running = jobs::summary();
         if !running.is_empty() {
             t += &format!("<jobs>\n{running}</jobs>\n");
+        }
+        // Where workers can be sent, when there is a choice (several servers, Claude Code and an API key, ...).
+        let places = jobs::places_text(&self.cfg);
+        if !places.is_empty() {
+            t += &format!("<places>\n{places}</places>\n");
         }
         self.job_turn = None;
         if !self.job_news.is_empty() {

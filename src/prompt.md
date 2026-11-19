@@ -87,7 +87,7 @@ Each turn you receive the following.
 - `<archived>`: topics put away on the shelf (see "The shelf").
 - `<recall>`: earlier conversations the program found because they seem related to what was just said. Each has what the user said then, your `say`, and the ops you put on the screen, with the date. Ignore it if unrelated.
 - `<recent>`: the user's recent inputs and the `say` you gave to each.
-- `<jobs>`: what workers are doing now. `<job_done>`: the report of a job that just finished (see "Delegating work").
+- `<jobs>`: what workers are doing now. `<job_done>`: the report of a job that just finished (see "Delegating work"). `<places>`: where a worker can be sent, when there is a choice.
 - `<events>`: what the user did directly on the screen since the last turn (picking an option, ticking, moving, resizing).
 - `<rejected>`: ops of the last turn that were rejected or clipped, each with a code and a reason. Do not repeat the mistake.
 - `<selected>`: the card the user is pointing at now. "This" means this card.
@@ -175,6 +175,8 @@ When you hand over, a progress card for that job appears on the screen by itself
 - When `<input>` is empty and there is only `<job_done>`, the user said nothing. Only arrange that result.
 
 `<jobs>` holds jobs still running. If the user adds something about a running job, pass it to that worker with `job_tell`; if they say to stop, use `job_stop`.
+
+**Where a worker runs.** When `<places>` is there, a worker can be sent to any of them with `on`: the user's servers (their files and machines), the Claude Code on this computer, or the Claude API. Without `on` it runs where you run, the first place listed. Send work to where its files are: a job on a server's repository goes to that server, with `dir` a folder there. Workers in different places work at the same time like any others. In `say`, name where each one went.
 
 ## Messages and calls
 

@@ -7,14 +7,19 @@
 //! the ssh agent) or a password; a password is kept with the other keys (`secret.rs`) and handed to ssh
 //! by this program itself acting as its SSH_ASKPASS, so it never goes on a command line or into a file.
 //!
-//! Settings are `ssh.txt` next to the program, `name=value` lines: host, port, user, key (a key file),
-//! dir (the folder on the server), claude (how to call Claude Code there).
+//! Settings are `ssh.txt` next to the program. Several servers can be kept, each under a `[name]` line and
+//! followed by `name=value` lines: host, port, user, key (a key file), dir (the folder on the server), claude
+//! (how to call Claude Code there). A `use=name` line before them says which one the `ssh` engine uses (the
+//! first when there is none). Workers can be sent to any of them (`jobs.rs`). A file from before, with the
+//! lines and no `[name]`, is one server named after its host.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Server {
+    /// What the user calls it ("gpu", "office"); empty: the host
+    pub name: String,
     pub host: String,
     /// 0: the default port (22, or what ~/.ssh/config says)
     pub port: u16,
@@ -30,6 +35,27 @@ pub struct Server {
 const FILE: &str = "ssh.txt";
 
 impl Server {
+    /// The name it goes by: the name given, or else the host.
+    pub fn id(&self) -> String {
+        let n = self.name.trim();
+        if n.is_empty() { self.host.trim().to_string() } else { n.to_string() }
+    }
+
+    /// Where its password is kept among the keys (`secret.rs`), one per server.
+    fn slot(&self) -> String {
+        format!("{}:{}", crate::secret::SSH_PASSWORD, self.id())
+    }
+
+    /// The saved password of this server, if it signs in with one.
+    pub fn password(&self) -> Option<String> {
+        crate::secret::get(&self.slot())
+    }
+
+    /// Keep (or, with an empty value, forget) this server's password.
+    pub fn set_password(&self, value: &str) -> Result<(), String> {
+        crate::secret::set(&self.slot(), value)
+    }
+
     /// `user@host`, or `host` (then ~/.ssh/config or the local user name decides).
     pub fn target(&self) -> String {
         if self.user.trim().is_empty() { self.host.trim().to_string() } else { format!("{}@{}", self.user.trim(), self.host.trim()) }
@@ -59,13 +85,23 @@ impl Server {
     }
 }
 
-/// The saved server, if any.
-pub fn settings() -> Option<Server> {
-    let text = std::fs::read_to_string(crate::sys::base_dir().join(FILE)).ok()?;
-    let mut s = Server::default();
+/// Read `ssh.txt`: the servers, and the one the engine uses.
+fn parse(text: &str) -> (Vec<Server>, String) {
+    let (mut list, mut using) = (Vec::new(), String::new());
+    let mut cur: Option<Server> = None;
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            list.extend(cur.take());
+            cur = Some(Server { name: name.trim().to_string(), ..Default::default() });
+            continue;
+        }
         let Some((k, v)) = line.split_once('=') else { continue };
         let v = v.trim().to_string();
+        if k.trim() == "use" && cur.is_none() {
+            using = v;
+            continue;
+        }
+        let s = cur.get_or_insert_with(Server::default);
         match k.trim() {
             "host" => s.host = v,
             "port" => s.port = v.parse().unwrap_or(0),
@@ -76,13 +112,79 @@ pub fn settings() -> Option<Server> {
             _ => {}
         }
     }
-    (!s.host.is_empty()).then_some(s)
+    list.extend(cur);
+    list.retain(|s| !s.host.trim().is_empty());
+    (list, using)
 }
 
-pub fn save(s: &Server) -> Result<(), String> {
-    let port = if s.port == 0 { String::new() } else { s.port.to_string() };
-    let text = format!("host={}\nport={port}\nuser={}\nkey={}\ndir={}\nclaude={}\n", s.host.trim(), s.user.trim(), s.key.trim(), s.dir.trim(), s.claude.trim());
+fn write(list: &[Server], using: &str) -> Result<(), String> {
+    let mut text = format!("use={using}\n");
+    for s in list {
+        let port = if s.port == 0 { String::new() } else { s.port.to_string() };
+        text += &format!("\n[{}]\nhost={}\nport={port}\nuser={}\nkey={}\ndir={}\nclaude={}\n", s.id(), s.host.trim(), s.user.trim(), s.key.trim(), s.dir.trim(), s.claude.trim());
+    }
     std::fs::write(crate::sys::base_dir().join(FILE), text).map_err(|e| e.to_string())
+}
+
+/// Every saved server, and the id of the one the engine uses.
+pub fn servers() -> (Vec<Server>, String) {
+    let (mut list, using) = parse(&std::fs::read_to_string(crate::sys::base_dir().join(FILE)).unwrap_or_default());
+    for s in list.iter_mut() {
+        s.name = s.id();
+    }
+    let using = list.iter().find(|s| s.id() == using).or(list.first()).map(|s| s.id()).unwrap_or_default();
+    // A password kept by an earlier version, for its one server: give it to that server.
+    if let Some(old) = crate::secret::get(crate::secret::SSH_PASSWORD) {
+        if let Some(s) = list.iter().find(|s| s.id() == using) {
+            if s.password().is_none() && s.set_password(&old).is_ok() {
+                let _ = crate::secret::set(crate::secret::SSH_PASSWORD, "");
+            }
+        }
+    }
+    (list, using)
+}
+
+/// The server the `ssh` engine uses, if any.
+pub fn settings() -> Option<Server> {
+    let (list, using) = servers();
+    list.into_iter().find(|s| s.id() == using)
+}
+
+/// A saved server by its name.
+pub fn find(id: &str) -> Option<Server> {
+    servers().0.into_iter().find(|s| s.id() == id.trim())
+}
+
+/// Save a server and make it the one the engine uses. `was` is the name it had, when it is renamed or
+/// changed; a server with the same name is replaced.
+pub fn save_as(was: Option<&str>, s: &Server) -> Result<(), String> {
+    let (mut list, _) = servers();
+    let mut s = s.clone();
+    s.name = s.id();
+    if let Some(old) = was.filter(|w| *w != s.id()).and_then(|w| list.iter().find(|x| x.id() == w)).cloned() {
+        // Renamed: the password goes along.
+        if let Some(p) = old.password() {
+            s.set_password(&p)?;
+            old.set_password("")?;
+        }
+        list.retain(|x| x.id() != old.id());
+    }
+    match list.iter_mut().find(|x| x.id() == s.id()) {
+        Some(x) => *x = s.clone(),
+        None => list.push(s.clone()),
+    }
+    write(&list, &s.id())
+}
+
+/// Forget a server, and its password.
+pub fn remove(id: &str) -> Result<(), String> {
+    let (mut list, using) = servers();
+    if let Some(s) = list.iter().find(|s| s.id() == id) {
+        s.set_password("")?;
+    }
+    list.retain(|s| s.id() != id);
+    let using = if using == id { list.first().map(|s| s.id()).unwrap_or_default() } else { using };
+    write(&list, &using)
 }
 
 /// The server, when the chosen engine is Claude Code over SSH.
@@ -122,12 +224,14 @@ pub fn command(s: &Server, script: &str, forward: Option<(u16, u16)>, password: 
     if !s.key.trim().is_empty() {
         c.arg("-i").arg(s.key.trim()).args(["-o", "IdentitiesOnly=yes"]);
     }
-    let password = password.map(str::to_string).filter(|p| !p.is_empty()).or_else(|| crate::secret::get(crate::secret::SSH_PASSWORD));
+    let saved = s.password();
+    let password = password.map(str::to_string).filter(|p| !p.is_empty()).or_else(|| saved.clone());
     match (password, std::env::current_exe()) {
         (Some(p), Ok(me)) => {
             // ssh asks this program for the password (see `askpass` in main.rs); nothing is typed or written.
-            c.env("SSH_ASKPASS", me).env("SSH_ASKPASS_REQUIRE", "force").env("DISPLAY", ":0").env("APERIT_ASKPASS", "1").args(["-o", "NumberOfPasswordPrompts=1"]);
-            if password_is_override(&p) {
+            c.env("SSH_ASKPASS", me).env("SSH_ASKPASS_REQUIRE", "force").env("DISPLAY", ":0").env("APERIT_ASKPASS", s.id()).args(["-o", "NumberOfPasswordPrompts=1"]);
+            // A password given only for this connection (a test before saving) is handed over as it is.
+            if saved.as_deref() != Some(p.as_str()) {
                 c.env("APERIT_ASKPASS_VALUE", p);
             }
         }
@@ -147,11 +251,6 @@ pub fn command(s: &Server, script: &str, forward: Option<(u16, u16)>, password: 
     }
     c.env_remove("CLAUDECODE").env_remove("CLAUDE_CODE_ENTRYPOINT");
     c
-}
-
-/// A password given only for this connection (a test before saving): it differs from the saved one.
-fn password_is_override(p: &str) -> bool {
-    crate::secret::get(crate::secret::SSH_PASSWORD).as_deref() != Some(p)
 }
 
 /// Run a short script on the server and return what it printed.
@@ -210,12 +309,12 @@ pub fn home(s: &Server) -> Option<String> {
     Some(h)
 }
 
-/// When this program was started by ssh as its SSH_ASKPASS: print the password and say so.
+/// When this program was started by ssh as its SSH_ASKPASS: print the password of the server named in
+/// APERIT_ASKPASS and say so.
 pub fn askpass() -> bool {
-    if std::env::var("APERIT_ASKPASS").is_err() {
-        return false;
-    }
-    let p = std::env::var("APERIT_ASKPASS_VALUE").ok().or_else(|| crate::secret::get(crate::secret::SSH_PASSWORD)).unwrap_or_default();
+    let Ok(id) = std::env::var("APERIT_ASKPASS") else { return false };
+    let saved = || Server { name: id.clone(), ..Default::default() }.password();
+    let p = std::env::var("APERIT_ASKPASS_VALUE").ok().or_else(saved).unwrap_or_default();
     let mut out = std::io::stdout();
     let _ = writeln!(out, "{p}");
     let _ = out.flush();
@@ -232,5 +331,20 @@ mod tests {
         let s = Server { host: "h".into(), dir: "~/my work".into(), ..Default::default() };
         assert_eq!(s.cd(), "cd \"$HOME\"/'my work'");
         assert_eq!(Server { host: "h".into(), user: "me".into(), ..Default::default() }.target(), "me@h");
+    }
+
+    #[test]
+    fn several_servers_and_the_old_file() {
+        // The file of earlier versions: one server, named after its host.
+        let (list, using) = parse("host=1.2.3.4\nuser=root\ndir=~/work\n");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id(), "1.2.3.4");
+        assert_eq!(using, "");
+        // Named servers and the one in use.
+        let (list, using) = parse("use=gpu\n\n[office]\nhost=o.example\nport=2222\n\n[gpu]\nhost=g.example\nuser=me\n[empty]\n");
+        assert_eq!(list.iter().map(|s| s.id()).collect::<Vec<_>>(), ["office", "gpu"]);
+        assert_eq!(list[0].port, 2222);
+        assert_eq!(list[1].target(), "me@g.example");
+        assert_eq!(using, "gpu");
     }
 }

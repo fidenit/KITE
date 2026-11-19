@@ -28,6 +28,11 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 - **Spending**: what your Claude API key has spent today and this month, estimated from the tokens each response reports (`data/usage.json`). An optional **daily limit** (`spend-limit.txt`, `APERIT_DAILY_LIMIT`): at the limit no new turn, worker or background request starts that day, and the app says why.
 - When Claude is overloaded (529), rate-limited (429) or briefly unreachable, the request is sent again after a wait (what the service asks, or 2 to 16 seconds; four more tries), with a line saying so. The OpenAI-compatible engine does the same.
 
+### Several servers, and workers wherever their files are
+
+- **Keys** → **A server (SSH)** keeps several servers, each with a name (chips above the fields; the green dot marks the one turns go to). `ssh.txt` holds them under `[name]` lines; the one-server file of before still reads. Passwords are kept per server.
+- A worker can be sent to any of them, or to the Claude Code on this computer, or to the Claude API: the AI sees where it can send work (`<places>`) and names one with `on`. Workers in different places run at the same time.
+
 ### Long jobs keep going
 
 - A long turn or job on the Claude API engine no longer runs out of room: past 100,000 input tokens (`APERIT_COMPACT_AT`) the API summarizes the older part and the work continues from the summary. On the OpenAI-compatible engine, old tool results are cleared instead. Each step then stops resending everything, so long jobs also cost less.
