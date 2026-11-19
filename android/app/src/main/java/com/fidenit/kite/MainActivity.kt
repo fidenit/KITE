@@ -13,4 +13,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent { KiteApp(vm) }
     }
+
+    override fun onStart() {
+        super.onStart()
+        vm.foreground()
+    }
+
+    override fun onStop() {
+        vm.background()
+        super.onStop()
+    }
 }
