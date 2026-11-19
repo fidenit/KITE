@@ -24,6 +24,12 @@ class Server(
     val fingerprint: String,
 )
 
+/** 다시 시도해도 소용없는 연결 오류: 서버 지문이 바뀜, 로그인 거절, 설정이 비어 있음. */
+class SshFatal(message: String) : Exception(message)
+
+/** 서버에서 명령이 오류로 끝났다 (연결이 끊긴 것이 아니다). */
+class RemoteFail(message: String) : Exception(message)
+
 /** 작은따옴표로 감싸 셸에 그대로 넘긴다. */
 fun shq(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
@@ -56,9 +62,9 @@ class Ssh(private val server: Server, private val remember: (String) -> Unit) {
     }
 
     @Synchronized
-    fun connect() {
+    fun connect(timeoutMs: Int = 15_000) {
         if (connected) return
-        if (server.host.isBlank() || server.user.isBlank()) throw Exception("서버 주소와 계정을 설정에 적어 주세요")
+        if (server.host.isBlank() || server.user.isBlank()) throw SshFatal("서버 주소와 계정을 설정에 적어 주세요")
         val jsch = JSch()
         jsch.hostKeyRepository = Known()
         if (server.privateKey.isNotBlank()) {
@@ -71,16 +77,17 @@ class Ssh(private val server: Server, private val remember: (String) -> Unit) {
         s.serverAliveInterval = 15_000
         s.serverAliveCountMax = 4
         try {
-            s.connect(15_000)
+            s.connect(timeoutMs)
         } catch (e: Exception) {
             val m = e.message ?: e.toString()
-            throw Exception(
-                when {
-                    m.contains("HostKey has been changed") || m.contains("reject HostKey") -> "서버 지문이 기억한 것과 다릅니다. 서버를 다시 설치했다면 설정에서 '서버 지문 잊기'를 누르세요."
-                    m.contains("Auth fail") || m.contains("Auth cancel") -> "로그인이 거절되었습니다. 계정과 암호 또는 키를 확인해 주세요."
-                    else -> "서버에 연결하지 못했습니다: $m"
-                }
-            )
+            val changed = m.contains("HostKey has been changed") || m.contains("reject HostKey")
+            val refused = m.contains("Auth fail") || m.contains("Auth cancel")
+            val text = when {
+                changed -> "서버 지문이 기억한 것과 다릅니다. 서버를 다시 설치했다면 설정에서 '서버 지문 잊기'를 누르세요."
+                refused -> "로그인이 거절되었습니다. 계정과 암호 또는 키를 확인해 주세요."
+                else -> "서버에 연결하지 못했습니다: $m"
+            }
+            throw if (changed || refused) SshFatal(text) else Exception(text)
         }
         session = s
     }
@@ -140,7 +147,7 @@ class Ssh(private val server: Server, private val remember: (String) -> Unit) {
     fun run(command: String, stdin: String? = null): String {
         val sb = StringBuilder()
         val (code, err) = exec(command, stdin) { sb.append(it).append('\n') }
-        if (code != 0 && sb.isEmpty()) throw Exception(err.trim().takeLast(300).ifEmpty { "끝난 코드 $code" })
+        if (code != 0 && sb.isEmpty()) throw RemoteFail(err.trim().takeLast(300).ifEmpty { "끝난 코드 $code" })
         return sb.toString()
     }
 

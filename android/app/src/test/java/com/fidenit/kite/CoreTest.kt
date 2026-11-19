@@ -173,7 +173,7 @@ class CoreTest {
     fun streamJsonBecomesScreenEvents() {
         val out = mutableListOf<Ev>()
         val p = StreamParser({ out.add(it) })
-        p.feed("APERITPID 4242")
+        p.feed("APERITBEAT") // 제어 줄은 무시한다
         p.feed("""{"type":"system","subtype":"init","model":"claude-x"}""")
         p.feed("""{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"text"}}}""")
         p.feed("""{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"say 확인해 볼게요"}}}""")
@@ -185,7 +185,6 @@ class CoreTest {
         p.feed("not json at all")
         p.feed("""{"type":"result","is_error":false,"result":"ok","total_cost_usd":0.01,"usage":{"input_tokens":10,"cache_read_input_tokens":5,"output_tokens":7}}""")
         p.finish()
-        assertEquals("4242", p.pid)
         assertEquals("Claude Code · claude-x", p.stats.model)
         assertTrue(p.gotResult)
         assertNull(p.failure)
@@ -193,36 +192,6 @@ class CoreTest {
         // 도구를 쓰고 난 뒤 이어지는 글은 새 줄에서 시작한다
         assertEquals("say 확인해 볼게요\ntopic s 서버\n", out.filterIsInstance<Ev.Delta>().joinToString("") { it.text })
         assertEquals(listOf("명령 실행: ", "명령 실행: df -h", ""), out.filterIsInstance<Ev.Activity>().map { it.text })
-    }
-
-    /** 서버에 보내는 명령 줄을 이 컴퓨터의 셸로 돌려 본다: 가짜 claude 가 받은 인자와 입력을 그대로 돌려준다. */
-    @Test
-    fun remoteCommandRunsUnderBash() {
-        // 서버(리눅스·맥)의 셸을 흉내 내는 시험이라 Windows 에서는 건너뛴다 (sh 가 없고, 있어도 경로와 인자 다루는 법이 다르다).
-        org.junit.Assume.assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
-        val home = File.createTempFile("kite", "home").let { it.delete(); it.mkdirs(); it }
-        File(home, ".local/bin").mkdirs()
-        File(home, "work dir").mkdirs()
-        File(home, ".kite").mkdirs()
-        File(home, ".kite/system.txt").writeText("x")
-        val fake = File(home, ".local/bin/claude")
-        fake.writeText("#!/bin/sh\necho \"ARGS \$*\"\necho \"PWD \$(pwd)\"\necho \"STDIN \$(cat)\"\n")
-        fake.setExecutable(true)
-        val ssh = Ssh(Server("h", 22, "u", "", "", "", "")) {}
-        val cc = ClaudeCode(ssh, EngineConfig("claude", "~/work dir", "acceptEdits", "low", "--model sonnet"))
-        val pb = ProcessBuilder("sh", "-c", cc.command())
-        pb.environment()["HOME"] = home.absolutePath
-        pb.redirectErrorStream(true)
-        val proc = pb.start()
-        proc.outputStream.use { it.write("<input>it's \"quoted\" \$HOME</input>".toByteArray()) }
-        val lines = proc.inputStream.bufferedReader().readLines()
-        proc.waitFor()
-        val text = lines.joinToString("\n")
-        assertTrue(text, lines.any { it.matches(Regex("APERITPID \\d+")) })
-        assertTrue(text, lines.any { it.startsWith("ARGS -p --output-format stream-json --verbose --include-partial-messages --no-session-persistence --append-system-prompt-file ${home.absolutePath}/.kite/system.txt --effort low --tools Bash,Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,ToolSearch --permission-mode acceptEdits --model sonnet") })
-        assertTrue(text, lines.any { it.startsWith("PWD ") && it.endsWith("/work dir") })
-        assertTrue(text, lines.contains("STDIN <input>it's \"quoted\" \$HOME</input>"))
-        home.deleteRecursively()
     }
 
     @Test

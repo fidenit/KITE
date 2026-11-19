@@ -5,6 +5,7 @@ package com.fidenit.kite.engine
 
 import kotlinx.coroutines.CompletableDeferred
 import org.json.JSONObject
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** 이 엔진에서만 덧붙이는 지시. */
 const val NOTE = """
@@ -76,17 +77,10 @@ class StreamParser(private val send: (Ev) -> Unit, private val now: () -> Long =
     var gotResult = false
     var lastText = ""
 
-    /** 서버에서 도는 Claude Code 의 프로세스 번호 (멈출 때 쓴다) */
-    @Volatile
-    var pid: String? = null
     private val started = now()
     private var lineOpen = false // 마지막으로 보낸 글자가 줄 끝이 아닌가
 
     fun feed(line: String) {
-        if (line.startsWith("APERITPID ")) {
-            pid = line.removePrefix("APERITPID ").trim().takeIf { p -> p.isNotEmpty() && p.all { it.isDigit() } }
-            return
-        }
         val v = try {
             JSONObject(line)
         } catch (_: Exception) {
@@ -147,7 +141,8 @@ class StreamParser(private val send: (Ev) -> Unit, private val now: () -> Long =
                 stats.outputTokens = n("output_tokens")
                 stats.costUsd = v.optDouble("total_cost_usd", 0.0)
                 lastText = v.optString("result")
-                if (v.optBoolean("is_error")) failure = v.optString("result").ifEmpty { "Claude Code error" }.take(400)
+                // 한 프로세스가 result 를 두 번 낼 수 있다 (도구가 뒤로 밀렸다가 끝난 뒤 이어 갈 때): 마지막 것이 맞다.
+                failure = if (v.optBoolean("is_error")) v.optString("result").ifEmpty { "Claude Code error" }.take(400) else null
             }
         }
     }
@@ -179,9 +174,39 @@ const val STOPPED = "__stopped"
 class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
     override val label = "Claude Code"
 
-    /** 로그인 셸의 설정을 읽고, 흔한 설치 자리를 PATH 에 더한다 (ssh 로 바로 돌린 명령은 PATH 가 짧다). */
-    private fun shell(script: String): String =
-        "bash -lc " + shq("export PATH=\"\$HOME/.local/bin:\$HOME/.claude/local:\$HOME/.npm-global/bin:/usr/local/bin:\$PATH\"; $script")
+    private val cmds = DetachedCommands(cfg)
+    private val waker = Waker()
+    private val leftover = CopyOnWriteArrayList<String>()
+
+    /** 새 실행 번호가 정해지면 (네트워크를 쓰기 전에) 불린다. 앱은 이 번호를 저장해 두었다가 다시 켜졌을 때 [resume] 에 쓴다. */
+    @Volatile
+    var onRunId: ((String) -> Unit)? = null
+
+    /** 지금(또는 마지막으로) 돌린 실행의 번호 */
+    @Volatile
+    var runId: String? = null
+        private set
+
+    /** 지금(또는 마지막으로) 돌린 실행에서 받은 자료 줄 수. 앱은 이 수를 저장해 두었다가 [resume] 에 넘길 수 있다. */
+    @Volatile
+    var linesReceived: Int = 0
+        private set
+
+    /** 끝난 실행을 서버에서 치울까. 시험에서만 끈다 (서버의 `.out` 을 읽어 보려고). */
+    @Volatile
+    var cleanAfterRun = true
+
+    /** 멈췄지만 서버에 닿지 않아 멈춤·치우기를 못 한 실행의 번호. 다음에 붙을 때 처리한다. */
+    val toClean: List<String> get() = leftover.toList()
+
+    fun addToClean(id: String) {
+        if (Detached.valid(id) && !leftover.contains(id)) leftover.add(id)
+    }
+
+    /** 다시 붙기를 기다리는 중이면 바로 시도한다 (앱이 앞으로 돌아왔을 때). */
+    fun wake() = waker.wake()
+
+    private fun shell(script: String): String = serverShell(script)
 
     private val claude: String get() = cfg.claude.trim().ifEmpty { "claude" }
 
@@ -206,62 +231,302 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
         ""
     }
 
-    fun command(): String {
-        val a = StringBuilder("$claude -p --output-format stream-json --verbose --include-partial-messages --no-session-persistence --append-system-prompt-file \"\$HOME/.kite/system.txt\"")
-        val extra = cfg.extra.trim()
-        if (!extra.contains("--effort") && cfg.effort.isNotEmpty()) a.append(" --effort ${shq(cfg.effort)}")
-        // Claude Code 의 도구는 꼭 필요한 것만 싣는다. ToolSearch 를 빼면 MCP 도구의 설명이 전부 매 턴 실려 간다.
-        if (!extra.contains("--tools")) a.append(" --tools Bash,Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,ToolSearch")
-        if (!extra.contains("--permission-mode") && cfg.permission != "default") a.append(" --permission-mode ${shq(cfg.permission)}")
-        if (extra.isNotEmpty()) a.append(" ").append(extra)
-        val dir = cfg.dir.trim()
-        val cd = if (dir.isEmpty() || dir == "~") "cd" else "cd ${if (dir.startsWith("~/")) "\"\$HOME\"/" + shq(dir.removePrefix("~/")) else shq(dir)}"
-        // 프로세스 번호를 먼저 알려 주고 그 번호 그대로 Claude Code 로 바뀐다 (멈출 때 그 번호를 끝낸다).
-        return shell("$cd && echo \"APERITPID \$\$\" && exec $a")
+    /** 서버에서 떼어 돌린 실행의 파일을 치운다. */
+    fun clean(id: String) {
+        ssh.run(cmds.clean(id))
     }
 
     /**
-     * 한 턴을 돌린다. 글자는 나오는 대로 `send` 로 보낸다. `stopped` 가 참이 되면 서버의 Claude Code 를 끝낸다.
+     * 한 턴을 서버에서 떼어 돌린다: 올리기 → 시작 → 따라 읽기. 연결이 끊겨도 서버의 Claude Code 는 계속 돌고,
+     * 이 함수는 다시 붙어 받은 줄 다음부터 이어 읽는다. 글자는 나오는 대로 `send` 로 보낸다.
+     * `stopped` 가 참이 되면 서버의 Claude Code 와 그 자식을 끝내고 [STOPPED] 를 던진다.
      */
     override fun run(turnText: String, stopped: () -> Boolean, send: (Ev) -> Unit): Stats {
-        val parser = StreamParser(send)
-        var done = false
-        // 멈춤 버튼: 따로 지켜보다가 서버의 Claude Code 를 끝낸다.
-        val watcher = Thread {
-            while (!done) {
-                if (stopped()) {
-                    val pid = parser.pid
-                    if (pid != null) {
-                        try {
-                            ssh.run("kill $pid 2>/dev/null; true")
-                        } catch (_: Exception) {
-                        }
-                        return@Thread
-                    }
-                }
-                Thread.sleep(120)
+        val id = Detached.newId()
+        runId = id
+        try {
+            onRunId?.invoke(id)
+        } catch (_: Exception) {
+        }
+        return Drive(id, turnText, 0, true, stopped, send).go()
+    }
+
+    /**
+     * 이미 서버에 있는 실행에 다시 붙는다 (앱이 다시 켜진 뒤). `fromLine` 줄은 이미 받았다고 본다.
+     * 서버에 그 실행이 없으면(`none`) `fromLine` 이 0 이고 `turnText` 가 있을 때만 같은 번호로 한 번 새로 시작한다.
+     */
+    fun resume(id: String, turnText: String?, fromLine: Int, stopped: () -> Boolean, send: (Ev) -> Unit): Stats {
+        Detached.check(id)
+        runId = id
+        return Drive(id, turnText, fromLine, false, stopped, send).go()
+    }
+
+    /** 멈춤을 못 한 채 남은 실행들에 멈춤·치우기를 한다. 연결이 안 되면 목록에 그대로 둔다. */
+    fun settle(except: String? = null) {
+        for (id in leftover.toList()) {
+            if (id == except) continue
+            try {
+                ssh.run(cmds.stop(id))
+                ssh.run(cmds.clean(id))
+                leftover.remove(id)
+            } catch (_: Exception) {
             }
         }
-        watcher.start()
-        val (code, errors) = try {
-            ssh.exec(command(), turnText) { parser.feed(it) }
-        } catch (e: Exception) {
-            done = true
-            ssh.close() // 끊긴 연결은 버리고 다음 턴에 다시 붙는다
-            if (stopped()) throw Exception(STOPPED)
-            throw Exception("서버와의 연결이 끊겼습니다: ${e.message}")
+    }
+
+    /** 서버에 멈춤을 보낸다. 닿지 않으면 10초까지 다시 붙어 보고 포기한다. 보냈으면 참. */
+    private fun stopRun(id: String): Boolean {
+        val end = System.currentTimeMillis() + 10_000
+        while (true) {
+            try {
+                val left = (end - System.currentTimeMillis()).toInt().coerceIn(1000, 10_000)
+                ssh.connect(left)
+                ssh.run(cmds.stop(id))
+                return true
+            } catch (e: SshFatal) {
+                return false
+            } catch (_: Exception) {
+                ssh.close()
+            }
+            if (System.currentTimeMillis() + 1000 >= end) return false
+            Thread.sleep(1000)
         }
-        done = true
-        parser.finish()
-        if (stopped()) throw Exception(STOPPED)
-        parser.failure?.let { throw Exception("Claude Code: $it") }
-        if (!parser.gotResult) {
-            val tail = errors.trim().takeLast(300)
-            throw Exception(
-                if (code == 127 || tail.contains("command not found")) "서버에서 Claude Code 를 찾지 못했습니다. 설정에서 claude 경로를 확인해 주세요. $tail"
-                else "Claude Code 가 답 없이 끝났습니다. 서버에서 로그인되어 있는지 확인해 주세요. ($code) $tail"
-            )
+    }
+
+    private class Fatal(message: String) : Exception(message)
+
+    private enum class Phase { UPLOAD, START, FOLLOW }
+
+    private inner class Drive(
+        val id: String,
+        val turnText: String?,
+        fromLine: Int,
+        fresh: Boolean,
+        val stopped: () -> Boolean,
+        val send: (Ev) -> Unit,
+    ) {
+        val parser = StreamParser(send)
+
+        @Volatile private var phase = if (fresh) Phase.UPLOAD else Phase.FOLLOW
+
+        @Volatile private var reading = false
+
+        @Volatile private var lastLine = System.currentTimeMillis()
+
+        @Volatile private var idleCut = false
+
+        @Volatile private var done = false
+
+        @Volatile private var attempt = 0
+        private var received = fromLine
+
+        init {
+            linesReceived = fromLine
         }
-        return parser.stats
+        private var uploadTried = false
+        private var restarted = false
+        private var settled = false
+        private var dropShown = false
+        private var silent = 0
+        private var stopTried = false
+        private var stopOk = false
+
+        @Synchronized
+        private fun stopOnce(): Boolean {
+            if (!stopTried) {
+                stopTried = true
+                stopOk = stopRun(id)
+            }
+            return stopOk
+        }
+
+        /** 멈춤 버튼을 지켜보고, 읽는 중 40초 동안 아무 줄도 없으면 연결을 끊는다. */
+        private val watcher = Thread {
+            try {
+                while (!done) {
+                    if (stopped() && phase == Phase.FOLLOW) {
+                        stopOnce()
+                        // 서버가 끝났다고 알려 주면 읽기가 저절로 끝난다. 아니면 연결을 끊어 읽기를 풀어 준다.
+                        val end = System.currentTimeMillis() + 2500
+                        while (!done && System.currentTimeMillis() < end) Thread.sleep(50)
+                        if (!done) ssh.close()
+                        return@Thread
+                    }
+                    if (reading && !idleCut && System.currentTimeMillis() - lastLine > Detached.IDLE_MS) {
+                        idleCut = true
+                        ssh.close()
+                    }
+                    Thread.sleep(120)
+                }
+            } catch (_: InterruptedException) {
+            }
+        }.apply { isDaemon = true }
+
+        fun go(): Stats {
+            watcher.start()
+            try {
+                return loop()
+            } finally {
+                done = true
+                watcher.interrupt()
+            }
+        }
+
+        private fun loop(): Stats {
+            while (true) {
+                if (stopped()) return stoppedEnd()
+                try {
+                    ssh.connect()
+                    if (!settled) {
+                        settled = true
+                        settle(id)
+                    }
+                    if (phase == Phase.UPLOAD) {
+                        uploadTried = true
+                        try {
+                            ssh.run(cmds.upload(id), turnText)
+                        } catch (e: RemoteFail) {
+                            throw Fatal("서버의 ~/.kite/runs 에 쓰지 못했습니다 → 이번 말은 보내지 않았습니다 → 서버의 디스크 공간과 폴더 권한을 확인해 주세요. ${e.message}")
+                        }
+                        phase = Phase.START
+                    }
+                    if (stopped()) continue
+                    if (phase == Phase.START) {
+                        val out = try {
+                            ssh.run(cmds.start(id)).lines().map { Detached.classify(it) }
+                        } catch (e: RemoteFail) {
+                            throw Fatal("서버에서 Claude Code 를 시작하지 못했습니다 → 이번 말은 처리되지 않았습니다 → 서버를 확인한 뒤 다시 보내 주세요. ${e.message}")
+                        }
+                        out.filterIsInstance<FollowLine.Fail>().firstOrNull()?.let { throw Fatal(startFailure(it.reason)) }
+                        if (!out.contains(FollowLine.Run(id))) throw java.io.IOException("start gave no APERITRUN")
+                        phase = Phase.FOLLOW
+                    }
+                    if (stopped()) continue
+                    val code = follow()
+                    if (code == null) {
+                        // 끝났다는 줄 없이 읽기가 끝났다 = 연결이 끊겼다
+                        if (silent >= 3) throw Fatal("서버에서 이어 읽는 명령이 계속 실패합니다 → 서버의 작업은 그대로입니다 → 서버의 bash 와 ~/.kite 폴더를 확인해 주세요.")
+                        throw java.io.IOException(if (idleCut) "idle" else "closed")
+                    }
+                    if (code == "none") {
+                        if (!restarted && turnText != null && received == 0 && !stopped()) {
+                            restarted = true
+                            phase = Phase.UPLOAD
+                            uploadTried = false
+                            continue
+                        }
+                        throw Fatal("서버에 이 작업의 기록이 없습니다 (7일이 지났거나 이미 치워졌습니다) → 화면에는 반영하지 않았습니다 → 같은 말을 다시 보내 주세요.")
+                    }
+                    return finish(code)
+                } catch (e: Fatal) {
+                    throw e
+                } catch (e: SshFatal) {
+                    throw e
+                } catch (e: Exception) {
+                    ssh.close() // 끊긴 연결은 버리고 다시 붙는다
+                    if (stopped()) continue
+                    val wait = Detached.delayMs(attempt)
+                    attempt++
+                    dropShown = true
+                    val why = if (idleCut) "${Detached.IDLE_MS / 1000}초 동안 서버 소식이 없어 연결을 끊었습니다" else "연결이 끊겼습니다"
+                    idleCut = false
+                    send(Ev.Activity("$why — 서버의 작업은 계속 돕니다. ${wait / 1000}초 뒤 다시 붙습니다 (받은 ${received}줄)"))
+                    waker.sleep(wait, stopped)
+                }
+            }
+        }
+
+        /** 따라 읽는다. 서버가 끝났다고 알리면 그 값(숫자·stopped·lost·none), 끝났다는 줄 없이 끝나면 null. */
+        private fun follow(): String? {
+            var exit: String? = null
+            var any = false
+            waker.clear()
+            lastLine = System.currentTimeMillis()
+            idleCut = false
+            reading = true
+            if (dropShown) {
+                dropShown = false
+                send(Ev.Activity(""))
+            }
+            try {
+                val (_, err) = ssh.exec(cmds.follow(id, received), null) { raw ->
+                    lastLine = System.currentTimeMillis()
+                    any = true
+                    attempt = 0
+                    when (val c = Detached.classify(raw)) {
+                        is FollowLine.Data -> {
+                            received++
+                            linesReceived = received
+                            try {
+                                parser.feed(c.text)
+                            } catch (e: Exception) {
+                                throw Fatal("받은 줄을 화면에 반영하지 못했습니다 → 이번 말은 중단했습니다 → 같은 말을 다시 보내 주세요. ${e.message}")
+                            }
+                        }
+                        is FollowLine.Exit -> exit = c.code
+                        else -> {}
+                    }
+                }
+                silent = if (exit == null && !any && err.isNotBlank()) silent + 1 else 0
+                return exit
+            } finally {
+                reading = false
+            }
+        }
+
+        private fun cleanQuiet() {
+            if (!cleanAfterRun) return
+            try {
+                ssh.run(cmds.clean(id))
+            } catch (_: Exception) {
+                addToClean(id)
+            }
+        }
+
+        private fun errTail(): String = try {
+            ssh.run(cmds.errTail(id)).trim().takeLast(300)
+        } catch (_: Exception) {
+            ""
+        }
+
+        /** 멈춤: 서버에 아무것도 올리지 않았으면 그냥 끝내고, 아니면 서버의 실행을 멈춘다 (못 하면 나중에 치울 목록에). */
+        private fun stoppedEnd(): Nothing {
+            parser.finish()
+            if (phase == Phase.UPLOAD && !uploadTried) throw Exception(STOPPED)
+            if (stopOnce()) cleanQuiet() else addToClean(id)
+            throw Exception(STOPPED)
+        }
+
+        private fun finish(code: String): Stats {
+            parser.finish()
+            if (stopped() || code == "stopped") {
+                cleanQuiet()
+                throw Exception(STOPPED)
+            }
+            if (code == "lost") {
+                cleanQuiet()
+                throw Exception("서버에서 이 작업이 끝나지 못했습니다 (서버가 다시 켜졌거나 Claude Code 가 사라졌습니다) → 받은 데까지는 화면에 반영했습니다 → 같은 말을 다시 보내 주세요.")
+            }
+            val ok = code == "0" && parser.gotResult
+            val tail = if (ok) "" else errTail()
+            cleanQuiet()
+            parser.failure?.let { throw Exception("Claude Code: $it") }
+            if (!ok) {
+                throw Exception(
+                    when {
+                        !parser.gotResult && (code == "127" || tail.contains("command not found")) -> "서버에서 Claude Code 를 찾지 못했습니다. 설정에서 claude 경로를 확인해 주세요. $tail"
+                        !parser.gotResult -> "Claude Code 가 답 없이 끝났습니다. 서버에서 로그인되어 있는지 확인해 주세요. ($code) $tail"
+                        else -> "Claude Code 가 오류 코드 ($code)로 끝났습니다 → 받은 데까지는 화면에 반영했습니다 → 같은 말을 다시 보내 보세요. $tail"
+                    },
+                )
+            }
+            return parser.stats
+        }
+
+        private fun startFailure(reason: String): String = when (reason) {
+            "cd" -> "서버에서 작업 폴더(${cfg.dir.trim().ifEmpty { "~" }})로 갈 수 없습니다 → 이번 말은 처리되지 않았습니다 → 설정에서 작업 폴더를 확인해 주세요."
+            "noin" -> "서버에 턴 글이 올라가지 않았습니다 → 이번 말은 처리되지 않았습니다 → 다시 보내 주세요."
+            else -> "서버에서 Claude Code 를 시작하지 못했습니다 → 이번 말은 처리되지 않았습니다 → 서버의 ~/.kite 폴더를 확인해 주세요."
+        }
     }
 }
