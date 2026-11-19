@@ -381,6 +381,49 @@ class KiteViewModelTest {
         assertEquals(listOf("a-1"), Journal(files).readToClean()) // the server run is cleaned up on the next connect
     }
 
+    /**
+     * The engine step is over before the main thread goes on: the block runs on another thread and `dispatch` comes back only
+     * when it is done. A phone or a loaded machine does this now and then (the main thread loses the CPU right after the
+     * hand-over); here it happens every time, without waiting on a clock.
+     */
+    private val engineDoneFirst = object : kotlinx.coroutines.CoroutineDispatcher() {
+        override fun dispatch(context: kotlin.coroutines.CoroutineContext, block: Runnable) {
+            Thread(block).apply { start() }.join()
+        }
+    }
+
+    // K1: a turn never ends inside the call that started it, however fast its engine step is over
+    @Test
+    fun aTurnWhoseEngineIsDoneAtOnceIsStillRunningWhenSendReturns() {
+        write("board.txt", board)
+        val vm = vm()
+        vm.turnIo = engineDoneFirst
+        vm.runnerOverride = Fake(failWith = "엔진 오류")
+        vm.send("첫째 말")
+        assertTrue("the turn is running when send() returns", vm.busy)
+        assertNull(vm.error)
+        vm.flushWrites()
+        assertEquals("첫째 말", Journal(files).readInflight()!!.shown) // a kill here finds the record
+        until("turn ends") { !vm.busy }
+        assertEquals("엔진 오류", vm.error)
+        vm.flushWrites()
+        assertFalse(exists("inflight.json"))
+    }
+
+    // K1: the same at start-up: the turn for the queued words has not ended when the ViewModel is handed out
+    @Test
+    fun queuedWordsStartedAtStartUpAreStillRunningWhenTheViewModelIsReady() {
+        write("board.txt", board)
+        Journal(files).writeQueue(listOf("둘째 말"), emptyList())
+        val vm = vm() // no key: the engine step of this turn fails at once
+        assertTrue(vm.busy)
+        assertNull(vm.error)
+        vm.flushWrites()
+        assertTrue(Journal(files).readInflight()!!.turnText.contains("<input>둘째 말</input>"))
+        until("turn ends") { !vm.busy }
+        assertTrue(vm.error!!.contains("API"))
+    }
+
     // (8)
     @Test
     fun backgroundSavesAndLeavesTalkOff() {

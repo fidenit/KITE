@@ -50,6 +50,7 @@ import com.fidenit.kite.voice.Player
 import com.fidenit.kite.voice.Words
 import com.fidenit.kite.voice.talkMode
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -57,6 +58,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import org.json.JSONArray
 import java.io.File
 import java.text.SimpleDateFormat
@@ -182,9 +184,12 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     /** 시험에서 엔진 대신 쓴다 */
     internal var runnerOverride: Runner? = null
 
+    /** 턴의 엔진 단계가 도는 입출력 스레드. 시험에서 바꾼다 (앱은 바꾸지 않는다). */
+    internal var turnIo: CoroutineDispatcher = Dispatchers.IO
+
     /**
      * TypeSafe Jev 의 주소. 시험에서 가짜 서버로 바꾼다 (앱은 바꾸지 않는다).
-     * `init` 보다 먼저 선언해야 한다: 켤 때 줄 세워 둔 말로 시작하는 턴이 init 안에서 이미 이 값을 읽는다.
+     * 켤 때 시작하는 턴도 init 이 끝난 뒤에야 돌기 시작하므로(`runTurn`), 만든 직후에 바꾼 값이 그 턴에도 쓰인다.
      */
     internal var jevUrl: String = Jev.baseUrl
 
@@ -542,6 +547,11 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         currentRunId = if (resume) record.id else null
         val evs = Channel<Ev>(Channel.UNLIMITED)
         viewModelScope.launch {
+            // 턴은 부른 쪽(send, 켜질 때의 init)이 돌아간 뒤, 메인 루프의 다음 차례에야 돌기 시작한다.
+            // 이것이 없으면 엔진 단계가 메인 스레드보다 먼저 끝났을 때 턴이 send() 나 init 안에서 통째로 끝난다
+            // (withContext 는 맡긴 일이 이미 끝나 있으면 멈추지 않고 바로 돌아온다): 부른 쪽이 busy == false 와 지워진 기록을 보고,
+            // init 에서는 아직 만들어지지 않은 속성(init 아래에 선언된 것)을 턴이 읽는다.
+            yield()
             val reader = launch {
                 for (ev in evs) {
                     if (gen == generation) handle(ev) else if (ev is Ev.Screen) ev.reply.complete("반영되지 않음")
@@ -550,7 +560,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             // 판단 모델(Jev)이 먼저 요청의 종류·주제를 보고 받았다는 한마디를 고른다. 입출력 스레드에서, 엔진을 부르기 전에.
             // 키가 없거나 입력이 비었거나 서버에서 돌던 턴에 다시 붙는 것이면 부르지 않는다.
             val turn = if (resume) record else beforeTurn(record, input)
-            val result = withContext(Dispatchers.IO) {
+            val result = withContext(turnIo) {
                 runCatching {
                     val e = if (resume) engineWhenReachable(record.id, evs) else engine()
                     if (e is ClaudeCode) {
