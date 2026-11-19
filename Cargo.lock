@@ -3361,7 +3361,7 @@ checksum = "73072a9470554c8e794778acece2312661218aaabb635600957d952cf01c716e"
 
 [[package]]
 name = "patet"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "pem-rfc7468"
