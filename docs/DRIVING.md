@@ -15,7 +15,7 @@ All of these are chosen in the app under **Keys** (bottom left), or with the fil
 
 ## MCP: your agent comes to APERIT
 
-1. In APERIT, open **Keys**, then **More options**, choose **Your own agent**, and save. APERIT stops running a model of its own and opens an MCP door at `http://127.0.0.1:7711/mcp`.
+1. In APERIT, open **Keys**, choose **Your own agent**, and save. APERIT stops running a model of its own and opens an MCP door at `http://127.0.0.1:7711/mcp`.
 2. Open **Keys** again and press **Copy the Claude Code command** (or **Copy the config (JSON)** for other clients). For Claude Code the command is:
 
    ```sh
@@ -90,7 +90,7 @@ Limits: 4096 bytes a line, 50 lines a second per connection (bursts of 100), 4 c
 
 ## A server: Claude Code over SSH
 
-APERIT can hand each turn to the Claude Code on a server instead of the one on this computer. Under **Keys** → **More options** → **A server (SSH)**, give the address, the user, and either a key file or a password (or nothing, to use the ssh agent and your usual keys), and the folder to work in. **Test the connection** signs in and asks the server's Claude Code for its version.
+APERIT can hand each turn to the Claude Code on a server instead of the one on this computer. Under **Keys** → **A server (SSH)**, give the address, the user, and either a key file or a password (or nothing, to use the ssh agent and your usual keys), and the folder to work in. **Test the connection** signs in and asks the server's Claude Code for its version.
 
 - Files and commands are the server's. Claude Code's login, `CLAUDE.md`, skills, hooks and permissions there apply.
 - APERIT's own tools (memory notes, route maps, workers, reading the board) stay on this computer. The server's Claude Code reaches them through a reverse tunnel on the same SSH connection, to `127.0.0.1` on both ends, with a token.
@@ -129,6 +129,8 @@ Everything can be set in the **Keys** window. The same choices as files next to 
 | `mcp-port.txt` | `APERIT_MCP_PORT` | open the MCP door on this port (always open, on 7711, with engine `external`) |
 | `data/mcp-token.txt` | `APERIT_MCP_TOKEN` | the MCP token; made on first use |
 | | `APERIT_PROTOCOL_PORT`, `APERIT_PROTOCOL_TOKEN` | the protocol socket, and an optional token (`auth <token>` as the first line) |
+| `model.txt` | `APERIT_MODEL` | the Claude model of the Claude API engine: `claude-opus-5-5` (the default; no file), `claude-sonnet-5-5`, `claude-haiku-5-5`, or any Claude model id |
+| `spend-limit.txt` | `APERIT_DAILY_LIMIT` | a daily limit in dollars for the Claude API key; at the limit no new turn, worker or background request starts that day. What was spent is kept per day in `data/usage.json` |
 | `permission.txt` | `APERIT_PERMISSION` | what APERIT's own engines may do without asking: `ask` (the default), `edits`, `all` |
 | `claude-permission.txt` | | the same for the Claude Code engine: `default`, `acceptEdits`, `bypassPermissions` |
 | `data/lang.txt` | `APERIT_LANG` | `en` or `ko`: the language of the screen and of what the model writes; also the switch in the corner |
@@ -136,6 +138,8 @@ Everything can be set in the **Keys** window. The same choices as files next to 
 | `outside-media.txt` | `APERIT_OUTSIDE_MEDIA` | `yes` lets an agent outside APERIT create web, image and file cards |
 
 Variables named `LYBOARD_...` from earlier versions are still read.
+
+When the service is busy (HTTP 429, 529 or another 5xx) or cannot be reached, APERIT waits and sends the request again, up to four more times: as long as the service asks (`retry-after`), or 2, 4, 8 and 16 seconds. The line under the conversation says so while it waits, and **Stop** ends the wait. Only a request that got no answer is sent again, so nothing on the board is written twice.
 
 ## Without a model: demos and logs
 

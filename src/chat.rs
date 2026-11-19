@@ -554,7 +554,7 @@ impl App {
             }
             // 대화: 마이크로 말해서 시킨다. 말이 끝나면 알아서 보내고, 답을 다 들으면 다시 듣는다.
             let hint = if crate::eleven::key().is_none() {
-                crate::sys::tr("말로 대화하려면 ElevenLabs 키가 필요합니다 (키 → 다른 방법)", "Talking needs an ElevenLabs key (Keys → More options)")
+                crate::sys::tr("말로 대화하려면 ElevenLabs 키가 필요합니다 (키 → 음성)", "Talking needs an ElevenLabs key (Keys → Voice)")
             } else if self.converse {
                 crate::sys::tr("말로 대화하는 중 · 누르면 마이크를 끕니다", "Talking · click to turn the microphone off")
             } else {
@@ -603,385 +603,312 @@ impl App {
         ui.add_space(6.0);
     }
 
-    /// 처음 켰을 때(또는 "API 키 넣기"를 눌렀을 때) 뜨는 창.
-    /// 키를 넣으면 암호화해서 앱 안에만 보관하고(secret.rs) 바로 시작한다. 키 없이 데모만 둘러볼 수도 있다.
+    /// The Keys window: who answers, and how. One wide window, everything in view, nothing to unfold or scroll.
+    /// Left: the ways in. Middle: what the chosen way needs. Right: spending, and the optional keys.
+    /// Keys go to the app's encrypted store (secret.rs); the rest to small files next to the program.
     pub fn key_window(&mut self, ctx: &egui::Context) {
         if !self.key_popup {
             return;
         }
-        let frame = egui::Frame::new().fill(PANEL()).stroke(egui::Stroke::new(1.0, FIELD_EDGE())).corner_radius(24).inner_margin(egui::Margin::same(28));
+        let cc_version = crate::cc::version();
+        let current = self.current_engine();
+        if !self.keys_loaded {
+            let asked = self.engine_pick.clone();
+            self.load_key_window(current);
+            // APERIT_KEY_WINDOW=local opens on "Local or other model".
+            if asked.as_deref() == Some("local") {
+                self.engine_pick = Some("openai".into());
+                self.openai_by_hand = true;
+            } else if asked.is_some() {
+                self.engine_pick = asked;
+            }
+        }
+        let screen = ctx.content_rect();
+        let width = (screen.width() - 48.0).clamp(660.0, 1080.0);
+        let frame = egui::Frame::new().fill(PANEL()).stroke(egui::Stroke::new(1.0, FIELD_EDGE())).corner_radius(24).inner_margin(egui::Margin::same(26));
         let (mut save, mut close) = (false, false);
         egui::Modal::new(egui::Id::unique("key-window")).frame(frame).backdrop_color(egui::Color32::from_black_alpha(170)).show(ctx, |ui| {
-            ui.set_width(420.0);
-            // Some choices have more to fill in than a small window is tall: the content scrolls inside the window.
-            let room = (ctx.content_rect().height() - 110.0).max(300.0);
-            // The buttons stay below it, always in view.
-            let room = room - 150.0;
-            ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
-            let (pick, current, has_key, pick_cc, pick_openai, pick_agent, pick_ssh) = egui::ScrollArea::vertical().max_height(room).min_scrolled_height(room).auto_shrink([false, true]).show(ui, |ui| {
-            ui.set_width(420.0);
-            let has_key = self.cfg.key.is_some();
-            let has_jev = crate::jev::key().is_some();
-            ui.label(egui::RichText::new(if !self.cfg.demo() { crate::sys::tr("엔진과 키", "Engine and keys") } else { crate::sys::tr("APERIT에 오신 것을 환영합니다", "Welcome to APERIT") }).font(ui::bold(21.0)).color(ui::TEXT()));
-            ui.add_space(8.0);
+            let inner = width - 52.0;
+            ui.set_width(inner);
+            let first = self.cfg.demo();
+            ui.label(egui::RichText::new(if first { crate::sys::tr("APERIT에 오신 것을 환영합니다", "Welcome to APERIT") } else { crate::sys::tr("엔진과 키", "Engine and keys") }).font(ui::bold(21.0)).color(ui::TEXT()));
+            ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(crate::sys::tr(
-                    "로그인하거나 키를 붙여넣으면 바로 시작합니다.\n키는 암호화해서 앱 안에만 보관하고(이 컴퓨터의 이 계정에서만 열림), 그 키의 서비스 말고는 어디로도 보내지 않습니다.",
-                    "Sign in, or paste a key, and you are ready.\nA key is kept encrypted inside the app, readable only by this account on this computer, and is sent nowhere except to the service it belongs to.",
+                    "누가 답할지 고르세요. 키는 암호화해서 앱 안에만 두고(이 컴퓨터의 이 계정에서만 열림), 그 키의 서비스 말고는 어디로도 보내지 않습니다.",
+                    "Choose who answers. Keys are kept encrypted inside the app, readable only by this account on this computer, and go nowhere but to the service they belong to.",
                 ))
-                .size(12.5)
+                .size(12.0)
                 .color(ui::DIM()),
             );
-            ui.add_space(14.0);
-            let field_as = |ui: &mut egui::Ui, value: &mut String, hint: &str, secret: bool| {
-                egui::Frame::new().fill(FIELD()).stroke(egui::Stroke::new(1.0, FIELD_EDGE())).corner_radius(14).inner_margin(egui::Margin::symmetric(14, 9)).show(ui, |ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(value)
-                            .password(secret)
-                            .hint_text(hint)
-                            .desired_width(f32::INFINITY)
-                            .font(egui::FontId::proportional(13.5))
-                            .text_color(ui::TEXT())
-                            .frame(egui::Frame::NONE),
-                    )
+            ui.add_space(18.0);
+            let gap = 24.0;
+            let rest = inner - 2.0 * gap;
+            let (w1, w2) = (rest * 0.29, rest * 0.42);
+            let w3 = rest - w1 - w2;
+            ui.horizontal_top(|ui| {
+                // The same height whichever way is chosen, so the window does not jump.
+                ui.set_min_height(430.0);
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.vertical(|ui| {
+                    ui.set_width(w1);
+                    self.keys_ways(ui, ctx, &cc_version, current);
                 });
-            };
-            let field = |ui: &mut egui::Ui, value: &mut String, hint: &str| field_as(ui, value, hint, true);
-            // The engine: who answers. Claude through the API or through Claude Code, another model behind an
-            // OpenAI-compatible API, or an agent outside APERIT that uses this board as its screen.
-            let cc_version = crate::cc::version();
-            let current = if self.cfg.ssh {
-                "ssh"
-            } else if self.cfg.cc {
-                "claude-code"
-            } else if self.cfg.openai.is_some() {
-                "openai"
-            } else if self.cfg.external || self.cfg.agui.is_some() {
-                "agent"
-            } else {
-                "api"
-            };
-            if self.engine_pick.is_none() {
-                // Show what is saved, so that opening the window and saving changes nothing.
-                self.engine_pick = Some(current.to_string());
-                if let Some(p) = crate::openai::settings() {
-                    // A service APERIT set up by itself from a key needs no unfolding; an address typed by hand does.
-                    self.more_open = crate::openai::known_by_url(&p.url).is_none();
-                    self.openai_input = [p.url, p.model, String::new()];
-                }
-                self.agui_input = crate::agui::settings().map(|s| s.url).unwrap_or_default();
-                if let Some(s) = crate::ssh::settings() {
-                    let port = if s.port == 0 { String::new() } else { s.port.to_string() };
-                    self.ssh_input = [s.host, s.user, port, s.key, s.dir, String::new()];
-                }
-                *self.ssh_test.lock().unwrap() = String::new();
-                self.more_open |= current == "agent" || current == "ssh";
+                ui.add_space(gap);
+                ui.vertical(|ui| {
+                    ui.set_width(w2);
+                    self.keys_details(ui, ctx, &cc_version);
+                });
+                ui.add_space(gap);
+                ui.vertical(|ui| {
+                    ui.set_width(w3);
+                    self.keys_extras(ui);
+                });
+            });
+            ui.add_space(20.0);
+            let ready = self.keys_ready(current, &cc_version);
+            if first {
+                ui.label(egui::RichText::new(crate::sys::tr("데모에서는 무엇을 입력해도 준비된 장면이 재생됩니다. AI가 실제로 답하지는 않습니다.", "In the demo, anything you type plays prepared scenes. The AI does not actually answer.")).size(11.5).color(ui::FAINT()));
+                ui.add_space(8.0);
             }
-            // Two ways in: sign in, or paste a key. Everything else is under "More options".
-            let signed = cc_version.is_some() && crate::cc::signed_in();
-            let on = self.engine_pick.as_deref() == Some("claude-code") && cc_version.is_some();
-            let sub = match (&cc_version, signed) {
-                (None, _) => crate::sys::tr("Claude Code가 필요합니다 · 눌러서 설치 안내 열기", "Needs Claude Code · press for how to install it").to_string(),
-                (Some(v), true) => format!("{} · Claude Code {v}", crate::sys::tr("로그인됨 · 키 필요 없음", "signed in · no key needed")),
-                (Some(_), false) => crate::sys::tr("누르면 브라우저에서 로그인합니다", "press to sign in with your browser").to_string(),
-            };
-            let (r, p) = ui.allocate_painter(egui::vec2(ui.available_width(), 56.0), egui::Sense::click());
-            p.rect_filled(r.rect, 14.0, if on { ui::ORANGE().gamma_multiply(0.14) } else { FIELD() });
-            p.rect_stroke(r.rect, 14.0, egui::Stroke::new(if on { 1.5 } else { 1.0 }, if on { ui::ORANGE() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
-            p.text(r.rect.left_top() + egui::vec2(16.0, 19.0), egui::Align2::LEFT_CENTER, crate::sys::tr("Claude로 로그인", "Sign in with Claude"), ui::bold(14.0), ui::TEXT());
-            p.text(r.rect.left_top() + egui::vec2(16.0, 39.0), egui::Align2::LEFT_CENTER, &sub, ui::font(11.5), if signed { ui::GREEN() } else { ui::FAINT() });
-            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                if cc_version.is_none() {
-                    ctx.open_url(egui::OpenUrl::new_tab("https://claude.com/claude-code"));
-                } else {
-                    if !signed {
-                        crate::cc::sign_in();
-                    }
-                    self.engine_pick = Some("claude-code".to_string());
-                    self.key_input.clear();
-                    // Already signed in: one press is all it takes.
-                    if signed && current != "claude-code" {
+            ui.allocate_ui_with_layout(egui::vec2(inner, 40.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (r, p) = ui.allocate_painter(egui::vec2(170.0, 40.0), egui::Sense::click());
+                    p.rect_filled(r.rect, 20.0, if ready { ui::TEXT() } else { FIELD() });
+                    p.text(r.rect.center(), egui::Align2::CENTER_CENTER, if first { crate::sys::tr("저장하고 시작", "Save and start") } else { crate::sys::tr("저장", "Save") }, ui::bold(13.5), if ready { PANEL() } else { ui::FAINT() });
+                    if ready && r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         save = true;
                     }
-                }
-            }
-            ui.add_space(12.0);
-            ui.label(egui::RichText::new(crate::sys::tr("또는 키 붙여넣기", "Or paste a key")).font(ui::bold(12.5)).color(ui::TEXT()));
-            ui.add_space(4.0);
-            field(ui, &mut self.key_input, "Claude · OpenAI · Gemini · OpenRouter · Groq · xAI");
-            // The key says whose it is: nothing else to fill in.
-            let typed = self.key_input.trim().to_string();
-            let known = crate::openai::recognize(&typed);
-            if let Some(k) = known {
-                if k.is_claude() {
-                    self.engine_pick = Some("api".to_string());
-                } else {
-                    self.engine_pick = Some("openai".to_string());
-                    self.openai_input = [k.url.to_string(), String::new(), typed.clone()];
-                    self.more_open = false;
-                }
-            }
-            ui.add_space(5.0);
-            let (note, good) = match known {
-                Some(k) if k.is_claude() => (crate::sys::tr("Claude 키입니다.", "A Claude key.").to_string(), true),
-                Some(k) => (format!("{} {}", k.name, crate::sys::tr("키입니다. 모델은 알아서 고릅니다.", "key. APERIT picks the model.")), true),
-                None if typed.len() > 8 => (crate::sys::tr("처음 보는 키입니다. 아래 '다른 방법'에서 주소를 적어 주세요.", "A key APERIT does not know. Give its address under \"More options\".").to_string(), false),
-                None => match current {
-                    "api" if has_key => (crate::sys::tr("Claude 키가 저장되어 있습니다. 비워 두면 그대로 씁니다.", "A Claude key is saved. Leave this empty to keep it.").to_string(), true),
-                    "openai" => (self.cfg.openai.as_ref().map(|p| format!("{} · {} {}", crate::openai::known_by_url(&p.url).map(|k| k.name).unwrap_or(p.url.as_str()), p.model, crate::sys::tr("저장됨", "saved"))).unwrap_or_default(), true),
-                    _ => (String::new(), false),
-                },
-            };
-            if !note.is_empty() {
-                ui.label(egui::RichText::new(note).size(11.5).color(if good { ui::GREEN() } else { ui::FAINT() }));
-            }
-            let link = ui.add(egui::Label::new(egui::RichText::new(crate::sys::tr("키가 없으신가요? Claude Console에서 만들기 ↗", "No key yet? Create one in the Claude Console ↗")).size(12.0).color(ui::ORANGE())).sense(egui::Sense::click()));
-            if link.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                ctx.open_url(egui::OpenUrl::new_tab("https://console.anthropic.com/settings/keys"));
-            }
-            ui.add_space(12.0);
-            // The less common ways: a local model or another address, an agent of your own.
-            let more = ui.add(egui::Label::new(egui::RichText::new(format!("{} {}", crate::sys::tr("다른 방법", "More options"), if self.more_open { "▾" } else { "▸" })).font(ui::bold(12.5)).color(ui::DIM())).sense(egui::Sense::click()));
-            if more.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                self.more_open = !self.more_open;
-            }
-            ui.add_space(6.0);
-            let pick = self.engine_pick.clone().unwrap_or_default();
-            if self.more_open {
-                // Two tiles a row: the third goes under them.
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-                    let half = (ui.available_width() - 9.0) / 2.0;
-                    for (id, title, sub) in [
-                        ("openai", crate::sys::tr("로컬·다른 모델", "Local or other model"), crate::sys::tr("주소와 모델을 직접 적기", "give the address and the model")),
-                        ("agent", crate::sys::tr("내 에이전트", "Your own agent"), crate::sys::tr("MCP 또는 AG-UI로 연결", "connects over MCP or AG-UI")),
-                        ("ssh", crate::sys::tr("서버 (SSH)", "A server (SSH)"), crate::sys::tr("서버의 Claude Code", "Claude Code on a server")),
-                    ] {
-                        let on = pick == id;
-                        let (r, p) = ui.allocate_painter(egui::vec2(half, 52.0), egui::Sense::click());
-                        p.rect_filled(r.rect, 14.0, if on { ui::ORANGE().gamma_multiply(0.14) } else { FIELD() });
-                        p.rect_stroke(r.rect, 14.0, egui::Stroke::new(if on { 1.5 } else { 1.0 }, if on { ui::ORANGE() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
-                        p.text(r.rect.left_top() + egui::vec2(14.0, 17.0), egui::Align2::LEFT_CENTER, title, ui::bold(13.0), ui::TEXT());
-                        p.text(r.rect.left_top() + egui::vec2(14.0, 36.0), egui::Align2::LEFT_CENTER, sub, ui::font(11.0), ui::FAINT());
-                        if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            self.engine_pick = Some(id.to_string());
-                            self.key_input.clear();
-                        }
+                    ui.add_space(10.0);
+                    let label = if first { crate::sys::tr("키 없이 데모 둘러보기", "Look around the demo without a key") } else { crate::sys::tr("닫기", "Close") };
+                    let wide = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), ui::bold(13.0), ui::TEXT()).size().x) + 44.0;
+                    let (r, p) = ui.allocate_painter(egui::vec2(wide.max(120.0), 40.0), egui::Sense::click());
+                    p.rect_stroke(r.rect, 20.0, egui::Stroke::new(1.0, if r.hovered() { ui::DIM() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
+                    p.text(r.rect.center(), egui::Align2::CENTER_CENTER, label, ui::bold(13.0), ui::TEXT());
+                    if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        close = true;
                     }
                 });
-                ui.add_space(8.0);
+            });
+        });
+        if save {
+            self.save_keys();
+        }
+        if close {
+            self.key_popup = false;
+            self.keys_loaded = false;
+            self.engine_pick = None;
+            self.perm_pick = None;
+            self.level_pick = None;
+            self.media_pick = None;
+            self.model_pick = None;
+        }
+    }
+
+    /// The engine saved now: api, claude-code, ssh, openai or agent.
+    fn current_engine(&self) -> &'static str {
+        if self.cfg.ssh {
+            "ssh"
+        } else if self.cfg.cc {
+            "claude-code"
+        } else if self.cfg.openai.is_some() {
+            "openai"
+        } else if self.cfg.external || self.cfg.agui.is_some() {
+            "agent"
+        } else {
+            "api"
+        }
+    }
+
+    /// Fill the window with what is saved, so that opening it and saving changes nothing.
+    fn load_key_window(&mut self, current: &str) {
+        self.engine_pick = Some(current.to_string());
+        // Whether the OpenAI-compatible service is one typed by hand ("Local or other model"), not one known from its key.
+        self.openai_by_hand = false;
+        if let Some(p) = crate::openai::settings() {
+            self.openai_by_hand = crate::openai::known_by_url(&p.url).is_none();
+            self.openai_input = [p.url, p.model, String::new()];
+        }
+        self.agui_input = crate::agui::settings().map(|s| s.url).unwrap_or_default();
+        if let Some(s) = crate::ssh::settings() {
+            let port = if s.port == 0 { String::new() } else { s.port.to_string() };
+            self.ssh_input = [s.host, s.user, port, s.key, s.dir, String::new()];
+        }
+        *self.ssh_test.lock().unwrap() = String::new();
+        self.model_pick = Some(self.cfg.model.clone());
+        self.limit_input = crate::usage::limit().map(|v| format!("{v}")).unwrap_or_default();
+        self.keys_loaded = true;
+    }
+
+    /// Left column: the ways in.
+    fn keys_ways(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, cc_version: &Option<String>, current: &str) {
+        section(ui, crate::sys::tr("누가 답할지", "Who answers"));
+        let pick = self.engine_pick.clone().unwrap_or_default();
+        let signed = cc_version.is_some() && crate::cc::signed_in();
+        let cc_sub = match (cc_version, signed) {
+            (None, _) => crate::sys::tr("Claude Code 설치가 필요합니다", "Needs Claude Code installed").to_string(),
+            (Some(_), true) => crate::sys::tr("로그인됨 · 키 필요 없음", "signed in · no key needed").to_string(),
+            (Some(_), false) => crate::sys::tr("누르면 브라우저에서 로그인", "press to sign in with your browser").to_string(),
+        };
+        let key_on = pick == "api" || (pick == "openai" && !self.openai_by_hand);
+        let ways: [(&str, &str, String, bool); 5] = [
+            ("claude-code", crate::sys::tr("Claude로 로그인", "Sign in with Claude"), cc_sub, pick == "claude-code"),
+            ("key", crate::sys::tr("API 키", "An API key"), crate::sys::tr("Claude · OpenAI · Gemini 등 · 쓴 만큼 과금", "Claude, OpenAI, Gemini, … · pay per use").to_string(), key_on),
+            ("openai", crate::sys::tr("로컬·다른 모델", "Local or other model"), crate::sys::tr("주소와 모델을 직접 적기", "give an address and a model").to_string(), pick == "openai" && self.openai_by_hand),
+            ("ssh", crate::sys::tr("서버 (SSH)", "A server (SSH)"), crate::sys::tr("서버의 Claude Code", "Claude Code on a server").to_string(), pick == "ssh"),
+            ("agent", crate::sys::tr("내 에이전트", "Your own agent"), crate::sys::tr("MCP 또는 AG-UI로 연결", "connects over MCP or AG-UI").to_string(), pick == "agent"),
+        ];
+        let w = ui.available_width();
+        for (id, title, sub, on) in ways {
+            let in_use = match id {
+                "key" => current == "api" || (current == "openai" && self.cfg.openai.as_ref().map(|p| crate::openai::known_by_url(&p.url).is_some()).unwrap_or(false)),
+                "openai" => current == "openai" && self.cfg.openai.as_ref().map(|p| crate::openai::known_by_url(&p.url).is_none()).unwrap_or(false),
+                _ => current == id,
+            } && !self.cfg.demo();
+            if tile(ui, w, 54.0, title, &sub, on, in_use) {
+                match id {
+                    "claude-code" => {
+                        if cc_version.is_none() {
+                            ctx.open_url(egui::OpenUrl::new_tab("https://claude.com/claude-code"));
+                        } else {
+                            if !signed {
+                                crate::cc::sign_in();
+                            }
+                            self.engine_pick = Some(id.into());
+                        }
+                    }
+                    "key" => {
+                        let typed = crate::openai::recognize(&self.key_input);
+                        self.engine_pick = Some(if typed.map(|k| !k.is_claude()).unwrap_or(false) || (current == "openai" && !self.openai_by_hand && self.key_input.trim().is_empty()) { "openai" } else { "api" }.into());
+                        self.openai_by_hand = false;
+                    }
+                    "openai" => {
+                        self.engine_pick = Some(id.into());
+                        if !self.openai_by_hand && crate::openai::known_by_url(&self.openai_input[0]).is_some() {
+                            self.openai_input = Default::default();
+                        }
+                        self.openai_by_hand = true;
+                    }
+                    _ => self.engine_pick = Some(id.into()),
+                }
             }
-            let more_open = self.more_open;
-            let pick = self.engine_pick.clone().unwrap_or_default();
-            let pick_cc = pick == "claude-code" && cc_version.is_some();
-            let (pick_openai, pick_agent, pick_ssh) = (pick == "openai", pick == "agent", pick == "ssh");
-            ui.add_space(4.0);
-            if pick_ssh {
-                ui.label(
-                    egui::RichText::new(crate::sys::tr(
-                        "서버에 SSH로 붙어 그 서버의 Claude Code에 맡깁니다. 파일과 명령은 서버의 것이고, 기억·경로 지도·작업자 같은 APERIT 기능은 이 컴퓨터에서 그대로 씁니다. 서버에 Claude Code가 설치되고 로그인되어 있어야 합니다.",
-                        "APERIT connects to a server over SSH and hands each turn to the Claude Code there. Files and commands are the server's; APERIT's own features such as memory, route maps and workers stay on this computer. Claude Code must be installed and signed in on the server.",
-                    ))
-                    .size(12.0)
-                    .color(ui::DIM()),
-                );
-                ui.add_space(10.0);
-                let label = |ui: &mut egui::Ui, text: &str| {
-                    ui.label(egui::RichText::new(text).font(ui::bold(12.0)).color(ui::TEXT()));
-                    ui.add_space(2.0);
-                };
-                label(ui, crate::sys::tr("서버 주소", "Server address"));
-                field_as(ui, &mut self.ssh_input[0], "example.com · 203.0.113.7", false);
+            ui.add_space(8.0);
+        }
+    }
+
+    /// Middle column: what the chosen way needs.
+    fn keys_details(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, cc_version: &Option<String>) {
+        let pick = self.engine_pick.clone().unwrap_or_default();
+        let note = |ui: &mut egui::Ui, text: &str| {
+            ui.label(egui::RichText::new(text).size(12.0).color(ui::DIM()));
+            ui.add_space(10.0);
+        };
+        match pick.as_str() {
+            "claude-code" => {
+                section(ui, crate::sys::tr("이 컴퓨터의 Claude Code", "Claude Code on this computer"));
+                match cc_version {
+                    Some(v) => small(ui, &format!("Claude Code {v} · {}", if crate::cc::signed_in() { crate::sys::tr("로그인됨", "signed in") } else { crate::sys::tr("로그인 필요", "not signed in") }), crate::cc::signed_in()),
+                    None => small(ui, crate::sys::tr("설치되어 있지 않습니다", "Not installed"), false),
+                }
                 ui.add_space(6.0);
-                ui.columns(2, |cols| {
-                    label(&mut cols[0], crate::sys::tr("사용자", "User"));
-                    field_as(&mut cols[0], &mut self.ssh_input[1], "ubuntu", false);
-                    label(&mut cols[1], crate::sys::tr("포트", "Port"));
-                    field_as(&mut cols[1], &mut self.ssh_input[2], "22", false);
-                });
-                ui.add_space(6.0);
-                label(ui, crate::sys::tr("키 파일 (선택)", "Key file (optional)"));
-                field_as(ui, &mut self.ssh_input[3], crate::sys::tr("비워 두면 ssh 에이전트와 기본 키를 씁니다", "Empty: the ssh agent and your usual keys"), false);
-                ui.add_space(6.0);
+                note(ui, crate::sys::tr(
+                    "턴마다 Claude Code에 맡깁니다. Claude Code의 로그인, CLAUDE.md, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용되고, 경로 지도·기억·작업자 같은 APERIT 기능도 그대로 씁니다. API 키는 필요 없습니다.",
+                    "Each turn goes to Claude Code. Its login, CLAUDE.md, skills, hooks, MCP servers and permission settings apply, and APERIT's own features (route maps, memory, workers) keep working. No API key is needed.",
+                ));
+                self.permission_cc(ui);
+            }
+            "ssh" => {
+                section(ui, crate::sys::tr("서버의 Claude Code (SSH)", "Claude Code on a server (SSH)"));
+                note(ui, crate::sys::tr(
+                    "서버에 SSH로 붙어 그 서버의 Claude Code에 맡깁니다. 파일과 명령은 서버의 것이고, 기억과 APERIT 도구는 이 컴퓨터에 남습니다.",
+                    "APERIT signs in to a server over SSH and hands each turn to its Claude Code. Files and commands are the server's; memory and APERIT's tools stay on this computer.",
+                ));
                 let saved_password = crate::secret::get(crate::secret::SSH_PASSWORD).is_some();
-                label(ui, crate::sys::tr("비밀번호 (선택)", "Password (optional)"));
-                field(ui, &mut self.ssh_input[5], if saved_password { crate::sys::tr("저장됨 · 비워 두면 그대로 씁니다", "Saved · leave empty to keep it") } else { crate::sys::tr("키로 로그인하면 비워 둡니다", "Leave empty when a key signs you in") });
-                ui.add_space(6.0);
-                label(ui, crate::sys::tr("서버의 작업 폴더 (선택)", "Folder on the server (optional)"));
-                field_as(ui, &mut self.ssh_input[4], "~/work", false);
-                ui.add_space(8.0);
+                let [host, user, port, key, dir, password] = &mut self.ssh_input;
+                pair(ui, (crate::sys::tr("서버 주소", "Server address"), host, "example.com", false, 0.72), (crate::sys::tr("포트", "Port"), port, "22", false, 0.28));
+                pair(ui, (crate::sys::tr("사용자", "User"), user, "ubuntu", false, 0.4), (crate::sys::tr("키 파일 (선택)", "Key file (optional)"), key, crate::sys::tr("비우면 ssh 에이전트", "empty: the ssh agent"), false, 0.6));
+                pair(
+                    ui,
+                    (crate::sys::tr("비밀번호 (선택)", "Password (optional)"), password, if saved_password { crate::sys::tr("저장됨", "saved") } else { crate::sys::tr("키로 로그인하면 비움", "empty with a key") }, true, 0.5),
+                    (crate::sys::tr("작업 폴더 (선택)", "Folder (optional)"), dir, "~/work", false, 0.5),
+                );
                 // Try it before saving: connect and ask the server's Claude Code for its version.
                 let status = self.ssh_test.lock().unwrap().clone();
                 let testing = status == "…";
-                let (r, p) = ui.allocate_painter(egui::vec2(150.0, 30.0), if testing { egui::Sense::hover() } else { egui::Sense::click() });
-                p.rect_stroke(r.rect, 15.0, egui::Stroke::new(1.0, if r.hovered() { ui::DIM() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
-                p.text(r.rect.center(), egui::Align2::CENTER_CENTER, if testing { crate::sys::tr("연결하는 중…", "Connecting…") } else { crate::sys::tr("연결 시험", "Test the connection") }, ui::bold(12.0), ui::TEXT());
-                if !testing && !self.ssh_input[0].trim().is_empty() && r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                    let server = server_from(&self.ssh_input);
-                    let password = self.ssh_input[5].trim().to_string();
-                    let out = self.ssh_test.clone();
-                    *out.lock().unwrap() = "…".into();
-                    let ctx = ctx.clone();
-                    std::thread::spawn(move || {
-                        let said = match crate::ssh::check(&server, Some(&password)) {
-                            Ok(v) => format!("ok {} · Claude Code {v}", crate::sys::tr("연결됨", "Connected")),
-                            Err(e) => e,
+                ui.horizontal(|ui| {
+                    let (r, p) = ui.allocate_painter(egui::vec2(150.0, 30.0), if testing { egui::Sense::hover() } else { egui::Sense::click() });
+                    p.rect_stroke(r.rect, 15.0, egui::Stroke::new(1.0, if r.hovered() { ui::DIM() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
+                    p.text(r.rect.center(), egui::Align2::CENTER_CENTER, if testing { crate::sys::tr("연결하는 중…", "Connecting…") } else { crate::sys::tr("연결 시험", "Test the connection") }, ui::bold(12.0), ui::TEXT());
+                    if !testing && !self.ssh_input[0].trim().is_empty() && r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        let server = server_from(&self.ssh_input);
+                        let password = self.ssh_input[5].trim().to_string();
+                        let out = self.ssh_test.clone();
+                        *out.lock().unwrap() = "…".into();
+                        let ctx = ctx.clone();
+                        std::thread::spawn(move || {
+                            let said = match crate::ssh::check(&server, Some(&password)) {
+                                Ok(v) => format!("ok {} · Claude Code {v}", crate::sys::tr("연결됨", "Connected")),
+                                Err(e) => e,
+                            };
+                            *out.lock().unwrap() = said;
+                            ctx.request_repaint();
+                        });
+                    }
+                    if !status.is_empty() && !testing {
+                        let (good, text) = match status.strip_prefix("ok ") {
+                            Some(t) => (true, t.to_string()),
+                            None => (false, status.clone()),
                         };
-                        *out.lock().unwrap() = said;
-                        ctx.request_repaint();
-                    });
-                }
-                if !status.is_empty() && !testing {
-                    let (good, text) = match status.strip_prefix("ok ") {
-                        Some(t) => (true, t.to_string()),
-                        None => (false, status.clone()),
-                    };
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new(text).size(11.5).color(if good { ui::GREEN() } else { ui::RED() }));
-                }
-                ui.add_space(12.0);
-            }
-            if pick_cc {
-                ui.label(
-                    egui::RichText::new(crate::sys::tr(
-                        "이 컴퓨터의 Claude Code에 맡깁니다. Claude Code의 로그인, CLAUDE.md, 스킬, 훅, MCP 서버, 권한 설정이 그대로 적용됩니다. API 키는 필요 없습니다.
-파일·명령·웹 작업은 Claude Code의 도구로 하고, 경로 지도, 기억, 작업자 같은 APERIT 기능은 그대로 씁니다.",
-                        "APERIT hands each turn to the Claude Code on this computer. Its login, CLAUDE.md, skills, hooks, MCP servers and permission settings all apply. No API key is needed.
-Files, commands and the web go through Claude Code's tools; APERIT's own features such as route maps, memory and workers keep working.",
-                    ))
-                    .size(12.0)
-                    .color(ui::DIM()),
-                );
-                ui.add_space(12.0);
-            }
-            if pick_cc || pick_ssh {
-                // 권한: Claude Code 가 파일을 고치거나 명령을 실행할 때 어디까지 묻지 않고 하게 할지.
-                ui.label(egui::RichText::new(crate::sys::tr("묻지 않고 해도 되는 일", "What it may do without asking")).font(ui::bold(12.5)).color(ui::TEXT()));
-                ui.add_space(4.0);
-                let now = self.perm_pick.get_or_insert_with(crate::cc::permission).clone();
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    let third = (ui.available_width() - 12.0) / 3.0;
-                    for (value, name) in [
-                        ("default", crate::sys::tr("내 설정대로", "My settings")),
-                        ("acceptEdits", crate::sys::tr("파일 수정", "File edits")),
-                        ("bypassPermissions", crate::sys::tr("전부", "Everything")),
-                    ] {
-                        let on = now == value;
-                        let (r, p) = ui.allocate_painter(egui::vec2(third, 30.0), egui::Sense::click());
-                        p.rect_filled(r.rect, 10.0, if on { ui::ORANGE().gamma_multiply(0.14) } else { FIELD() });
-                        p.rect_stroke(r.rect, 10.0, egui::Stroke::new(1.0, if on { ui::ORANGE() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
-                        p.text(r.rect.center(), egui::Align2::CENTER_CENTER, name, ui::bold(12.0), ui::TEXT());
-                        if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            self.perm_pick = Some(value.to_string());
-                        }
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new(text).size(11.5).color(if good { ui::GREEN() } else { ui::RED() }));
                     }
                 });
-                ui.add_space(5.0);
-                ui.label(
-                    egui::RichText::new(match now.as_str() {
-                        "acceptEdits" => crate::sys::tr("파일을 만들고 고치는 것은 묻지 않고 합니다. 그 밖의 명령은 Claude Code 설정을 따릅니다.", "Creates and edits files without asking. Other commands follow your Claude Code settings."),
-                        "bypassPermissions" => crate::sys::tr("명령 실행과 파일 수정을 전부 묻지 않고 합니다. API 키 방식의 APERIT와 같습니다.", "Runs commands and edits files without asking, as APERIT does with an API key."),
-                        _ => crate::sys::tr("Claude Code에서 허용해 둔 것만 합니다. 나머지는 거절되고, 그렇다고 알려 줍니다.", "Does only what your Claude Code settings allow. The rest is refused, and it tells you so."),
-                    })
-                    .size(11.5)
-                    .color(ui::FAINT()),
-                );
-                ui.add_space(14.0);
+                ui.add_space(12.0);
+                self.permission_cc(ui);
             }
-            let caption = |ui: &mut egui::Ui, name: &str, state: &str, good: bool| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(name).font(ui::bold(12.5)).color(ui::TEXT()));
-                    ui.label(egui::RichText::new(state).size(11.5).color(if good { ui::GREEN() } else { ui::FAINT() }));
-                });
-                ui.add_space(4.0);
-            };
-            if pick == "api" || pick_openai {
-                // What APERIT's own engine may do on this computer without asking first.
-                ui.label(egui::RichText::new(crate::sys::tr("묻지 않고 해도 되는 일", "What it may do without asking")).font(ui::bold(12.5)).color(ui::TEXT()));
-                ui.add_space(4.0);
-                let now = self.level_pick.get_or_insert_with(|| crate::permit::level().name().to_string()).clone();
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    let third = (ui.available_width() - 12.0) / 3.0;
-                    for (value, name) in [("ask", crate::sys::tr("먼저 묻기", "Ask first")), ("edits", crate::sys::tr("파일 수정", "File edits")), ("all", crate::sys::tr("전부", "Everything"))] {
-                        let on = now == value;
-                        let (r, p) = ui.allocate_painter(egui::vec2(third, 30.0), egui::Sense::click());
-                        p.rect_filled(r.rect, 10.0, if on { ui::ORANGE().gamma_multiply(0.14) } else { FIELD() });
-                        p.rect_stroke(r.rect, 10.0, egui::Stroke::new(1.0, if on { ui::ORANGE() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
-                        p.text(r.rect.center(), egui::Align2::CENTER_CENTER, name, ui::bold(12.0), ui::TEXT());
-                        if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            self.level_pick = Some(value.to_string());
-                        }
-                    }
-                });
-                ui.add_space(5.0);
-                ui.label(
-                    egui::RichText::new(match now.as_str() {
-                        "edits" => crate::sys::tr("파일을 만들고 고치는 것은 묻지 않고 합니다. 명령을 실행하기 전에는 카드로 묻습니다.", "Creates and changes files without asking. Asks with a card before running a command."),
-                        "all" => crate::sys::tr("명령 실행과 파일 수정을 전부 묻지 않고 합니다.", "Runs commands and changes files without asking."),
-                        _ => crate::sys::tr("명령을 실행하거나 파일을 만들고 고치기 전에 카드로 묻습니다. 읽기와 검색은 묻지 않습니다.", "Asks with a card before running a command or creating or changing a file. Reading and searching are not asked about."),
-                    })
-                    .size(11.5)
-                    .color(ui::FAINT()),
-                );
-                ui.add_space(14.0);
-            }
-            if pick_openai && more_open {
-                ui.label(
-                    egui::RichText::new(crate::sys::tr(
-                        "APERIT의 기억, 작업자, 도구는 그대로 쓰고 모델만 바꿉니다. OpenAI, Ollama·LM Studio의 로컬 모델, OpenRouter처럼 chat/completions 형식을 받는 곳이면 됩니다. 웹 검색 도구는 Claude에서만 됩니다.",
-                        "Keeps APERIT's memory, workers and tools and changes only the model. Anything that takes the chat/completions format works: OpenAI, a local model behind Ollama or LM Studio, OpenRouter. Web search is available with Claude only.",
-                    ))
-                    .size(12.0)
-                    .color(ui::DIM()),
-                );
-                ui.add_space(10.0);
+            "openai" if self.openai_by_hand => {
+                section(ui, crate::sys::tr("로컬·다른 모델", "Local or other model"));
+                note(ui, crate::sys::tr(
+                    "OpenAI 형식(chat/completions)을 받는 곳이면 됩니다: Ollama·LM Studio의 로컬 모델, OpenRouter, 사내 게이트웨이. APERIT의 기억·작업자·도구는 그대로 씁니다. 웹 검색은 Claude에서만 됩니다.",
+                    "Anything that takes the OpenAI format (chat/completions): a local model in Ollama or LM Studio, OpenRouter, a gateway of your own. APERIT's memory, workers and tools stay. Web search is Claude only.",
+                ));
                 let saved = self.cfg.openai.is_some();
-                caption(ui, crate::sys::tr("주소", "Base address"), "", false);
-                field_as(ui, &mut self.openai_input[0], "http://localhost:11434/v1", false);
+                let [url, model, key] = &mut self.openai_input;
+                label(ui, crate::sys::tr("주소", "Base address"));
+                input(ui, url, "http://localhost:11434/v1", false);
                 ui.add_space(8.0);
-                caption(ui, crate::sys::tr("모델", "Model"), "", false);
-                field_as(ui, &mut self.openai_input[1], "qwen3 · gpt-5 · …", false);
-                ui.add_space(8.0);
-                caption(ui, crate::sys::tr("키", "Key"), if saved { crate::sys::tr("비워 두면 그대로", "leave empty to keep") } else { crate::sys::tr("로컬 모델이면 비워 둠", "leave empty for a local model") }, false);
-                field(ui, &mut self.openai_input[2], "sk-…");
-                ui.add_space(14.0);
+                pair(ui, (crate::sys::tr("모델", "Model"), model, "qwen3 · gpt-5", false, 0.5), (crate::sys::tr("키", "Key"), key, if saved { crate::sys::tr("비우면 그대로", "empty: keep") } else { crate::sys::tr("로컬이면 비움", "empty for local") }, true, 0.5));
+                self.permission_own(ui);
             }
-            if pick_agent && more_open {
-                ui.label(
-                    egui::RichText::new(crate::sys::tr(
-                        "APERIT 안의 모델은 쉬고, 바깥의 에이전트가 이 보드를 화면으로 씁니다. 여기에 치는 말과 누르는 선택은 그 에이전트에게 전해집니다.",
-                        "No model runs inside APERIT; an agent outside uses this board as its screen. What you type and pick here goes to that agent.",
-                    ))
-                    .size(12.0)
-                    .color(ui::DIM()),
-                );
-                ui.add_space(10.0);
-                // MCP: the agent comes to APERIT.
+            "agent" => {
+                section(ui, crate::sys::tr("내 에이전트", "Your own agent"));
+                note(ui, crate::sys::tr(
+                    "APERIT 안의 모델은 쉬고, 바깥의 에이전트가 이 보드를 화면으로 씁니다. 여기서 치는 말과 누르는 선택은 그 에이전트에게 갑니다.",
+                    "No model runs inside APERIT; an agent outside uses this board as its screen. What you type and pick here goes to that agent.",
+                ));
                 let open = crate::mcp::outside();
-                caption(ui, "MCP", &match &open { Some((port, _)) => format!("http://127.0.0.1:{port}/mcp"), None => crate::sys::tr("저장하면 열립니다", "opens when you save").to_string() }, open.is_some());
-                ui.label(egui::RichText::new(crate::sys::tr("Claude Code, Cursor처럼 MCP를 쓰는 에이전트는 이 주소로 붙습니다. 도구는 screen, board_read, events, guide 입니다.", "Agents that speak MCP (Claude Code, Cursor) connect to this address. The tools are screen, board_read, events and guide.")).size(11.5).color(ui::FAINT()));
+                label(ui, "MCP");
+                small(ui, &match &open { Some((port, _)) => format!("http://127.0.0.1:{port}/mcp · screen, board_read, events, guide"), None => crate::sys::tr("저장하면 열립니다", "Opens when you save").to_string() }, open.is_some());
                 if let Some((port, token)) = &open {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
                         let half = (ui.available_width() - 6.0) / 2.0;
-                        for (label, text) in [
+                        for (text, copy) in [
                             (crate::sys::tr("Claude Code 명령 복사", "Copy the Claude Code command"), crate::mcp::claude_code_command(*port, token)),
                             (crate::sys::tr("설정(JSON) 복사", "Copy the config (JSON)"), crate::mcp::client_config_text(*port, token)),
                         ] {
                             let (r, p) = ui.allocate_painter(egui::vec2(half, 30.0), egui::Sense::click());
                             p.rect_stroke(r.rect, 10.0, egui::Stroke::new(1.0, if r.hovered() { ui::DIM() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
-                            p.text(r.rect.center(), egui::Align2::CENTER_CENTER, label, ui::bold(11.5), ui::TEXT());
+                            p.text(r.rect.center(), egui::Align2::CENTER_CENTER, text, ui::bold(11.5), ui::TEXT());
                             if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                ctx.copy_text(text);
+                                ctx.copy_text(copy);
                             }
                         }
                     });
                 }
                 ui.add_space(12.0);
-                // What an agent outside may put on the board: cards that load or open something are off unless allowed.
+                // Cards that load an address or a file the agent chose: off unless allowed.
                 let media = *self.media_pick.get_or_insert_with(crate::mcp::outside_media);
                 ui.horizontal(|ui| {
                     let (r, p) = ui.allocate_painter(egui::vec2(34.0, 20.0), egui::Sense::click());
@@ -990,164 +917,335 @@ Files, commands and the web go through Claude Code's tools; APERIT's own feature
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         self.media_pick = Some(!media);
                     }
-                    ui.label(egui::RichText::new(crate::sys::tr("웹 페이지·그림·파일 카드를 만들게 허용", "Let it create web, image and file cards")).size(12.0).color(ui::TEXT()));
+                    ui.label(egui::RichText::new(crate::sys::tr("웹 페이지·그림·파일 카드를 허용 (믿는 에이전트에만)", "Allow web, image and file cards (trusted agents only)")).size(12.0).color(ui::TEXT()));
                 });
-                ui.label(egui::RichText::new(crate::sys::tr("이 카드들은 에이전트가 고른 주소나 이 컴퓨터의 파일을 불러옵니다. 믿는 에이전트에게만 켭니다.", "These cards load an address or a file on this computer that the agent chose. Turn it on only for an agent you trust.")).size(11.5).color(ui::FAINT()));
                 ui.add_space(12.0);
-                // AG-UI: APERIT goes to the agent.
-                caption(ui, "AG-UI", crate::sys::tr("선택", "optional"), false);
-                field_as(ui, &mut self.agui_input, "http://localhost:8000/agent", false);
-                ui.add_space(5.0);
-                ui.label(egui::RichText::new(crate::sys::tr("LangGraph, CrewAI, Pydantic AI처럼 AG-UI를 쓰는 에이전트의 주소를 적으면 APERIT가 턴마다 그 주소를 부릅니다. 비워 두면 MCP로 오는 에이전트를 기다립니다.", "Give the address of an agent that speaks AG-UI (LangGraph, CrewAI, Pydantic AI) and APERIT calls it on every turn. Leave it empty to wait for an agent over MCP.")).size(11.5).color(ui::FAINT()));
-                ui.add_space(14.0);
+                label(ui, crate::sys::tr("AG-UI 주소 (선택)", "AG-UI address (optional)"));
+                input(ui, &mut self.agui_input, "http://localhost:8000/agent", false);
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(crate::sys::tr("LangGraph, CrewAI, Pydantic AI 같은 에이전트의 주소. 비우면 MCP로 오는 에이전트를 기다립니다.", "An agent built with LangGraph, CrewAI, Pydantic AI and the like. Empty: wait for an agent over MCP.")).size(11.5).color(ui::FAINT()));
             }
-            if more_open {
-            let has_eleven = crate::eleven::key().is_some();
-            caption(ui, crate::sys::tr("ElevenLabs 키", "ElevenLabs key"), if has_eleven { crate::sys::tr("저장됨", "saved") } else { crate::sys::tr("말로 대화할 때만", "only to talk") }, has_eleven);
-            field(ui, &mut self.eleven_input, if has_eleven { crate::sys::tr("비워 두면 지금 키를 그대로 씁니다", "Leave empty to keep the current key") } else { crate::sys::tr("없어도 됩니다", "Not needed to start") });
-            ui.add_space(10.0);
-            }
-            if !pick_agent && more_open {
-            caption(ui, crate::sys::tr("TypeSafe Jev 키", "TypeSafe Jev key"), if has_jev { crate::sys::tr("저장됨", "saved") } else { crate::sys::tr("선택", "optional") }, has_jev);
-            field(ui, &mut self.jev_input, if has_jev { crate::sys::tr("비워 두면 지금 키를 그대로 씁니다", "Leave empty to keep the current key") } else { crate::sys::tr("없어도 됩니다", "Not needed to start") });
-            }
-            if !pick_agent && more_open {
-            ui.add_space(6.0);
-            ui.label(
-                egui::RichText::new(crate::sys::tr(
-                    "Jev는 글을 쓰지 않고 판단만 하는 작고 빠른 모델입니다. 넣으면 말이 어느 주제에 속하는지 미리 고르고, 중요한 카드를 앞에 놓고, 겹치는 주제를 정리하고, 옛 대화에서 필요한 것만 골라 옵니다. 없어도 APERIT는 그대로 동작합니다.",
-                    "Jev is a small, fast model that only makes decisions. With it, APERIT picks the topic before answering, puts important cards first, tidies overlapping topics, and recalls only the past conversations that matter. Without it, APERIT works the same.",
-                ))
-                .size(11.5)
-                .color(ui::FAINT()),
-            );
-            }
-            (pick, current, has_key, pick_cc, pick_openai, pick_agent, pick_ssh)
-            }).inner;
-            ui.add_space(12.0);
-            let jev_typed = self.jev_input.trim().len() > 8 || self.eleven_input.trim().len() > 8 || self.level_pick.as_deref().map(|l| l != crate::permit::level().name()).unwrap_or(false);
-            let ready = if pick_ssh {
-                !self.ssh_input[0].trim().is_empty() && self.ssh_input[2].trim().parse::<u16>().map(|_| true).unwrap_or(self.ssh_input[2].trim().is_empty())
-            } else if pick_cc {
-                pick != current || jev_typed || self.perm_pick.as_deref().map(|p| p != crate::cc::permission()).unwrap_or(false)
-            } else if pick_openai {
-                // An address and a model, and something changed.
-                let [url, model, key] = &self.openai_input;
-                let (url, model) = (url.trim().trim_end_matches('/'), model.trim());
-                (url.starts_with("http://") || url.starts_with("https://")) && (!model.is_empty() || crate::openai::known_by_url(url).is_some()) && (pick != current || jev_typed || !key.trim().is_empty() || self.cfg.openai.as_ref().map(|p| p.url != url || p.model != model).unwrap_or(true))
-            } else if pick_agent {
-                let url = self.agui_input.trim();
-                (url.is_empty() || url.starts_with("http://") || url.starts_with("https://")) && (pick != current || jev_typed || self.media_pick.map(|m| m != crate::mcp::outside_media()).unwrap_or(false) || self.cfg.agui.as_ref().map(|s| s.url.as_str()).unwrap_or("") != url)
-            } else {
-                crate::openai::recognize(&self.key_input).map(|k| k.is_claude()).unwrap_or(false) || (self.key_input.trim().is_empty() && has_key && (jev_typed || pick != current))
-            };
-            let has_key = has_key || !self.cfg.demo();
-            let (r, p) = ui.allocate_painter(egui::vec2(ui.available_width(), 42.0), egui::Sense::click());
-            p.rect_filled(r.rect, 21.0, if ready { ui::TEXT() } else { FIELD() });
-            p.text(r.rect.center(), egui::Align2::CENTER_CENTER, if has_key { crate::sys::tr("저장", "Save") } else { crate::sys::tr("저장하고 시작", "Save and start") }, ui::bold(13.5), if ready { PANEL() } else { ui::FAINT() });
-            if ready && r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                save = true;
-            }
-            ui.add_space(8.0);
-            let (r, p) = ui.allocate_painter(egui::vec2(ui.available_width(), 38.0), egui::Sense::click());
-            p.rect_stroke(r.rect, 19.0, egui::Stroke::new(1.0, if r.hovered() { ui::DIM() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
-            p.text(r.rect.center(), egui::Align2::CENTER_CENTER, if has_key { crate::sys::tr("닫기", "Close") } else { crate::sys::tr("키 없이 데모 둘러보기", "Look around the demo without a key") }, ui::bold(13.0), ui::TEXT());
-            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                close = true;
-            }
-            if !has_key {
-                ui.add_space(10.0);
-                ui.label(egui::RichText::new(crate::sys::tr("데모에서는 무엇을 입력해도 준비된 장면이 재생됩니다. AI가 실제로 답하지는 않습니다.", "In the demo, anything you type plays prepared scenes. The AI does not actually answer.")).size(11.5).color(ui::FAINT()));
-            }
-        });
-        if save {
-            let base = sys::base_dir();
-            let was_demo = self.cfg.demo();
-            let engine = match self.engine_pick.as_deref() {
-                Some("claude-code") if crate::cc::version().is_some() => "claude-code",
-                Some("openai") => {
-                    // Address, model, key: one per line. An empty key box keeps the key that is saved.
-                    let [url, model, key] = &self.openai_input;
-                    let key = if key.trim().is_empty() { crate::secret::get(crate::secret::OPENAI).unwrap_or_default() } else { key.trim().to_string() };
-                    let url = url.trim().trim_end_matches('/');
-                    // A service APERIT knows: it picks the model from the service's own list.
-                    let model = match crate::openai::known_by_url(url) {
-                        Some(k) if model.trim().is_empty() => k.model(&key),
-                        _ => model.trim().to_string(),
-                    };
-                    // The address and the model are not secret; the key is kept by the app.
-                    let _ = std::fs::write(base.join("openai.txt"), format!("{url}\n{model}\n"));
-                    if let Err(e) = crate::secret::set(crate::secret::OPENAI, &key) {
-                        self.error = Some(e);
+            _ => {
+                // An API key: the key says whose it is.
+                section(ui, crate::sys::tr("API 키", "An API key"));
+                let has_key = self.cfg.key.is_some();
+                input(ui, &mut self.key_input, if has_key { crate::sys::tr("Claude 키 저장됨 · 비우면 그대로", "A Claude key is saved · leave empty to keep it") } else { "sk-ant-… · sk-… · AIza…" }, true);
+                let typed = self.key_input.trim().to_string();
+                let known = crate::openai::recognize(&typed);
+                if let Some(k) = known {
+                    if k.is_claude() {
+                        self.engine_pick = Some("api".into());
+                    } else {
+                        self.engine_pick = Some("openai".into());
+                        self.openai_input = [k.url.to_string(), String::new(), typed.clone()];
+                        self.openai_by_hand = false;
                     }
-                    "openai"
                 }
-                Some("agent") if !self.agui_input.trim().is_empty() => {
-                    // Only the address: header lines are kept by the app (secret.rs).
-                    let _ = std::fs::write(base.join("agui.txt"), format!("{}\n", self.agui_input.trim()));
-                    "ag-ui"
-                }
-                Some("agent") => "external",
-                Some("ssh") => {
-                    if let Err(e) = crate::ssh::save(&server_from(&self.ssh_input)) {
-                        self.error = Some(e);
-                    }
-                    if !self.ssh_input[5].trim().is_empty() {
-                        if let Err(e) = crate::secret::set(crate::secret::SSH_PASSWORD, self.ssh_input[5].trim()) {
-                            self.error = Some(e);
+                ui.add_space(4.0);
+                match known {
+                    Some(k) if k.is_claude() => small(ui, crate::sys::tr("Claude 키입니다.", "A Claude key."), true),
+                    Some(k) => small(ui, &format!("{} {}", k.name, crate::sys::tr("키입니다. 모델은 알아서 고릅니다.", "key. APERIT picks the model.")), true),
+                    None if typed.len() > 8 => small(ui, crate::sys::tr("처음 보는 키입니다. '로컬·다른 모델'에서 주소를 적어 주세요.", "A key APERIT does not know: give its address under \"Local or other model\"."), false),
+                    None => {
+                        if let Some(p) = self.cfg.openai.as_ref().filter(|_| self.engine_pick.as_deref() == Some("openai")) {
+                            small(ui, &format!("{} · {} {}", crate::openai::known_by_url(&p.url).map(|k| k.name).unwrap_or(p.url.as_str()), p.model, crate::sys::tr("저장됨", "saved")), true);
                         }
                     }
-                    self.ssh_input[5].clear();
-                    "ssh"
                 }
-                _ => "api",
-            };
-            let _ = std::fs::write(base.join("engine.txt"), engine);
-            if let Some(p) = self.perm_pick.take() {
-                let _ = std::fs::write(base.join("claude-permission.txt"), p);
+                let link = ui.add(egui::Label::new(egui::RichText::new(crate::sys::tr("Claude 키 만들기 ↗", "Create a Claude key ↗")).size(12.0).color(ui::ORANGE())).sense(egui::Sense::click()));
+                if link.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    ctx.open_url(egui::OpenUrl::new_tab("https://console.anthropic.com/settings/keys"));
+                }
+                ui.add_space(12.0);
+                if self.engine_pick.as_deref() == Some("api") {
+                    self.model_choice(ui);
+                }
+                self.permission_own(ui);
             }
-            if let Some(l) = self.level_pick.take() {
-                let _ = std::fs::write(base.join("permission.txt"), l);
+        }
+    }
+
+    /// Which Claude model answers, with what a turn roughly costs.
+    fn model_choice(&mut self, ui: &mut egui::Ui) {
+        label(ui, crate::sys::tr("모델", "Model"));
+        let now = self.model_pick.clone().unwrap_or_else(|| self.cfg.model.clone());
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let third = (ui.available_width() - 12.0) / 3.0;
+            for (id, name) in [("claude-opus-5-5", "Opus 5.5"), ("claude-sonnet-5-5", "Sonnet 5.5"), ("claude-haiku-5-5", "Haiku 5.5")] {
+                let cost = crate::usage::per_turn(id).map(crate::usage::money).unwrap_or_default();
+                let sub = format!("{cost} {}", crate::sys::tr("/ 턴", "a turn"));
+                if tile(ui, third, 46.0, name, &sub, now == id, false) {
+                    self.model_pick = Some(id.into());
+                }
             }
-            if let Some(m) = self.media_pick.take() {
-                let _ = std::fs::write(base.join("outside-media.txt"), if m { "yes" } else { "no" });
+        });
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(crate::sys::tr("Opus가 가장 뛰어나고, Sonnet은 그 절반 값, Haiku는 가장 빠르고 쌉니다. 턴 값은 지시문을 캐시에서 읽는 보통의 턴 기준 대략치입니다.", "Opus is the most capable; Sonnet costs half as much; Haiku is the fastest and cheapest. A turn's cost is a rough figure for an ordinary turn with the instructions read from the cache.")).size(11.5).color(ui::FAINT()));
+        ui.add_space(12.0);
+    }
+
+    /// Right column: spending, voice, and the decision model.
+    fn keys_extras(&mut self, ui: &mut egui::Ui) {
+        section(ui, crate::sys::tr("사용 금액", "Spending"));
+        let (today, month) = crate::usage::totals();
+        ui.horizontal(|ui| {
+            for (name, value) in [(crate::sys::tr("오늘", "Today"), today), (crate::sys::tr("이번 달", "This month"), month)] {
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(name).size(11.5).color(ui::FAINT()));
+                    ui.label(egui::RichText::new(format!("${value:.2}")).font(ui::bold(18.0)).color(ui::TEXT()));
+                });
+                ui.add_space(22.0);
             }
-            // Keys go to the app's encrypted store (secret.rs), never to a file.
-            for (name, typed, wanted) in [(crate::secret::CLAUDE, &self.key_input, engine == "api"), (crate::secret::JEV, &self.jev_input, true), (crate::secret::ELEVEN, &self.eleven_input, true)] {
-                if wanted && !typed.trim().is_empty() {
-                    if let Err(e) = crate::secret::set(name, typed) {
+        });
+        ui.add_space(12.0);
+        label(ui, crate::sys::tr("하루 한도 ($, 선택)", "Daily limit ($, optional)"));
+        input(ui, &mut self.limit_input, crate::sys::tr("비우면 한도 없음", "empty: no limit"), false);
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(crate::sys::tr("내 Claude API 키로 쓴 대략의 금액입니다. 한도에 닿으면 그날은 새 일을 시작하지 않습니다. Claude Code와 다른 서비스는 세지 않습니다.", "An estimate of what your own Claude API key has spent. At the limit, no new work starts that day. Claude Code and other services are not counted.")).size(11.5).color(ui::FAINT()));
+        ui.add_space(16.0);
+        section(ui, crate::sys::tr("음성 (선택)", "Voice (optional)"));
+        let has_eleven = crate::eleven::key().is_some();
+        input(ui, &mut self.eleven_input, if has_eleven { crate::sys::tr("ElevenLabs 키 저장됨 · 비우면 그대로", "ElevenLabs key saved · empty: keep") } else { crate::sys::tr("ElevenLabs 키 · 말로 대화할 때만", "ElevenLabs key · only to talk") }, true);
+        ui.add_space(16.0);
+        section(ui, crate::sys::tr("판단 모델 (선택)", "Decision model (optional)"));
+        let has_jev = crate::jev::key().is_some();
+        input(ui, &mut self.jev_input, if has_jev { crate::sys::tr("Jev 키 저장됨 · 비우면 그대로", "Jev key saved · empty: keep") } else { crate::sys::tr("TypeSafe Jev 키", "TypeSafe Jev key") }, true);
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(crate::sys::tr("주제 고르기, 카드 순서, 옛 대화 찾기를 빠르게 합니다. 없어도 그대로 동작합니다.", "Picks topics, orders cards and recalls past conversations faster. APERIT works the same without it.")).size(11.5).color(ui::FAINT()));
+    }
+
+    /// What Claude Code may do without asking (its own permission modes).
+    fn permission_cc(&mut self, ui: &mut egui::Ui) {
+        label(ui, crate::sys::tr("묻지 않고 해도 되는 일", "What it may do without asking"));
+        let now = self.perm_pick.get_or_insert_with(crate::cc::permission).clone();
+        if let Some(v) = three(ui, &now, [("default", crate::sys::tr("내 설정대로", "My settings")), ("acceptEdits", crate::sys::tr("파일 수정", "File edits")), ("bypassPermissions", crate::sys::tr("전부", "Everything"))]) {
+            self.perm_pick = Some(v);
+        }
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(match now.as_str() {
+                "acceptEdits" => crate::sys::tr("파일을 만들고 고치는 것은 묻지 않습니다. 그 밖의 명령은 Claude Code 설정을 따릅니다.", "Creates and edits files without asking. Other commands follow Claude Code's settings."),
+                "bypassPermissions" => crate::sys::tr("명령 실행과 파일 수정을 전부 묻지 않고 합니다.", "Runs commands and edits files without asking."),
+                _ => crate::sys::tr("Claude Code에서 허용해 둔 것만 합니다. 나머지는 거절되고, 그렇다고 알려 줍니다.", "Does only what Claude Code's settings allow. The rest is refused, and it says so."),
+            })
+            .size(11.5)
+            .color(ui::FAINT()),
+        );
+    }
+
+    /// What APERIT's own engine may do on this computer without asking first.
+    fn permission_own(&mut self, ui: &mut egui::Ui) {
+        label(ui, crate::sys::tr("묻지 않고 해도 되는 일", "What it may do without asking"));
+        let now = self.level_pick.get_or_insert_with(|| crate::permit::level().name().to_string()).clone();
+        if let Some(v) = three(ui, &now, [("ask", crate::sys::tr("먼저 묻기", "Ask first")), ("edits", crate::sys::tr("파일 수정", "File edits")), ("all", crate::sys::tr("전부", "Everything"))]) {
+            self.level_pick = Some(v);
+        }
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(match now.as_str() {
+                "edits" => crate::sys::tr("파일을 만들고 고치는 것은 묻지 않습니다. 명령을 실행하기 전에는 카드로 묻습니다.", "Creates and changes files without asking. Asks with a card before running a command."),
+                "all" => crate::sys::tr("명령 실행과 파일 수정을 전부 묻지 않고 합니다.", "Runs commands and changes files without asking."),
+                _ => crate::sys::tr("명령 실행이나 파일 수정 전에 카드로 묻습니다. 읽기와 검색은 묻지 않습니다.", "Asks with a card before running a command or changing a file. Reading and searching are not asked about."),
+            })
+            .size(11.5)
+            .color(ui::FAINT()),
+        );
+    }
+
+    /// Can Save be pressed: is there something complete and new to save?
+    fn keys_ready(&self, current: &str, cc_version: &Option<String>) -> bool {
+        let pick = self.engine_pick.clone().unwrap_or_default();
+        let has_key = self.cfg.key.is_some();
+        let extras = self.jev_input.trim().len() > 8
+            || self.eleven_input.trim().len() > 8
+            || self.level_pick.as_deref().map(|l| l != crate::permit::level().name()).unwrap_or(false)
+            || self.perm_pick.as_deref().map(|p| p != crate::cc::permission()).unwrap_or(false)
+            || self.limit_input.trim() != crate::usage::limit().map(|v| format!("{v}")).unwrap_or_default();
+        let limit_ok = self.limit_input.trim().is_empty() || self.limit_input.trim().trim_start_matches('$').parse::<f64>().is_ok();
+        let changed = pick != current || extras;
+        limit_ok
+            && match pick.as_str() {
+                "claude-code" => cc_version.is_some() && (changed || self.cfg.demo()),
+                "ssh" => !self.ssh_input[0].trim().is_empty() && (self.ssh_input[2].trim().is_empty() || self.ssh_input[2].trim().parse::<u16>().is_ok()),
+                "openai" => {
+                    let [url, model, key] = &self.openai_input;
+                    let (url, model) = (url.trim().trim_end_matches('/'), model.trim());
+                    (url.starts_with("http://") || url.starts_with("https://")) && (!model.is_empty() || crate::openai::known_by_url(url).is_some()) && (changed || !key.trim().is_empty() || self.cfg.openai.as_ref().map(|p| p.url != url || p.model != model).unwrap_or(true))
+                }
+                "agent" => {
+                    let url = self.agui_input.trim();
+                    (url.is_empty() || url.starts_with("http://") || url.starts_with("https://")) && (changed || self.media_pick.map(|m| m != crate::mcp::outside_media()).unwrap_or(false) || self.cfg.agui.as_ref().map(|s| s.url.as_str()).unwrap_or("") != url)
+                }
+                _ => {
+                    let model_changed = self.model_pick.as_deref().map(|m| m != self.cfg.model).unwrap_or(false);
+                    crate::openai::recognize(&self.key_input).map(|k| k.is_claude()).unwrap_or(false) || (self.key_input.trim().is_empty() && has_key && (changed || model_changed))
+                }
+            }
+    }
+
+    fn save_keys(&mut self) {
+        let base = sys::base_dir();
+        let was_demo = self.cfg.demo();
+        let engine = match self.engine_pick.as_deref() {
+            Some("claude-code") if crate::cc::version().is_some() => "claude-code",
+            Some("openai") => {
+                // The address and the model go to openai.txt; the key is kept by the app. An empty key box keeps the saved key.
+                let [url, model, key] = &self.openai_input;
+                let key = if key.trim().is_empty() { crate::secret::get(crate::secret::OPENAI).unwrap_or_default() } else { key.trim().to_string() };
+                let url = url.trim().trim_end_matches('/');
+                // A service APERIT knows: it picks the model from the service's own list.
+                let model = match crate::openai::known_by_url(url) {
+                    Some(k) if model.trim().is_empty() => k.model(&key),
+                    _ => model.trim().to_string(),
+                };
+                let _ = std::fs::write(base.join("openai.txt"), format!("{url}\n{model}\n"));
+                if let Err(e) = crate::secret::set(crate::secret::OPENAI, &key) {
+                    self.error = Some(e);
+                }
+                "openai"
+            }
+            Some("agent") if !self.agui_input.trim().is_empty() => {
+                let _ = std::fs::write(base.join("agui.txt"), format!("{}\n", self.agui_input.trim()));
+                "ag-ui"
+            }
+            Some("agent") => "external",
+            Some("ssh") => {
+                if let Err(e) = crate::ssh::save(&server_from(&self.ssh_input)) {
+                    self.error = Some(e);
+                }
+                if !self.ssh_input[5].trim().is_empty() {
+                    if let Err(e) = crate::secret::set(crate::secret::SSH_PASSWORD, self.ssh_input[5].trim()) {
                         self.error = Some(e);
                     }
                 }
+                self.ssh_input[5].clear();
+                "ssh"
             }
-            self.key_input.clear();
-            self.jev_input.clear();
-            self.eleven_input.clear();
-            self.openai_input[2].clear();
-            self.cfg = llm::Config::load();
-            // With an agent outside, the MCP door has to be open for it to come in.
-            if self.cfg.external {
-                if let Err(e) = crate::mcp::start_outside(crate::mcp::outside_port_setting().unwrap_or(crate::mcp::DEFAULT_PORT)) {
+            _ => "api",
+        };
+        let _ = std::fs::write(base.join("engine.txt"), engine);
+        if let Some(p) = self.perm_pick.take() {
+            let _ = std::fs::write(base.join("claude-permission.txt"), p);
+        }
+        if let Some(l) = self.level_pick.take() {
+            let _ = std::fs::write(base.join("permission.txt"), l);
+        }
+        if let Some(m) = self.media_pick.take() {
+            let _ = std::fs::write(base.join("outside-media.txt"), if m { "yes" } else { "no" });
+        }
+        if let Some(m) = self.model_pick.take() {
+            if engine == "api" {
+                if m == llm::DEFAULT_MODEL {
+                    let _ = std::fs::remove_file(base.join("model.txt"));
+                } else {
+                    let _ = std::fs::write(base.join("model.txt"), &m);
+                }
+            }
+        }
+        crate::usage::set_limit(self.limit_input.trim().trim_start_matches('$').parse::<f64>().ok());
+        // Keys go to the app's encrypted store (secret.rs), never to a file.
+        for (name, typed, wanted) in [(crate::secret::CLAUDE, &self.key_input, engine == "api"), (crate::secret::JEV, &self.jev_input, true), (crate::secret::ELEVEN, &self.eleven_input, true)] {
+            if wanted && !typed.trim().is_empty() {
+                if let Err(e) = crate::secret::set(name, typed) {
                     self.error = Some(e);
                 }
             }
-            // 데모에서 넘어올 때만 화면을 비우고 실제 모드로 들어간다. 키만 바꾼 경우에는 하던 일을 그대로 둔다.
-            if was_demo && !self.cfg.demo() {
-                self.recent.clear();
-                self.view = ui::View::default();
-                self.start_real_mode();
+        }
+        self.key_input.clear();
+        self.jev_input.clear();
+        self.eleven_input.clear();
+        self.openai_input[2].clear();
+        self.cfg = llm::Config::load();
+        // With an agent outside, the MCP door has to be open for it to come in.
+        if self.cfg.external {
+            if let Err(e) = crate::mcp::start_outside(crate::mcp::outside_port_setting().unwrap_or(crate::mcp::DEFAULT_PORT)) {
+                self.error = Some(e);
             }
-            self.key_popup = false;
-            self.engine_pick = None;
         }
-        if close {
-            self.key_popup = false;
-            self.engine_pick = None;
-            self.perm_pick = None;
-            self.level_pick = None;
-            self.media_pick = None;
+        // 데모에서 넘어올 때만 화면을 비우고 실제 모드로 들어간다. 키만 바꾼 경우에는 하던 일을 그대로 둔다.
+        if was_demo && !self.cfg.demo() {
+            self.recent.clear();
+            self.view = ui::View::default();
+            self.start_real_mode();
         }
+        self.key_popup = false;
+        self.keys_loaded = false;
+        self.engine_pick = None;
     }
+}
+
+/// A column's heading.
+fn section(ui: &mut egui::Ui, text: &str) {
+    ui.label(egui::RichText::new(text).font(ui::bold(13.5)).color(ui::TEXT()));
+    ui.add_space(8.0);
+}
+
+/// A field's name.
+fn label(ui: &mut egui::Ui, text: &str) {
+    ui.label(egui::RichText::new(text).font(ui::bold(12.0)).color(ui::TEXT()));
+    ui.add_space(3.0);
+}
+
+/// One short line, green when it is good news.
+fn small(ui: &mut egui::Ui, text: &str, good: bool) {
+    ui.label(egui::RichText::new(text).size(11.5).color(if good { ui::GREEN() } else { ui::FAINT() }));
+}
+
+/// A text box in the window's style.
+fn input(ui: &mut egui::Ui, value: &mut String, hint: &str, secret: bool) {
+    egui::Frame::new().fill(FIELD()).stroke(egui::Stroke::new(1.0, FIELD_EDGE())).corner_radius(12).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
+        ui.add(egui::TextEdit::singleline(value).password(secret).hint_text(hint).desired_width(f32::INFINITY).font(egui::FontId::proportional(13.0)).text_color(ui::TEXT()).frame(egui::Frame::NONE))
+    });
+}
+
+/// Two fields side by side: (name, value, hint, secret, share of the width).
+fn pair(ui: &mut egui::Ui, a: (&str, &mut String, &str, bool, f32), b: (&str, &mut String, &str, bool, f32)) {
+    let w = ui.available_width() - 10.0;
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        for (name, value, hint, secret, share) in [a, b] {
+            ui.vertical(|ui| {
+                ui.set_width(w * share);
+                label(ui, name);
+                input(ui, value, hint, secret);
+            });
+        }
+    });
+    ui.add_space(8.0);
+}
+
+/// A choice drawn as a tile: a title and a line under it. `in_use` marks what is saved now.
+fn tile(ui: &mut egui::Ui, w: f32, h: f32, title: &str, sub: &str, on: bool, in_use: bool) -> bool {
+    let (r, p) = ui.allocate_painter(egui::vec2(w, h), egui::Sense::click());
+    p.rect_filled(r.rect, 14.0, if on { ui::ORANGE().gamma_multiply(0.14) } else { FIELD() });
+    p.rect_stroke(r.rect, 14.0, egui::Stroke::new(if on { 1.5 } else { 1.0 }, if on { ui::ORANGE() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
+    p.text(r.rect.left_top() + egui::vec2(14.0, h * 0.36), egui::Align2::LEFT_CENTER, title, ui::bold(13.0), ui::TEXT());
+    p.text(r.rect.left_top() + egui::vec2(14.0, h * 0.70), egui::Align2::LEFT_CENTER, sub, ui::font(11.0), ui::FAINT());
+    if in_use {
+        p.circle_filled(egui::pos2(r.rect.right() - 14.0, r.rect.top() + h * 0.36), 4.0, ui::GREEN());
+    }
+    r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+/// Three buttons in a row, one of them chosen. Returns the one pressed.
+fn three(ui: &mut egui::Ui, now: &str, options: [(&str, &str); 3]) -> Option<String> {
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let third = (ui.available_width() - 12.0) / 3.0;
+        for (value, name) in options {
+            let on = now == value;
+            let (r, p) = ui.allocate_painter(egui::vec2(third, 30.0), egui::Sense::click());
+            p.rect_filled(r.rect, 10.0, if on { ui::ORANGE().gamma_multiply(0.14) } else { FIELD() });
+            p.rect_stroke(r.rect, 10.0, egui::Stroke::new(1.0, if on { ui::ORANGE() } else { FIELD_EDGE() }), egui::StrokeKind::Inside);
+            p.text(r.rect.center(), egui::Align2::CENTER_CENTER, name, ui::bold(12.0), ui::TEXT());
+            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                picked = Some(value.to_string());
+            }
+        }
+    });
+    picked
 }
 
 /// The server typed in the Keys window: host, user, port, key file, folder (the password is kept apart).

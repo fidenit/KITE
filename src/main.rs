@@ -11,6 +11,7 @@ mod chat;
 mod decide;
 mod eleven;
 mod secret;
+mod usage;
 mod ssh;
 mod loader;
 mod feed;
@@ -108,8 +109,12 @@ struct App {
     ssh_input: [String; 6],
     /// What the last connection test said (empty: none yet; "…": running).
     ssh_test: std::sync::Arc<std::sync::Mutex<String>>,
-    /// The keys window: are the less common choices (a local model, an agent of your own, the Jev key) unfolded?
-    more_open: bool,
+    /// The Keys window: the model chosen, the daily limit typed, and whether the window was filled from what is saved.
+    model_pick: Option<String>,
+    limit_input: String,
+    keys_loaded: bool,
+    /// The Keys window: is the OpenAI-compatible service one typed by hand ("Local or other model") rather than known from its key?
+    openai_by_hand: bool,
     /// 키 창에서 고른 Claude Code 권한 방식
     perm_pick: Option<String>,
     /// 화면 조작에 AI 가 반응할 예정 시각
@@ -546,7 +551,10 @@ impl App {
             agui_input: String::new(),
             ssh_input: Default::default(),
             ssh_test: Default::default(),
-            more_open: false,
+            model_pick: None,
+            limit_input: String::new(),
+            keys_loaded: false,
+            openai_by_hand: false,
             perm_pick: None,
             react_at: None,
             pending: Default::default(),
@@ -685,7 +693,7 @@ impl App {
         }
         // 시연 모드는 매번 빈 보드에서 시작한다. 실제 모드는 조작 기록을 재생해 보드를 되살린다.
         app.key_popup = app.cfg.demo() && crate::sys::var("DEMO").is_err() && crate::sys::var("NO_KEY_WINDOW").is_err();
-        // For checking: open the keys window on a given engine (APERIT_KEY_WINDOW=api|claude-code|openai|agent).
+        // For checking: open the keys window on a given engine (APERIT_KEY_WINDOW=api|claude-code|ssh|local|agent).
         if let Ok(engine) = crate::sys::var("KEY_WINDOW") {
             app.key_popup = true;
             app.engine_pick = Some(engine).filter(|e| !e.is_empty());

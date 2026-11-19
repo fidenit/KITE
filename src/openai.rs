@@ -128,7 +128,7 @@ fn api_error(status: u16, text: &str) -> String {
 /// One question, one answer, no tools (memory keeping and other small work behind the scenes).
 pub fn ask(p: &Provider, system: &str, user: &str, max_tokens: u32) -> Result<String, String> {
     let body = json!({ "model": p.model, "max_tokens": max_tokens, "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }] });
-    let mut resp = post(p, &body)?;
+    let mut resp = crate::agent::with_retries(None, || post(p, &body))?;
     let status = resp.status().as_u16();
     let text = resp.body_mut().read_to_string().unwrap_or_default();
     if status != 200 {
@@ -174,11 +174,11 @@ pub fn run_as(p: &Provider, role: &Role, turn_text: &str, images: &[(String, Str
         if with_usage {
             body["stream_options"] = json!({ "include_usage": true });
         }
-        let mut resp = post(p, &body)?;
+        let mut resp = crate::agent::with_retries(Some(send), || post(p, &body))?;
         if resp.status().as_u16() == 400 && with_usage {
             with_usage = false;
             body.as_object_mut().map(|o| o.remove("stream_options"));
-            resp = post(p, &body)?;
+            resp = crate::agent::with_retries(Some(send), || post(p, &body))?;
         }
         let status = resp.status().as_u16();
         if status != 200 {

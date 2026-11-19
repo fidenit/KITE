@@ -15,7 +15,7 @@ APERIT is an AI workspace with no chat window: the user talks, the AI builds and
 
 Windows: Rust `stable-x86_64-pc-windows-gnu` and WinLibs MinGW on the PATH. `.\run.ps1` builds and starts; `.\run.ps1 test`; `.\run.ps1 pack` makes `portable\APERIT` (and moves an old `portable\KITE` there whole). macOS: `./run.sh`, same words. Never run `pack` just to test: it replaces the owner's installed copy.
 
-`.un.ps1 dist` makes `dist\APERIT-Setup-<version>.exe` (Inno Setup 6, per-user, no admin rights; `installerperit.iss`) and `dist\APERIT-<version>-windows-x64.zip`. `build.rs` puts the icon and version details into the exe (windres) and links WebView2Loader.dll to load late (dlltool, gendef, delayimp from MinGW); `src/loader.rs` writes the DLL it carries to `data\` when none is beside the exe, so `aperit.exe` alone runs. Engines live in `src/llm.rs`; Claude Code on a server is `src/ssh.rs` + the remote branch of `src/cc.rs`.
+`.\run.ps1 dist` makes `dist\APERIT-Setup-<version>.exe` (Inno Setup 6, per-user, no admin rights; `installer\aperit.iss`) and `dist\APERIT-<version>-windows-x64.zip`. `build.rs` puts the icon and version details into the exe (windres) and links WebView2Loader.dll to load late (dlltool, gendef, delayimp from MinGW); `src/loader.rs` writes the DLL it carries to `data\` when none is beside the exe, so `aperit.exe` alone runs. Engines live in `src/llm.rs`; Claude Code on a server is `src/ssh.rs` + the remote branch of `src/cc.rs`. The Keys window is `key_window` in `src/chat.rs`; spending, prices and the daily limit are `src/usage.rs`; retries on 429/529/5xx are `agent::with_retries` (used by `openai.rs` too).
 
 ```sh
 cargo test --workspace
@@ -42,7 +42,7 @@ The Android package `com.fidenit.kite` and its stored settings (changing them ma
 
 ## Where things stand (2026-11-19)
 
-- 0.4.0 is not released: no tag, nothing uploaded; `.un.ps1 dist` builds the installer and the zip locally. The owner's installed copy is still the old `portable\KITE`; `.\run.ps1 pack` moves it, and only the owner should run that.
+- 0.4.0 is not released: no tag, nothing uploaded; `.\run.ps1 dist` builds the installer and the zip locally. The owner's installed copy is still the old `portable\KITE`; `.\run.ps1 pack` moves it, and only the owner should run that.
 - Checked with real runs: the Claude API engine, the Claude Code engine, Claude Code as an outside agent over MCP, the OpenAI-compatible engine (against Anthropic's compatible address only), AG-UI with a Pydantic AI agent, the new cards on an Android emulator.
 - Not checked: any model that is not Claude; macOS; a real Android device; signing in when Claude Code is not yet signed in.
 - The full list of what is next is at the top of `docs/NEXT.md` (Korean), including what it takes to make the Android apps installable (no APK is published; APERIT Pro needs its relay server, subscription check and a build with that address). First item: when lines of a turn are rejected, run one more turn at once (PATET's SPEC 10.1 recommends it; this app only reports them on the next turn). Then the release.

@@ -43,6 +43,46 @@ pub fn http() -> ureq::Agent {
         .into()
 }
 
+/// Send a request; when the service is busy (429, 5xx, 529 overloaded) or the connection failed, wait and send it
+/// again, up to four more times. It waits what the service asks (retry-after) or 2, 4, 8, 16 seconds. Only a
+/// request that got no answer yet is sent again, so nothing on the screen is repeated.
+pub fn with_retries(notify: Option<&dyn Fn(Msg)>, mut post: impl FnMut() -> Result<ureq::http::Response<ureq::Body>, String>) -> Result<ureq::http::Response<ureq::Body>, String> {
+    let mut wait = 2u64;
+    for attempt in 0..5 {
+        let result = post();
+        let asked = match &result {
+            Ok(resp) if matches!(resp.status().as_u16(), 429 | 500 | 502 | 503 | 504 | 529) => {
+                Some(resp.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok()))
+            }
+            Err(_) => Some(None),
+            _ => None,
+        };
+        let Some(after) = asked else { return result };
+        if attempt == 4 {
+            return result;
+        }
+        let secs = after.unwrap_or(wait).clamp(1, 60);
+        crate::sys::log("api.log", &format!("busy or unreachable ({}), trying again in {secs}s", match &result { Ok(r) => r.status().as_u16().to_string(), Err(e) => e.clone() }));
+        if let Some(send) = notify {
+            let busy = result.is_ok();
+            send(Msg::Activity(match (busy, crate::sys::english()) {
+                (true, true) => format!("The service is busy; trying again in {secs} s"),
+                (true, false) => format!("서비스가 바빠서 {secs}초 뒤에 다시 보냅니다"),
+                (false, true) => format!("Could not reach the service; trying again in {secs} s"),
+                (false, false) => format!("서비스에 닿지 않아 {secs}초 뒤에 다시 보냅니다"),
+            }));
+        }
+        for _ in 0..secs * 10 {
+            if crate::tools::stopped() {
+                return Err(STOPPED.into());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        wait *= 2;
+    }
+    unreachable!()
+}
+
 /// 도구 없이 한 번 묻고 답을 글로 받는다 (기억 정리 같은 작은 뒷일에 쓴다).
 pub fn ask(key: &str, model: &str, system: &str, user: &str, max_tokens: u32) -> Result<String, String> {
     // Claude Code 엔진만 쓰는 사람: API 키 없이 Claude Code 를 통해 묻는다.
@@ -54,20 +94,31 @@ pub fn ask(key: &str, model: &str, system: &str, user: &str, max_tokens: u32) ->
         let p = crate::openai::settings().ok_or("no provider is set up")?;
         return crate::openai::ask(&p, system, user, max_tokens);
     }
+    if let Some(reached) = crate::usage::over_limit() {
+        return Err(reached);
+    }
     let body = json!({ "model": model, "max_tokens": max_tokens, "system": system, "messages": [{ "role": "user", "content": user }] }).to_string();
-    let mut resp = http()
-        .post(URL)
-        .header("content-type", "application/json")
-        .header("x-api-key", key)
-        .header("anthropic-version", "2026-10-21")
-        .send(body)
-        .map_err(|e| format!("{}: {e}", crate::sys::tr("연결 실패", "Could not connect")))?;
+    let agent = http();
+    let mut resp = with_retries(None, || {
+        agent
+            .post(URL)
+            .header("content-type", "application/json")
+            .header("x-api-key", key)
+            .header("anthropic-version", "2026-10-21")
+            .send(body.as_str())
+            .map_err(|e| format!("{}: {e}", crate::sys::tr("연결 실패", "Could not connect")))
+    })?;
     let status = resp.status().as_u16();
     let text = resp.body_mut().read_to_string().unwrap_or_default();
     if status != 200 {
         return Err(api_error(status, &text));
     }
     let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let u = &v["usage"];
+    let n = |k: &str| u[k].as_u64().unwrap_or(0);
+    if let Some(c) = crate::usage::cost(model, n("input_tokens"), n("cache_read_input_tokens"), n("cache_creation_input_tokens"), 1.25, n("output_tokens")) {
+        crate::usage::record(c);
+    }
     Ok(v["content"].as_array().map(|a| a.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("")).unwrap_or_default())
 }
 
@@ -193,6 +244,9 @@ pub fn run_as(cfg: &Config, key: &str, role: &Role, turn_text: &str, images: &[(
     };
 
     for _ in 0..role.max_steps {
+        if let Some(reached) = crate::usage::over_limit() {
+            return Err(reached);
+        }
         let reply = stream_once(&agent, cfg, key, role, &messages, &mut fallbacks, &mut drop_block, &mut stats, started, send)?;
         send(Msg::Delta("\n".into())); // 응답 사이에 줄이 붙지 않게 한다
         // 빈 글 블록은 되돌려 보낼 수 없다.
@@ -265,7 +319,7 @@ fn stream_once(
         }
         req.send(body(cfg, role, messages, fallbacks, drop_block)).map_err(|e| format!("{}: {e}", crate::sys::tr("연결 실패", "Could not connect")))
     };
-    let mut resp = post(*fallbacks, *drop_block)?;
+    let mut resp = with_retries(Some(send), || post(*fallbacks, *drop_block))?;
     for _ in 0..3 {
         if resp.status().as_u16() != 400 {
             break;
@@ -286,7 +340,7 @@ fn stream_once(
         } else {
             return Err(api_error(400, &text));
         }
-        resp = post(*fallbacks, *drop_block)?;
+        resp = with_retries(Some(send), || post(*fallbacks, *drop_block))?;
     }
     let status = resp.status().as_u16();
     if status != 200 {
@@ -297,6 +351,8 @@ fn stream_once(
     let mut blocks: Vec<Value> = Vec::new();
     let mut partial: std::collections::HashMap<usize, String> = Default::default();
     let mut stop = String::new();
+    // What this one request used, for what it cost (usage.rs).
+    let (mut used_in, mut used_read, mut used_write, mut used_out, mut used_model) = (0u64, 0u64, 0u64, 0u64, cfg.model.clone());
     let reader = BufReader::new(resp.into_body().into_reader());
     for line in reader.lines() {
         let line = line.map_err(|e| format!("{}: {e}", crate::sys::tr("스트림 끊김", "The stream broke")))?;
@@ -311,6 +367,12 @@ fn stream_once(
                 let u = &v["message"]["usage"];
                 // A turn that uses tools sends everything again for each step: add every request up.
                 let read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                used_in = u["input_tokens"].as_u64().unwrap_or(0);
+                used_read = read;
+                used_write = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                if let Some(m) = v["message"]["model"].as_str() {
+                    used_model = m.to_string();
+                }
                 stats.cached_tokens += read;
                 stats.input_tokens += u["input_tokens"].as_u64().unwrap_or(0) + read + u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
                 if let Some(m) = v["message"]["model"].as_str() {
@@ -380,6 +442,7 @@ fn stream_once(
             "message_delta" => {
                 if let Some(n) = v["usage"]["output_tokens"].as_u64() {
                     stats.output_tokens += n;
+                    used_out = n;
                 }
                 if let Some(s) = v["delta"]["stop_reason"].as_str() {
                     stop = s.to_string();
@@ -390,6 +453,10 @@ fn stream_once(
         }
     }
     blocks.retain(|b| !b.is_null());
+    let write_factor = if LONG_CACHE.load(std::sync::atomic::Ordering::Relaxed) { 2.0 } else { 1.25 };
+    if let Some(c) = crate::usage::cost(&used_model, used_in, used_read, used_write, write_factor, used_out) {
+        crate::usage::record(c);
+    }
     Ok(Reply { blocks, stop })
 }
 
@@ -399,4 +466,46 @@ fn api_error(status: u16, text: &str) -> String {
         .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
         .unwrap_or_else(|| text.chars().take(300).collect());
     format!("HTTP {status}: {msg}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reply(status: u16, retry_after: Option<&str>) -> Result<ureq::http::Response<ureq::Body>, String> {
+        let mut r = ureq::http::Response::builder().status(status);
+        if let Some(v) = retry_after {
+            r = r.header("retry-after", v);
+        }
+        Ok(r.body(ureq::Body::builder().data("{}")).unwrap())
+    }
+
+    #[test]
+    fn busy_is_sent_again_and_a_bad_request_is_not() {
+        // 529 overloaded, asked to wait a second: sent again, and the second answer is the one returned.
+        let mut calls = 0;
+        let started = std::time::Instant::now();
+        let got = with_retries(None, || {
+            calls += 1;
+            if calls == 1 { reply(529, Some("1")) } else { reply(200, None) }
+        });
+        assert_eq!(got.unwrap().status().as_u16(), 200);
+        assert_eq!(calls, 2);
+        assert!(started.elapsed() >= Duration::from_millis(900));
+        // A connection that failed is tried again too.
+        let mut calls = 0;
+        let got = with_retries(None, || {
+            calls += 1;
+            if calls == 1 { Err("Could not connect".into()) } else { reply(429, Some("1")).and_then(|_| reply(200, None)) }
+        });
+        assert_eq!(got.unwrap().status().as_u16(), 200);
+        // 400 is the request's own fault: returned at once.
+        let mut calls = 0;
+        let got = with_retries(None, || {
+            calls += 1;
+            reply(400, None)
+        });
+        assert_eq!(got.unwrap().status().as_u16(), 400);
+        assert_eq!(calls, 1);
+    }
 }

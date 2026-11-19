@@ -59,6 +59,9 @@ pub struct Stats {
     pub limit: String,
 }
 
+/// The Claude model when none is chosen.
+pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
+
 #[derive(Clone)]
 pub struct Config {
     pub key: Option<String>,
@@ -100,7 +103,10 @@ impl Config {
             agui,
             openai,
             key,
-            model: env("MODEL").unwrap_or_else(|| "claude-opus-5-5".into()),
+            // The model chosen in the Keys window (model.txt); APERIT_MODEL wins. Opus is the default.
+            model: env("MODEL")
+                .or_else(|| std::fs::read_to_string(crate::sys::base_dir().join("model.txt")).ok().map(|s| s.trim().to_string()).filter(|s| s.starts_with("claude-")))
+                .unwrap_or_else(|| DEFAULT_MODEL.into()),
             // 화면 반응 속도가 중요해서 기본은 low. 형태 선택 품질이 아쉬우면 medium 으로 올린다.
             effort: env("EFFORT").unwrap_or_else(|| "low".into()),
         }

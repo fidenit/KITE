@@ -93,7 +93,7 @@ Linux: the build stops at the GTK and WebKit libraries (`glib-sys`) on a machine
 
 ### Pick an engine
 
-The engine is who answers. Open **Keys** at the bottom left and do one of two things: press **Sign in with Claude** (it uses the Claude Code on this computer; no key), or **paste a key**. APERIT tells from the key whose it is (Claude, OpenAI, Gemini, OpenRouter, Groq, xAI) and picks the model. A local model, another address, or an agent of your own are under **More options**.
+The engine is who answers. Open **Keys** at the bottom left and do one of two things: press **Sign in with Claude** (it uses the Claude Code on this computer; no key), or **paste a key**. APERIT tells from the key whose it is (Claude, OpenAI, Gemini, OpenRouter, Groq, xAI) and picks the model. Everything is on one screen: on the left the ways in (also a local model or another address, a server over SSH, an agent of your own), in the middle what the chosen way needs, on the right what you have spent.
 
 | Engine | You need | What you get |
 |---|---|---|
@@ -116,11 +116,11 @@ APERIT draws whatever writes [PATET](https://github.com/fidenit/patet). Your age
 
 **An agent that speaks MCP** (Claude Code, Cursor, one of your own):
 
-1. In APERIT: **Keys** → **More options** → **Your own agent** → **Save**.
+1. In APERIT: **Keys** → **Your own agent** → **Save**.
 2. **Keys** again → **Copy the Claude Code command**, and run it in a terminal (other clients: **Copy the config (JSON)**).
 3. Ask your agent to answer on the board. It has four tools: `guide`, `board_read`, `screen`, `events`.
 
-**An agent built with an AG-UI framework** (LangGraph, CrewAI, Pydantic AI, ...): give APERIT the agent's address under **Keys** → **More options** → **Your own agent** → **AG-UI**.
+**An agent built with an AG-UI framework** (LangGraph, CrewAI, Pydantic AI, ...): give APERIT the agent's address under **Keys** → **Your own agent** → **AG-UI address**.
 
 **A script:** start APERIT with `APERIT_PROTOCOL_PORT=7878` and write lines to that port.
 
@@ -147,7 +147,7 @@ How each of these works, with the settings: [docs/DRIVING.md](docs/DRIVING.md). 
   | Your own agent | Whatever your agent does. APERIT only draws its board |
 
   Reading files and searching the web are not asked about.
-- **It costs money as you use it.** By default it uses the most capable Claude model. A turn sends about as much as a Claude Code turn does; what was measured is in [docs/COSTS.md](docs/COSTS.md).
+- **It costs money as you use it.** By default it uses the most capable Claude model (Opus 5.5); **Keys** offers Sonnet and Haiku too, each with what a turn roughly costs. A turn sends about as much as a Claude Code turn does; what was measured is in [docs/COSTS.md](docs/COSTS.md). **Keys** shows what your Claude API key has spent today and this month, and takes a daily limit: at the limit, no new work starts that day.
 - **It is early.** One person uses it daily. English and Korean, switched in the corner; cards and answers follow the language you choose. See [what changed](CHANGELOG.md) and [what is next](docs/NEXT.md) (Korean).
 - **Other models and agents are new.** The Claude engines are the ones used every day. The others were checked with real runs (Claude Code connected over MCP as an outside agent; a real server behind the OpenAI-compatible engine; an agent built with Pydantic AI over AG-UI) but are not in daily use, and no model that is not Claude was tried: recognising a key and picking a model for OpenAI, Gemini and the others is untested against those services.
 - Distances and times on route cards are read from Kakao Map, so routes work in South Korea.

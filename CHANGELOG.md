@@ -19,7 +19,14 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 
 ### Claude Code on a server
 
-- A new engine: **Keys** → **More options** → **A server (SSH)** hands each turn to the Claude Code on a server, with the server's files and commands. APERIT's memory, route maps and workers stay on your computer and reach it through the SSH connection. A key, the ssh agent or a password (kept encrypted) signs in; **Test the connection** checks it first.
+- A new engine: **Keys** → **A server (SSH)** hands each turn to the Claude Code on a server, with the server's files and commands. APERIT's memory, route maps and workers stay on your computer and reach it through the SSH connection. A key, the ssh agent or a password (kept encrypted) signs in; **Test the connection** checks it first.
+
+### The Keys window on one screen
+
+- One wide window with everything in view: the ways in on the left, what the chosen one needs in the middle, spending and the optional keys on the right. Nothing to unfold, nothing to scroll, and the window keeps its size when you switch.
+- **Model**: Opus 5.5 (the default), Sonnet 5.5 or Haiku 5.5 for the Claude API engine, each with what a turn roughly costs. Saved in `model.txt`; `APERIT_MODEL` still wins.
+- **Spending**: what your Claude API key has spent today and this month, estimated from the tokens each response reports (`data/usage.json`). An optional **daily limit** (`spend-limit.txt`, `APERIT_DAILY_LIMIT`): at the limit no new turn, worker or background request starts that day, and the app says why.
+- When Claude is overloaded (529), rate-limited (429) or briefly unreachable, the request is sent again after a wait (what the service asks, or 2 to 16 seconds; four more tries), with a line saying so. The OpenAI-compatible engine does the same.
 
 ### A cleaner window
 
@@ -30,7 +37,7 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 ### Keys stay inside the app
 
 - Keys are no longer written to plain files. On Windows they are encrypted for your user account on this computer (`data/keys.bin`); on macOS they go to the login keychain. Key files from earlier versions are moved in on the first start and removed.
-- The ElevenLabs key can be entered in the **Keys** window (under **More options**); before, it needed a file.
+- The ElevenLabs key can be entered in the **Keys** window; before, it needed a file.
 
 ### The protocol stands apart
 
@@ -51,7 +58,7 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 ### Use another model
 
 - **Keys** is two things now: **Sign in with Claude** (one press when the Claude Code on this computer is signed in; otherwise it opens the sign-in), or **paste a key**. KITE tells whose key it is (Claude, OpenAI, Gemini, OpenRouter, Groq, xAI), sets the address, and picks the newest general model from the service's own list. Nothing else to fill in.
-- A local model or another address is under **More options**: any OpenAI-compatible endpoint (Ollama, LM Studio, ...). KITE's memory, workers and tools stay; web search is with Claude only.
+- A local model or another address is under **Keys** → **Local or other model**: any OpenAI-compatible endpoint (Ollama, LM Studio, ...). KITE's memory, workers and tools stay; web search is with Claude only.
 
 ### You decide what runs
 
