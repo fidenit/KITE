@@ -28,13 +28,20 @@ object Eleven {
         return c
     }
 
+    /** 상태 코드. 본문을 정해진 길이로 올리는 중에 401 이 오면 HttpURLConnection 이 다시 시도할 수 없다며 예외를 내므로 거기서 코드를 꺼낸다. */
+    private fun status(c: HttpURLConnection): Int = try {
+        c.responseCode
+    } catch (e: java.net.HttpRetryException) {
+        e.responseCode()
+    }
+
     private fun failure(c: HttpURLConnection): String {
         val body = try {
             c.errorStream?.bufferedReader()?.readText().orEmpty()
         } catch (_: Exception) {
             ""
         }
-        return "HTTP ${c.responseCode}: ${body.take(200)}"
+        return "HTTP ${status(c)}: ${body.take(200)}"
     }
 
     /**
@@ -104,13 +111,14 @@ object Eleven {
             try {
                 c.setFixedLengthStreamingMode(body.size())
                 c.outputStream.use { body.writeTo(it) }
-                if (c.responseCode == 200) {
+                val code = status(c)
+                if (code == 200) {
                     return JSONObject(c.inputStream.bufferedReader().readText()).optString("text").trim()
                 }
                 val failed = failure(c)
                 if (first.isEmpty()) first = failed
                 // 키가 거절됐거나 한도에 닿았으면 다른 모델로 다시 불러도 소용없다: 첫 오류 글을 그대로 알린다
-                if (c.responseCode == 401 || c.responseCode == 403 || c.responseCode == 429) throw Exception(first)
+                if (code == 401 || code == 403 || code == 429) throw Exception(first)
             } finally {
                 c.disconnect()
             }

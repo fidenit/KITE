@@ -40,6 +40,7 @@ class KiteViewModelTest {
 
     @After
     fun stopJevServer() {
+        com.fidenit.kite.engine.Jev.baseUrl = com.fidenit.kite.engine.Jev.URL
         try {
             jevServer.shutdown()
         } catch (_: Exception) {
@@ -205,7 +206,8 @@ class KiteViewModelTest {
         assertEquals(listOf("upd k1 i1 done | 여권"), q.events)
         // the app is killed here; the turn record went with it (a finished turn deletes it before the queue is started)
         Journal(files).clearInflight()
-        Store(app).jevKey = "" // the restarted ViewModel must not call out
+        // the restarted ViewModel asks the same fake Jev server (never answering), which keeps its turn running while we look
+        com.fidenit.kite.engine.Jev.baseUrl = jevServer.url("/v1/systemone").toString()
         val again = vm()
         assertTrue(again.busy) // the queued words were started as a turn
         val sent = Journal(files).readInflight()!!.turnText

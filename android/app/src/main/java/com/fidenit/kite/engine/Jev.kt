@@ -19,6 +19,10 @@ class JevError(message: String) : Exception(message)
 object Jev {
     const val URL = "https://api.typesafe.ai/v1/systemone"
 
+    /** 앱이 쓰는 주소. 시험에서만 바꾼다 (ViewModel 이 만들어지는 순간부터 가짜 서버를 보게). */
+    @Volatile
+    internal var baseUrl: String = URL
+
     /** 전체 한도. 빨라야 의미가 있는 결정이라서, 늦으면 기다리지 않고 기본값으로 간다. */
     const val LIMIT_MS = 2500L
 

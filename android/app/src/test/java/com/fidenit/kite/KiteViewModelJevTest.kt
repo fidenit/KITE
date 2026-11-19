@@ -196,6 +196,9 @@ class KiteViewModelJevTest {
         val text = Journal(files).readInflight()!!.turnText
         assertTrue(text, text.contains("<review>\ncard k3: hard to tell what it is about from the screen alone (probability it is clear: 0.20)\n</review>\n"))
         until("turn ends") { !vm.busy }
+        // a second turn: a fake Jev answer that never comes keeps it running while its text is read
+        Store(app).jevKey = "k"
+        server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE))
         vm.send("또 다음 말")
         assertFalse(Journal(files).readInflight()!!.turnText.contains("<review>"))
     }

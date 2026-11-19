@@ -531,7 +531,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** TypeSafe Jev 의 주소. 시험에서 가짜 서버로 바꾼다 (앱은 바꾸지 않는다). */
-    internal var jevUrl: String = Jev.URL
+    internal var jevUrl: String = Jev.baseUrl
 
     /**
      * 턴 뒤의 판단: 이번 턴에 AI 가 건드린 카드(최대 20장)가 화면만 보고 분명한지, 얼마나 중요한지를 Jev 에게 묻는다.
