@@ -299,11 +299,12 @@ class DetachedTest {
         assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
         val home = newHome(okFake)
         val c = DetachedCommands(cfg)
-        val other = ProcessBuilder("sleep", "51.7").start()
+        val other = ProcessBuilder("sh", "-c", "echo \$\$; exec sleep 51.7").start()
+        val otherPid = other.inputStream.bufferedReader().readLine().trim()
         try {
             val runs = File(home, ".kite/runs").also { it.mkdirs() }
             File(runs, "f1.in").writeText("hi")
-            File(runs, "f1.pid").writeText(other.pid().toString() + "\n")
+            File(runs, "f1.pid").writeText(otherPid + "\n")
             val t0 = System.currentTimeMillis()
             assertEquals(listOf("APERITEXIT lost"), sh(home, c.follow("f1", 0)).lines)
             assertTrue("lost 까지 ${System.currentTimeMillis() - t0}ms", System.currentTimeMillis() - t0 < 4000)

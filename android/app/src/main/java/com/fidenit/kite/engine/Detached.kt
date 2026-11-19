@@ -178,9 +178,9 @@ class DetachedCommands(private val cfg: EngineConfig) {
             if [ ! -s "${'$'}f.pid" ] && [ ! -s "${'$'}f.exit" ]; then echo "APERITEXIT none"; exit 0; fi
             while :; do
               fin=0; [ -s "${'$'}f.exit" ] && fin=1
-              size=${'$'}(( ${'$'}(wc -c < "${'$'}f.out" 2>/dev/null || echo 0) ))
+              size=${'$'}(( ${'$'}({ wc -c < "${'$'}f.out"; } 2>/dev/null || echo 0) ))
               if [ "${'$'}size" != "${'$'}last" ]; then
-                last=${'$'}size; total=${'$'}(( ${'$'}(wc -l < "${'$'}f.out" 2>/dev/null || echo 0) ))
+                last=${'$'}size; total=${'$'}(( ${'$'}({ wc -l < "${'$'}f.out"; } 2>/dev/null || echo 0) ))
                 if [ "${'$'}total" -gt "${'$'}n" ]; then sed -n "${'$'}((n+1)),${'$'}{total}s/^/>/p" "${'$'}f.out"; n=${'$'}total; beat=0; fi
               fi
               if [ "${'$'}fin" = 1 ]; then echo "APERITEXIT ${'$'}(cat "${'$'}f.exit")"; exit 0; fi
