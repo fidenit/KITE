@@ -1036,6 +1036,9 @@ pub fn board(
         let webs_start = webs.len();
         let scene_now = scene;
         // `seen`: 카드가 보이는 정도 (카드 단계면 1). 왼쪽 "내 차례" 자리는 늘 1.
+        // Who wrote a card (PATET `by`) is shown only when the board's cards name more than one writer.
+        let writers: std::collections::BTreeSet<&str> = board.cards.iter().map(|c| c.field("by")).filter(|b| !b.is_empty()).collect();
+        let show_by = writers.len() > 1;
         let mut draw_cards = |ui: &mut egui::Ui, sticky_pass: bool, origin: Pos2, seen: f32| {
             // 위 단계로 갈 때 내용 → 제목 → 상자 순으로 사라진다 (돌아올 때는 거꾸로 나타난다).
             let detail = smooth(seen, 0.55, 1.0);
@@ -1181,6 +1184,12 @@ pub fn board(
 
             // 제목 오른쪽에 붙는 것(주제 이름, 완료 개수, 고정 표시)의 폭만큼 제목 자리를 줄여서 글자가 겹치지 않게 한다.
             let mut topic_label = if sticky_pass { board.topics.iter().find(|t| t.id == c.topic).map(|t| t.name.clone()).unwrap_or_default() } else { String::new() };
+            // The writer goes before the topic name: "gpu · Deploy".
+            let by_label = if show_by { c.field("by").to_string() } else { String::new() };
+            let by_only = topic_label.is_empty() && !by_label.is_empty();
+            if !by_label.is_empty() {
+                topic_label = if topic_label.is_empty() { by_label } else { format!("{by_label} · {topic_label}") };
+            }
             // 체크리스트의 완료 개수·고리 자리. 주제 이름이 함께 있으면 이름은 그 왼쪽에 놓는다 (겹치지 않게).
             let ring_w = if c.kind == Kind::Checklist && !c.items.is_empty() { 64.0 } else { 0.0 };
             // 제목과 주제 이름이 한 줄에 다 들어가지 않으면 주제 이름을 뺀다 (제목이 글자 중간에서 잘리지 않게).
@@ -1205,7 +1214,7 @@ pub fn board(
             sp.set_opacity(alpha * title_a);
             // "내 차례" 구역의 카드는 주제 구역 밖에 있으므로, 어느 주제의 질문인지 제목 옆에 적는다.
             if !topic_label.is_empty() {
-                sp.text(pos2(rect.right() - if c.pinned { 34.0 } else { PAD } - ring_w, rect.top() + 19.0), Align2::RIGHT_TOP, &topic_label, font(11.0), ORANGE().gamma_multiply(0.85));
+                sp.text(pos2(rect.right() - if c.pinned { 34.0 } else { PAD } - ring_w, rect.top() + 19.0), Align2::RIGHT_TOP, &topic_label, font(11.0), if by_only { DIM() } else { ORANGE().gamma_multiply(0.85) });
             }
             let right_x = rect.right() - if c.pinned { 34.0 } else { PAD };
             if c.kind == Kind::Checklist && !c.items.is_empty() {
@@ -2642,7 +2651,8 @@ fn draw_body(cx: &mut Ctx, p: &Painter, body: Rect, c: &Card) -> f32 {
             if !text.is_empty() {
                 y += wrapped(p, pos2(x, y), w, text, 13.5, SOFT()) + 10.0;
             }
-            let fields: Vec<(&String, &String)> = c.fields.iter().filter(|(k, _)| k.as_str() != "text" && k.as_str() != "cols").collect();
+            // `by` is shown by the title, never as one of the record's own fields (PATET SPEC section 6).
+            let fields: Vec<(&String, &String)> = c.fields.iter().filter(|(k, _)| !matches!(k.as_str(), "text" | "cols" | "by")).collect();
             let label_w = fields.iter().map(|(k, _)| p.layout_no_wrap((*k).clone(), font(11.5), FAINT()).size().x).fold(0.0_f32, f32::max).min(w * 0.42) + 8.0;
             for (name, value) in fields {
                 p.with_clip_rect(Rect::from_min_size(pos2(x, y), vec2(label_w, 26.0)).intersect(p.clip_rect())).text(pos2(x + 2.0, y + 13.0), Align2::LEFT_CENTER, name.replace(['-', '_'], " "), font(11.5), FAINT());

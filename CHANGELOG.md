@@ -12,7 +12,7 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 
 - The app is **APERIT** (Latin: it opens, it shows). The program is `aperit.exe` / `APERIT.app`; settings are read as `APERIT_<NAME>`.
 - Nothing you have is lost: settings given as `KITE_<NAME>` still work, boards saved under the old header are read, and `run.ps1 pack` / `run.sh pack` move an existing `portable\KITE` folder to `portable\APERIT` whole (key, board, memory, browser logins).
-- The protocol is **[PATET](https://github.com/fidenit/patet)** (Latin: it lies open), version 0.4, in a repository of its own. `protocol/` here is a copy of it. On the wire the names are `patet 0.4`, `<patet-board>`, `patet.ops`; the old ones (`kite-protocol`, `kite.ops`) are still understood.
+- The protocol is **[PATET](https://github.com/fidenit/patet)** (Latin: it lies open), version 0.5, in a repository of its own. `protocol/` here is a copy of it. On the wire the names are `patet 0.4`, `<patet-board>`, `patet.ops`; the old ones (`kite-protocol`, `kite.ops`) are still understood.
 - The MCP server an outside agent adds is named `aperit` (it was `kite`): run the copied command again.
 - On Android the app is shown as APERIT and APERIT Pro. Its package name is unchanged, so it updates in place.
 - Say "Aperit" (or, as before, "Kite") to call it back while it waits.
@@ -27,6 +27,10 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 - **Model**: Opus 5.5 (the default), Sonnet 5.5 or Haiku 5.5 for the Claude API engine, each with what a turn roughly costs. Saved in `model.txt`; `APERIT_MODEL` still wins.
 - **Spending**: what your Claude API key has spent today and this month, estimated from the tokens each response reports (`data/usage.json`). An optional **daily limit** (`spend-limit.txt`, `APERIT_DAILY_LIMIT`): at the limit no new turn, worker or background request starts that day, and the app says why.
 - When Claude is overloaded (529), rate-limited (429) or briefly unreachable, the request is sent again after a wait (what the service asks, or 2 to 16 seconds; four more tries), with a line saying so. The OpenAI-compatible engine does the same.
+
+### Who wrote a card
+
+- PATET 0.5 gives every card a `by`: who wrote it. When the cards of a board name more than one writer, APERIT shows it small at the top right of each card (never as a field of a record). A worker's progress card carries the place it runs (`gpu`, `claude-code`), so workers on different machines are told apart.
 
 ### Work in order, with a second look
 

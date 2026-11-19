@@ -20,10 +20,11 @@ Each line is one op, applied the moment it ends. The result is a board of cards,
 user set k2 chosen o2
 ```
 
-Version **0.4**. Apache-2.0. The protocol is separate from any app: [APERIT](https://github.com/fidenit/aperit) (until now called KITE) is the first product built on it.
+Version **0.5**. Apache-2.0. The protocol is separate from any app: [APERIT](https://github.com/fidenit/aperit) (until now called KITE) is the first product built on it.
 
 ## Start here
 
+- **Try it in your browser, nothing to install:** [fidenit.github.io/patet/web](https://fidenit.github.io/patet/web/). Write ops on the left, watch the board, press things and see what comes back.
 - **See it work in a minute:** `node examples/assistant/server.mjs`, then open `http://127.0.0.1:8787/`. Two files, no dependencies, a canned answer until you give it a model ([examples/assistant](examples/assistant)).
 - **Build it into your product:** [QUICKSTART.md](QUICKSTART.md). The system prompt is a file ([GUIDE.md](GUIDE.md)), a turn has five parts, and each line of the answer gets a verdict.
 - **Make it look like yours:** colours, corners and font are CSS variables on [`<patet-board>`](web/README.md#theming).
@@ -48,7 +49,7 @@ It sits beside AG-UI, A2UI and MCP rather than against them: an agent can reach 
 | [schema/](schema) | The ops as JSON Schema, for tools that validate or generate them |
 | [examples/](examples) | Boards you can load |
 | [QUICKSTART.md](QUICKSTART.md) | Ten minutes: make your own model answer with a board |
-| [conformance/](conformance) | 36 cases a renderer runs to check itself, with a table of what each covers |
+| [conformance/](conformance) | 37 cases a renderer runs to check itself, with a table of what each covers |
 | [grammar/](grammar) | The line syntax as EBNF, and as GBNF for constrained decoding with local models |
 | [rust/](rust) | Reference implementation: board, parser, serializer. No dependencies |
 | [js/](js) | The same in JavaScript, one file, no dependencies. Runs in a browser, in Node, in a worker |
@@ -105,4 +106,4 @@ Then run the [conformance cases](conformance).
 
 ## Status
 
-0.x: the language may still change between minor versions where the spec says so (section 12). Four implementations pass the 36 conformance cases: Rust (used by APERIT for Windows and macOS), Kotlin (the APERIT Android app), JavaScript (`<patet-board>`) and Python. Feedback, renderers and bindings for other transports are welcome.
+0.x: the language may still change between minor versions where the spec says so (section 12). Four implementations pass the 37 conformance cases: Rust (used by APERIT for Windows and macOS), Kotlin (the APERIT Android app), JavaScript (`<patet-board>`) and Python. Feedback, renderers and bindings for other transports are welcome.

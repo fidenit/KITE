@@ -42,6 +42,7 @@ The Android package `com.fidenit.kite` and its stored settings (changing them ma
 
 ## Where things stand (2026-11-19)
 
+- The protocol copy in `protocol/` is PATET 0.5 (adds `by`, who wrote a card). Workers: `on` (where), `after` (order), compaction for long jobs; see `docs/DRIVING.md` "Where workers run".
 - 0.4.0 is not released: no tag, nothing uploaded; `.\run.ps1 dist` builds the installer and the zip locally. The owner's installed copy is still the old `portable\KITE`; `.\run.ps1 pack` moves it, and only the owner should run that.
 - Checked with real runs: the Claude API engine, the Claude Code engine, Claude Code as an outside agent over MCP, the OpenAI-compatible engine (against Anthropic's compatible address only), AG-UI with a Pydantic AI agent, the new cards on an Android emulator.
 - Not checked: any model that is not Claude; macOS; a real Android device; signing in when Claude Code is not yet signed in.

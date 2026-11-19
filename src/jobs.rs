@@ -111,7 +111,8 @@ fn place_named(cfg: &Config, on: &str) -> Result<Place, String> {
 }
 
 pub enum Event {
-    Started { id: String, title: String, topic: Option<String> },
+    /// `place`: where the worker runs, written as the card's `by` (shown when cards name more than one writer).
+    Started { id: String, title: String, topic: Option<String>, place: String },
     Progress { id: String, pct: Option<u8>, text: Option<String> },
     Finished { id: String, title: String, ok: bool, report: String },
 }
@@ -365,7 +366,7 @@ fn start(input: &Value) -> Result<String, String> {
         stop: stop.clone(),
         inbox: inbox.clone(),
     });
-    emit(Event::Started { id: id.clone(), title: title.clone(), topic: input["topic"].as_str().map(str::to_string).filter(|t| !t.is_empty()) });
+    emit(Event::Started { id: id.clone(), title: title.clone(), topic: input["topic"].as_str().map(str::to_string).filter(|t| !t.is_empty()), place: place.name() });
     let first = format!(
         "<order id=\"{id}\" title=\"{title}\">\n{order}\n</order>\n<env>\n지금: {date} {time}\n운영체제: {}\n작업 폴더: {dir}\n{note_extra}지시서 노트: {note}\n기억 보관함 폴더: {}\n</env>",
         match &place {

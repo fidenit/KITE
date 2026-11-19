@@ -1724,7 +1724,7 @@ impl App {
     fn job_event(&mut self, ev: jobs::Event) {
         let clip = |s: &str, n: usize| s.replace('\n', " ").chars().take(n).collect::<String>();
         match ev {
-            jobs::Event::Started { id, title, topic } => {
+            jobs::Event::Started { id, title, topic, place } => {
                 let topic = match topic.filter(|t| self.board.topics.iter().any(|x| &x.id == t)) {
                     Some(t) => t,
                     None => {
@@ -1737,6 +1737,8 @@ impl App {
                 self.apply_line(&format!("card {id} progress {topic} 3x2 {}", clip(&title, 40)), Author::Ai);
                 self.apply_line(&format!("set {id} pct 0"), Author::Ai);
                 self.apply_line(&format!("set {id} text {}", sys::tr("작업자가 시작함", "Worker started")), Author::Ai);
+                // Who works on it: the place it runs. Shown on the card when workers run in more than one place.
+                self.apply_line(&format!("set {id} by {}", clip(&place, 24)), Author::Ai);
             }
             jobs::Event::Progress { id, pct, text } => {
                 if self.board.card(&id).is_none() {
