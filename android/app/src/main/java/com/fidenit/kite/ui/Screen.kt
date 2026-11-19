@@ -247,6 +247,8 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
                         .clickable {
                             if (on) {
                                 vm.converse(false)
+                            } else if (vm.store.elevenKey.isBlank()) {
+                                vm.converse(true) // 키가 없으면 마이크 권한은 묻지 않고, 키가 필요하다는 안내만 낸다
                             } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                                 vm.converse(true)
                             } else {
