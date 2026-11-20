@@ -347,17 +347,23 @@ class DetachedTest {
         println("==== runner\n$r")
         println("==== start\n${c.start(id)}")
         fun count(text: String, part: String) = text.windowed(part.length).count { it == part }
-        // 신호는 한 곳에서만 나간다: 번호 검사(ok) 바로 뒤, 신호 이름과 번호는 함수 인자
-        assertEquals(1, count(r, "kill"))
+        // 신호는 한 곳(k1)에서만 나간다: 번호 검사(ok) 바로 뒤, 신호 이름과 번호는 함수 인자.
+        // 또 하나의 kill 은 살아 있는지만 묻는 `kill -0` (신호가 가지 않는다)이고, 그 번호는 `$!` 을 담은 변수뿐이며 역시 ok 뒤다.
+        assertEquals(2, count(r, "kill"))
+        assertEquals(1, count(r, "kill -0"))
+        assertTrue(r.contains("ok \"\$c\" && kill -0 \"\$c\" 2>/dev/null || return 1\n"))
         // 대문자 KILL 은 신호 이름으로만, 정해진 두 곳에만 있다
-        assertEquals(1, count(r.replace("kt \"\$c\" KILL", "").replace("sw KILL;", "").lowercase(), "kill"))
+        assertEquals(2, count(r.replace("kt \"\$c\" KILL", "").replace("sw KILL;", "").lowercase(), "kill"))
         assertTrue(r.contains("k1() { ok \"\$1\" && kill -\"\$2\" \"\$1\" 2>/dev/null; }"))
         // 번호 검사: 숫자만, 1보다 크고, 자기 번호가 아니다
         assertTrue(r.contains("ok() { case \"\$1\" in ''|*[!0-9]*) return 1;; esac; [ \"\$1\" -gt 1 ] && [ \"\$1\" != \"\$\$\" ]; }"))
         // 묶음이나 음수로 보내는 꼴, 파일에서 번호를 읽는 꼴이 없다
         assertFalse(r.contains("kill --"))
         assertFalse(r.contains("-- -"))
-        assertFalse(Regex("\\b(cat|read|killpg)\\b").containsMatchIn(r))
+        // 읽는 것은 한 곳뿐: 자기 자식의 /proc 상태 줄 (부모·좀비 검사에만 쓰고, 신호 번호로 쓰지 않는다)
+        val procRead = "{ read -r l < \"/proc/\$c/stat\"; } 2>/dev/null; set -- \${l##*) }; set -- \"\$2\" \"\$1\"; fi\n"
+        assertEquals(1, count(r, procRead))
+        assertFalse(Regex("\\b(cat|read|killpg)\\b").containsMatchIn(r.replace(procRead, "")))
         assertFalse(Regex("<\\s*\"\\\$HOME/\\.kite/runs/$id\\.(pid|stop|exit|out|err)\"").containsMatchIn(r))
         // k1 을 부르는 곳: 나무 훑기(kt, 뿌리를 먼저 검사)와 세션 훑기(sw)뿐
         assertEquals(3, count(r, "k1 ") + count(r, "k1("))
@@ -371,7 +377,7 @@ class DetachedTest {
         assertTrue(r.contains("\nc=\$!\n"))
         assertEquals(listOf("TERM;", "KILL;"), Regex("\\bsw (\\S+)").findAll(r).map { it.groupValues[1] }.toList())
         // 시작 글은 감싼 글을 그대로 싣고, 그 밖에는 신호를 보내는 명령이 없다
-        assertEquals(1, count(c.start(id).replace("kt \"\$c\" KILL", "").replace("sw KILL;", "").lowercase(), "kill"))
+        assertEquals(2, count(c.start(id).replace("kt \"\$c\" KILL", "").replace("sw KILL;", "").lowercase(), "kill"))
         assertEquals(2, count(c.start(id), "pgrep"))
     }
 
