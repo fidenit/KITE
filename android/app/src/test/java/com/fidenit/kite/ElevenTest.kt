@@ -3,8 +3,11 @@ package com.fidenit.kite
 import com.fidenit.kite.voice.Eleven
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -34,6 +37,74 @@ class ElevenTest {
         null
     } catch (e: Exception) {
         e.message
+    }
+
+    /** A speaker that only counts what it was handed. */
+    private class FakeSink : Eleven.Sink {
+        var samples = 0
+
+        override fun push(pcm: ShortArray, n: Int) {
+            samples += n
+        }
+
+        override fun pendingSecs(): Float = 0f
+
+        override fun stop() {}
+    }
+
+    private fun speakFailure(sink: Eleven.Sink): Eleven.Failure? = try {
+        Eleven.speak("test-key-not-real", "", "안녕하세요", sink) { false }
+        null
+    } catch (e: Eleven.Failure) {
+        e
+    }
+
+    @Test
+    fun aSentenceThatArrivesWholeIsHandedToTheSpeaker() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("a".repeat(9600)))
+        val sink = FakeSink()
+        assertNull(speakFailure(sink))
+        assertEquals(4800, sink.samples)
+        assertEquals("test-key-not-real", server.takeRequest(1, TimeUnit.SECONDS)!!.getHeader("xi-api-key"))
+    }
+
+    /** V1: the stream drops in the middle of a sentence: the failure says that sound of this sentence was already handed to the speaker. */
+    @Test
+    fun aStreamThatDropsMidSentenceSaysThatSoundWasAlreadyPlayed() {
+        server.enqueue(MockResponse().setResponseCode(200).setChunkedBody("a".repeat(96000), 4800).setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))
+        val sink = FakeSink()
+        val f = speakFailure(sink)!!
+        assertTrue("some sound was handed over before the drop", sink.samples > 0)
+        assertTrue(f.played)
+        assertEquals(Eleven.Why.NETWORK, f.why)
+    }
+
+    /** A failure before any sound says that nothing was played, and carries its cause as a value. */
+    @Test
+    fun aFailureBeforeAnySoundSaysSoAndCarriesItsCause() {
+        val cases = listOf(
+            Triple(401, """{"detail":{"status":"invalid_api_key","message":"Invalid API key"}}""", Eleven.Why.KEY),
+            Triple(401, """{"detail":{"status":"quota_exceeded","message":"This request exceeds your quota."}}""", Eleven.Why.LIMIT),
+            Triple(403, "", Eleven.Why.KEY),
+            Triple(429, """{"detail":{"status":"too_many_concurrent_requests"}}""", Eleven.Why.LIMIT),
+            Triple(404, """{"detail":"Not Found"}""", Eleven.Why.OTHER),
+            Triple(500, "busy", Eleven.Why.OTHER),
+        )
+        for ((code, body, why) in cases) {
+            server.enqueue(MockResponse().setResponseCode(code).setBody(body))
+            val sink = FakeSink()
+            val f = speakFailure(sink)!!
+            assertEquals("HTTP $code $body", why, f.why)
+            assertFalse(f.played)
+            assertEquals(0, sink.samples)
+        }
+        // nobody answers at that address
+        val dead = MockWebServer().apply { start() }
+        Eleven.api = dead.url("/").toString().trimEnd('/')
+        dead.shutdown()
+        val f = speakFailure(FakeSink())!!
+        assertEquals(Eleven.Why.NETWORK, f.why)
+        assertFalse(f.played)
     }
 
     @Test

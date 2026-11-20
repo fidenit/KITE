@@ -3,6 +3,7 @@ package com.fidenit.kite.voice
 
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.ByteBuffer
@@ -35,24 +36,61 @@ object Eleven {
         e.responseCode()
     }
 
-    private fun failure(c: HttpURLConnection): String {
-        val body = try {
-            c.errorStream?.bufferedReader()?.readText().orEmpty()
+    private fun errorBody(c: HttpURLConnection): String = try {
+        c.errorStream?.bufferedReader()?.readText().orEmpty()
+    } catch (_: Exception) {
+        ""
+    }
+
+    private fun failure(c: HttpURLConnection): String = "HTTP ${status(c)}: ${errorBody(c).take(200)}"
+
+    /** 소리 조각을 받아 트는 쪽 (앱에서는 [Player], 시험에서는 가짜). */
+    interface Sink {
+        fun push(pcm: ShortArray, n: Int)
+
+        fun pendingSecs(): Float
+
+        fun stop()
+    }
+
+    /** 말하기가 실패한 까닭: 키가 거절됨, 사용 한도, 연결이 끊기거나 응답이 없음, 그 밖. */
+    enum class Why { KEY, LIMIT, NETWORK, OTHER }
+
+    /**
+     * 말하기가 실패했다. `played` 는 이 문장의 소리를 조금이라도 스피커 쪽에 넘긴 뒤에 실패했는가
+     * (참이면 그 문장을 다른 목소리로 처음부터 다시 읽으면 안 된다). `message` 는 기록용이고 화면에 그대로 내지 않는다.
+     */
+    class Failure(val why: Why, val played: Boolean, message: String, cause: Throwable? = null) : Exception(message, cause)
+
+    /** 200 이 아닌 답의 까닭. 한도를 다 쓴 계정에는 401 과 함께 본문의 detail.status 가 quota_exceeded 로 온다. */
+    internal fun why(code: Int, body: String): Why {
+        val status = try {
+            JSONObject(body).optJSONObject("detail")?.optString("status").orEmpty()
         } catch (_: Exception) {
             ""
         }
-        return "HTTP ${status(c)}: ${body.take(200)}"
+        return when {
+            code == 429 || status.contains("quota") -> Why.LIMIT
+            code == 401 || code == 403 -> Why.KEY
+            else -> Why.OTHER
+        }
     }
 
     /**
      * 문장 하나를 소리 내어 읽는다. 소리가 도착하는 대로 틀기 시작하고, 다 틀 때까지 기다린다.
-     * `stopped` 가 참을 돌려주면 즉시 멈춘다.
+     * `stopped` 가 참을 돌려주면 즉시 멈춘다. 실패하면 [Failure] 를 낸다 (다른 예외는 내지 않는다).
      */
-    fun speak(key: String, voice: String, text: String, player: Player, stopped: () -> Boolean) {
-        val c = open("$api/v1/text-to-speech/${voice.ifBlank { DEFAULT_VOICE }}/stream?output_format=pcm_$TTS_RATE", key, "application/json")
+    fun speak(key: String, voice: String, text: String, player: Sink, stopped: () -> Boolean) {
+        var played = false
+        var c: HttpURLConnection? = null
         try {
+            c = open("$api/v1/text-to-speech/${voice.ifBlank { DEFAULT_VOICE }}/stream?output_format=pcm_$TTS_RATE", key, "application/json")
             c.outputStream.use { it.write(JSONObject().put("text", text).put("model_id", TTS_MODEL).toString().toByteArray()) }
-            if (c.responseCode != 200) throw Exception(failure(c))
+            val code = status(c)
+            if (code != 200) {
+                val body = errorBody(c)
+                throw Failure(why(code, body), false, "HTTP $code: ${body.take(200)}")
+            }
             val input = c.inputStream
             val buf = ByteArray(4800)
             var carry = -1 // 샘플은 2바이트인데 조각이 홀수 바이트로 끊길 수 있다
@@ -76,7 +114,10 @@ object Eleven {
                     i += 2
                 }
                 if (i < n) carry = buf[i].toInt() and 0xFF
-                if (count > 0 && !stopped()) player.push(pcm, count)
+                if (count > 0 && !stopped()) {
+                    played = true
+                    player.push(pcm, count)
+                }
             }
             // 다 틀 때까지 기다린다.
             while (player.pendingSecs() > 0.02f) {
@@ -86,8 +127,14 @@ object Eleven {
                 }
                 Thread.sleep(20)
             }
+        } catch (e: Failure) {
+            throw e
+        } catch (e: IOException) {
+            throw Failure(Why.NETWORK, played, e.message ?: e.toString(), e)
+        } catch (e: Exception) {
+            throw Failure(Why.OTHER, played, e.message ?: e.toString(), e)
         } finally {
-            c.disconnect()
+            c?.disconnect()
         }
     }
 

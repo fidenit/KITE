@@ -47,6 +47,7 @@ import com.fidenit.kite.engine.Waker
 import com.fidenit.kite.voice.Eleven
 import com.fidenit.kite.voice.Mic
 import com.fidenit.kite.voice.Player
+import com.fidenit.kite.voice.Speaking
 import com.fidenit.kite.voice.Words
 import com.fidenit.kite.voice.talkMode
 import kotlinx.coroutines.CompletableDeferred
@@ -1112,32 +1113,22 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         speaking = true
         val epoch = ++speakEpoch
         val key = store.elevenKey.trim()
+        val viaEleven: () -> Unit = { Eleven.speak(key, store.voiceId.trim(), board.show(text), player ?: Player().also { player = it }) { epoch != speakEpoch } }
         viewModelScope.launch {
-            var elevenFailed: Throwable? = null
-            val failed = withContext(Dispatchers.IO) {
-                runCatching {
-                    if (key.isNotEmpty()) {
-                        val p = player ?: Player().also { player = it }
-                        try {
-                            Eleven.speak(key, store.voiceId.trim(), board.show(text), p) { epoch != speakEpoch }
-                        } catch (e: Exception) {
-                            // 키 오류·한도·끊김: 이 문장은 폰의 기본 음성으로 읽는다
-                            elevenFailed = e
-                            if (epoch == speakEpoch) speakWithDevice(board.show(text), epoch)
-                        }
-                    } else {
-                        speakWithDevice(board.show(text), epoch)
-                    }
-                }.exceptionOrNull()
+            // ElevenLabs 가 실패하면 틀던 소리를 멈추고, 이 문장의 소리가 하나도 나가지 않았을 때만 폰의 기본 음성으로 읽는다 (Speaking.read)
+            val out = withContext(Dispatchers.IO) {
+                Speaking.read(if (key.isEmpty()) null else viaEleven, stop = { player?.stop() }, current = { epoch == speakEpoch }, phone = { speakWithDevice(board.show(text), epoch) })
             }
             if (epoch != speakEpoch) return@launch
-            val why = elevenFailed
-            if (failed != null) {
-                error = (if (english) "Could not speak: " else "소리 내어 읽지 못함: ") + failed.message
+            val why = out.eleven
+            if (out.phoneFailed) {
+                error = if (english) "Could not speak with the phone's own voice" else "폰의 기본 음성으로 읽지 못함"
             } else if (why != null) {
                 if (!elevenFailShown) {
-                    error = if (english) "The ElevenLabs voice did not work (${why.message}) → this sentence was read with the phone's own voice → check the ElevenLabs key and usage in Settings"
-                    else "ElevenLabs 목소리를 쓰지 못했습니다 (${why.message}) → 이 문장은 폰의 기본 음성으로 읽었습니다 → 설정에서 ElevenLabs 키와 사용량을 확인해 주세요"
+                    val did = if (why.played) (if (english) "this sentence stopped partway and was not read again" else "이 문장은 읽다가 멈췄고 다시 읽지 않았습니다")
+                    else (if (english) "this sentence was read with the phone's own voice" else "이 문장은 폰의 기본 음성으로 읽었습니다")
+                    error = if (english) "The ElevenLabs voice did not work (${why.message}) → $did → check the ElevenLabs key and usage in Settings"
+                    else "ElevenLabs 목소리를 쓰지 못했습니다 (${why.message}) → $did → 설정에서 ElevenLabs 키와 사용량을 확인해 주세요"
                 }
                 elevenFailShown = true
             } else if (key.isNotEmpty()) {
@@ -1148,7 +1139,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** ElevenLabs 키가 없을 때: 폰에 들어 있는 음성으로 읽는다. */
+    /** ElevenLabs 키가 없거나 ElevenLabs 가 소리를 내기 전에 실패했을 때: 폰에 들어 있는 음성으로 읽는다. */
     private suspend fun speakWithDevice(text: String, epoch: Int) {
         val tts = deviceTts ?: TextToSpeech(getApplication()) { status -> deviceTtsReady.complete(status == TextToSpeech.SUCCESS) }.also { deviceTts = it }
         if (!deviceTtsReady.await()) throw Exception("폰의 음성 엔진을 쓸 수 없음")

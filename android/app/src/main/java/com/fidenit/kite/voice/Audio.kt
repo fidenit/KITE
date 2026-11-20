@@ -137,7 +137,7 @@ class Mic {
 }
 
 /** 스피커. 받은 소리를 바로 튼다. */
-class Player {
+class Player : Eleven.Sink {
     private val track: AudioTrack
 
     @Volatile
@@ -155,16 +155,16 @@ class Player {
     }
 
     /** 소리 조각을 튼다 (자리가 날 때까지 기다린다). */
-    fun push(pcm: ShortArray, n: Int) {
+    override fun push(pcm: ShortArray, n: Int) {
         val w = track.write(pcm, 0, n)
         if (w > 0) written += w
     }
 
     /** 아직 틀지 못하고 남은 소리의 길이 (초). */
-    fun pendingSecs(): Float = ((written - (track.playbackHeadPosition.toLong() and 0xFFFFFFFFL)).coerceAtLeast(0)) / TTS_RATE.toFloat()
+    override fun pendingSecs(): Float = ((written - (track.playbackHeadPosition.toLong() and 0xFFFFFFFFL)).coerceAtLeast(0)) / TTS_RATE.toFloat()
 
     /** 틀던 소리를 바로 멈추고 버린다. 다음 소리를 받을 준비는 되어 있다. */
-    fun stop() {
+    override fun stop() {
         try {
             track.pause()
             track.flush()
