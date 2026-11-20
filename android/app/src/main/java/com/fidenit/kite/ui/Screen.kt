@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,7 +39,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -64,10 +67,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.fidenit.kite.KiteViewModel
 import com.fidenit.kite.engine.Decide
@@ -86,26 +89,76 @@ object C {
     val amber = Color(0xFFF5B83D)
 }
 
-/** 아래 줄(입력칸·보내기·멈춤·대화)의 한 높이: 둥근 대화 버튼의 크기. 한 줄에 놓인 것은 높이가 같다. */
-private val BAR_H = 54.dp
-
-/** 테두리만 있는 알약형 버튼. `height` 를 주면 그 높이에 글자를 가운데로 (아래 줄), 안 주면 지금 그대로. */
+/** 테두리만 있는 알약형 버튼. 높이는 고정이고 글자는 가운데 (아래 줄 밖은 [Dim.PILL_H], 아래 줄은 [Dim.BAR_H] 를 준다). */
 @Composable
-fun Pill(label: String, selected: Boolean = false, color: Color = C.text, modifier: Modifier = Modifier, height: Dp? = null, onClick: () -> Unit) {
+fun Pill(label: String, selected: Boolean = false, color: Color = C.text, modifier: Modifier = Modifier, height: Dp = Dim.PILL_H, onClick: () -> Unit) {
     Text(
         label,
         color = if (selected) C.bg else color,
-        fontSize = 14.sp,
+        fontSize = Dim.pill,
         fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
         maxLines = 1,
         modifier = modifier
-            .let { if (height != null) it.height(height) else it }
+            .height(height)
             .clip(RoundedCornerShape(50))
             .background(if (selected) C.text else Color.Transparent)
             .border(1.dp, if (selected) C.text else C.line, RoundedCornerShape(50))
             .clickable(onClick = onClick)
-            .let { if (height != null) it.wrapContentHeight(Alignment.CenterVertically) else it }
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .wrapContentHeight(Alignment.CenterVertically)
+            .padding(horizontal = Dim.pillPadH),
+    )
+}
+
+/**
+ * 작은 테두리 글 칸 (입력 카드와 설정이 같이 쓴다). 한 줄 칸은 [Dim.FIELD_H] 높이, 이름은 지금처럼 테두리 위에 뜨고, 예시 글도 지금처럼.
+ * `modifier` (시험 이름·포커스) 는 글을 적는 칸 자체에 붙고, 그 칸의 크기가 테두리 상자다. 위의 [Dim.fieldLabel] 은 떠오른 이름이 들어갈 자리.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FieldBox(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+    placeholder: String = "",
+    lines: Int = 1,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+) {
+    val single = lines == 1
+    val source = remember { MutableInteractionSource() }
+    val colors = OutlinedTextFieldDefaults.colors()
+    val padV = if (single) 0.dp else Dim.fieldPadV
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.padding(top = Dim.fieldLabel, bottom = Dim.fieldGap).then(modifier).fillMaxWidth()
+            .let { if (single) it.height(Dim.FIELD_H) else it.heightIn(min = Dim.FIELD_H) },
+        textStyle = TextStyle(color = C.text, fontSize = Dim.input),
+        cursorBrush = SolidColor(C.accent),
+        singleLine = single,
+        minLines = lines,
+        maxLines = if (single) 1 else 6,
+        visualTransformation = visualTransformation,
+        keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
+        interactionSource = source,
+        decorationBox = { inner ->
+            OutlinedTextFieldDefaults.DecorationBox(
+                value = value,
+                innerTextField = inner,
+                enabled = true,
+                singleLine = single,
+                visualTransformation = visualTransformation,
+                interactionSource = source,
+                label = { Text(label) },
+                placeholder = if (placeholder.isEmpty()) null else ({ Text(placeholder, color = C.faint, fontSize = Dim.input) }),
+                colors = colors,
+                contentPadding = OutlinedTextFieldDefaults.contentPadding(start = Dim.fieldPadH, top = padV, end = Dim.fieldPadH, bottom = padV),
+                container = { OutlinedTextFieldDefaults.ContainerBox(true, false, source, colors, RoundedCornerShape(Dim.fieldCorner)) },
+            )
+        },
     )
 }
 
@@ -157,27 +210,30 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
     val english = vm.store.lang == "en"
     Column(Modifier.fillMaxSize()) {
         // 주제
-        Row(Modifier.fillMaxWidth().testTag("top-bar").padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().testTag("top-bar").padding(start = Dim.topPadH, end = Dim.topPadH, top = Dim.topPadTop, bottom = Dim.topPadBottom), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Dim.topicGap)) {
                 for (t in board.topics) {
                     val on = t.id == vm.current
                     Text(
                         t.name,
                         color = if (on) C.text else C.dim,
-                        fontSize = 17.sp,
+                        fontSize = Dim.topic,
                         fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
                         maxLines = 1,
+                        // 같은 줄의 알약과 같은 높이, 글자는 가운데
                         modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
+                            .height(Dim.PILL_H)
+                            .clip(RoundedCornerShape(Dim.topicCorner))
                             .combinedClickable(onClick = { vm.current = t.id }, onLongClick = { vm.archive(t.id) })
-                            .padding(horizontal = 6.dp, vertical = 6.dp),
+                            .wrapContentHeight(Alignment.CenterVertically)
+                            .padding(horizontal = Dim.topicPadH),
                     )
                 }
-                if (board.topics.isEmpty()) Text(if (com.fidenit.kite.BuildConfig.PRO) "APERIT Pro" else "APERIT", color = C.text, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(6.dp))
+                if (board.topics.isEmpty()) Text(if (com.fidenit.kite.BuildConfig.PRO) "APERIT Pro" else "APERIT", color = C.text, fontSize = Dim.topic, fontWeight = FontWeight.Bold, modifier = Modifier.height(Dim.PILL_H).wrapContentHeight(Alignment.CenterVertically).padding(horizontal = Dim.topicPadH))
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(Dim.topTopicsGap))
             Pill(if (english) "Talk log" else "대화 기록", modifier = Modifier.testTag("top-log"), onClick = onLog)
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(Dim.topPillGap))
             Pill(if (english) "Settings" else "설정", modifier = Modifier.testTag("top-settings"), onClick = onSettings)
         }
 
@@ -185,8 +241,8 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
             Text(
                 e,
                 color = C.text,
-                fontSize = 14.sp,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(14.dp)).background(C.red.copy(alpha = 0.22f)).clickable { vm.error = null }.padding(12.dp),
+                fontSize = Dim.error,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Dim.errPadH, vertical = Dim.errPadV).clip(RoundedCornerShape(Dim.errCorner)).background(C.red.copy(alpha = 0.22f)).clickable { vm.error = null }.padding(Dim.errInner),
             )
         }
 
@@ -203,13 +259,13 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
                     Text(
                         if (english) "Tap the microphone and talk,\nor type below." else "마이크를 누르고 말하거나\n아래에 적어 보세요.",
                         color = C.faint,
-                        fontSize = 16.sp,
-                        lineHeight = 24.sp,
+                        fontSize = Dim.emptyHint,
+                        lineHeight = Dim.emptyHintLine,
                     )
                 }
             }
         } else {
-            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("board-list"), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("board-list"), contentPadding = PaddingValues(horizontal = Dim.listPadH, vertical = Dim.listPadV), verticalArrangement = Arrangement.spacedBy(Dim.cardGap)) {
                 items(ordered, key = { it.id }) { card -> CardView(vm, card, rev) }
             }
         }
@@ -236,10 +292,11 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
     }
     val hide = rememberHideKeyboard()
     val fieldFocus = remember { FocusRequester() }
-    Column(Modifier.fillMaxWidth().testTag("bottom-bar").background(C.bg).padding(horizontal = 14.dp, vertical = 10.dp)) {
+    var multiLine by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().testTag("bottom-bar").background(C.bg).padding(horizontal = Dim.barPadH, vertical = Dim.barPadV)) {
         // 한마디
         val say = vm.liveSay ?: vm.board.show(vm.board.say)
-        if (say.isNotEmpty()) Text(say, color = C.text, fontSize = 18.sp, lineHeight = 25.sp, fontWeight = FontWeight.Medium)
+        if (say.isNotEmpty()) Text(say, color = C.text, fontSize = Dim.say, lineHeight = Dim.sayLine, fontWeight = FontWeight.Medium)
         // 지금 무엇을 하는지
         val status = when {
             vm.activity.isNotEmpty() -> vm.activity
@@ -252,20 +309,22 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
             vm.converse -> if (english) "Go ahead." else "말씀하세요."
             else -> vm.statsLine
         }
-        if (status.isNotEmpty()) Text(status, color = C.dim, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
-        Spacer(Modifier.height(10.dp))
+        if (status.isNotEmpty()) Text(status, color = C.dim, fontSize = Dim.status, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = Dim.statusTop))
+        Spacer(Modifier.height(Dim.barRowTop))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
-                Modifier.weight(1f).heightIn(min = BAR_H).testTag("bar-input").clip(RoundedCornerShape(22.dp)).background(C.card).border(1.dp, C.line, RoundedCornerShape(22.dp))
+                Modifier.weight(1f).heightIn(min = Dim.BAR_H).testTag("bar-input").clip(RoundedCornerShape(Dim.inputCorner)).background(C.card).border(1.dp, C.line, RoundedCornerShape(Dim.inputCorner))
                     .pointerInput(Unit) { detectTapGestures(onTap = { fieldFocus.requestFocus() }) } // 칸 안의 여백도 글 칸이다 (K1 로 내리지 않는다)
-                    .padding(horizontal = 16.dp, vertical = 13.dp),
-                contentAlignment = Alignment.CenterStart, // 한 줄일 때 글자가 가운데 (네 줄까지는 그대로 늘어난다)
+                    .padding(horizontal = Dim.inputPadH, vertical = if (multiLine) Dim.inputPadV else 0.dp),
+                // 한 줄일 때 글자가 BAR_H 안 가운데 (글자를 키워도 한 줄이면 BAR_H), 두 줄부터 위아래 여백을 두고 네 줄까지 늘어난다
+                contentAlignment = Alignment.CenterStart,
             ) {
-                if (input.isEmpty()) Text(if (english) "Type here" else "여기에 적기", color = C.faint, fontSize = 16.sp)
+                if (input.isEmpty()) Text(if (english) "Type here" else "여기에 적기", color = C.faint, fontSize = Dim.input)
                 BasicTextField(
                     value = input,
                     onValueChange = { input = it },
-                    textStyle = TextStyle(color = C.text, fontSize = 16.sp),
+                    textStyle = TextStyle(color = C.text, fontSize = Dim.input),
+                    onTextLayout = { multiLine = it.lineCount > 1 },
                     cursorBrush = SolidColor(C.accent),
                     maxLines = 4,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -277,17 +336,17 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
                     modifier = Modifier.fillMaxWidth().focusRequester(fieldFocus).testTag("bar-field"),
                 )
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(Dim.barGap))
             if (input.isNotBlank()) {
-                Pill(if (english) "Send" else "보내기", selected = true, modifier = Modifier.testTag("bar-send"), height = BAR_H) {
+                Pill(if (english) "Send" else "보내기", selected = true, modifier = Modifier.testTag("bar-send"), height = Dim.BAR_H) {
                     vm.send(input)
                     input = ""
                     hide() // K2
                 }
             } else {
                 if (vm.busy || vm.speaking) {
-                    Pill(if (english) "Stop" else "멈춤", color = C.red, modifier = Modifier.testTag("bar-stop"), height = BAR_H) { vm.stop() }
-                    Spacer(Modifier.width(8.dp))
+                    Pill(if (english) "Stop" else "멈춤", color = C.red, modifier = Modifier.testTag("bar-stop"), height = Dim.BAR_H) { vm.stop() }
+                    Spacer(Modifier.width(Dim.barGap))
                 }
                 // 마이크: 켜져 있으면 들리는 소리 크기만큼 테두리가 밝아진다. Pro 는 서버의 목소리를 쓸 수 있을 때만 (D-A1, 아니면 A1)
                 if (ProVoice.controlsShown(com.fidenit.kite.BuildConfig.PRO, vm.proVoiceOn)) {
@@ -295,7 +354,7 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
                 val glow = if (on) (vm.micLevel * 12f).coerceIn(0f, 1f) else 0f
                 Box(
                     Modifier
-                        .size(BAR_H)
+                        .size(Dim.BAR_H)
                         .testTag("bar-talk")
                         .clip(CircleShape)
                         .background(if (on) C.accent.copy(alpha = 0.35f + 0.65f * glow) else Color.Transparent)
@@ -313,7 +372,7 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(if (on) (if (english) "On" else "켜짐") else (if (english) "Talk" else "대화"), color = if (on) C.bg else C.text, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text(if (on) (if (english) "On" else "켜짐") else (if (english) "Talk" else "대화"), color = if (on) C.bg else C.text, fontSize = Dim.talk, fontWeight = FontWeight.Bold)
                 }
                 }
             }
@@ -325,16 +384,16 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
 @Composable
 private fun TalkLog(vm: KiteViewModel, onBack: () -> Unit) {
     val english = vm.store.lang == "en"
-    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(if (english) "Talk log" else "대화 기록", color = C.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+    Column(Modifier.fillMaxSize().padding(horizontal = Dim.logPadH)) {
+        Row(Modifier.fillMaxWidth().padding(vertical = Dim.logTitleV), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (english) "Talk log" else "대화 기록", color = C.text, fontSize = Dim.pageTitle, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             Pill(if (english) "Back" else "돌아가기", modifier = Modifier.testTag("page-back"), onClick = onBack)
         }
-        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp), reverseLayout = true) {
+        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Dim.logGap), reverseLayout = true) {
             items(vm.recent.reversed()) { (user, ali) ->
                 Column {
-                    Text(user, color = C.dim, fontSize = 15.sp, lineHeight = 21.sp)
-                    if (ali.isNotEmpty()) Text(ali, color = C.text, fontSize = 16.sp, lineHeight = 23.sp, modifier = Modifier.padding(top = 2.dp))
+                    Text(user, color = C.dim, fontSize = Dim.logUser, lineHeight = Dim.logUserLine)
+                    if (ali.isNotEmpty()) Text(ali, color = C.text, fontSize = Dim.logReply, lineHeight = Dim.logReplyLine, modifier = Modifier.padding(top = Dim.logReplyTop))
                 }
             }
         }

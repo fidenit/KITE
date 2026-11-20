@@ -23,7 +23,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -51,7 +50,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.fidenit.kite.KiteViewModel
 import com.fidenit.kite.core.Card
 import com.fidenit.kite.core.Kind
@@ -79,10 +77,10 @@ private fun named(c: String): Color = when (c.trim()) {
 }
 
 @Composable
-private fun Dot(color: Color) = Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+private fun Dot(color: Color) = Box(Modifier.size(Dim.dot).clip(CircleShape).background(color))
 
 @Composable
-private fun Body(s: String, color: Color = C.text) = Text(s, color = color, fontSize = 15.sp, lineHeight = 22.sp)
+private fun Body(s: String, color: Color = C.text) = Text(s, color = color, fontSize = Dim.body, lineHeight = Dim.bodyLine)
 
 /** 카드 하나. `rev` 는 보드가 바뀌었을 때 다시 그리게 하려고 받는다. */
 @Composable
@@ -90,25 +88,25 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
     val b = vm.board
     // In a field named `text`, the two characters \n are shown as a line break (protocol 0.3).
     fun f(name: String) = b.show(card.field(name)).let { if (name == "text") it.replace("\\n", "\n") else it }
-    Column(Modifier.testTag("card").fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(C.card).padding(16.dp)) {
+    Column(Modifier.testTag("card").fillMaxWidth().clip(RoundedCornerShape(Dim.cardCorner)).background(C.card).padding(Dim.cardPad)) {
         if (card.title.isNotEmpty()) {
-            Text(b.show(card.title), color = C.text, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
+            Text(b.show(card.title), color = C.text, fontSize = Dim.title, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(Dim.titleGap))
         }
         when (card.kind) {
             Kind.Note -> Body(f("text"))
             Kind.Status -> Row(verticalAlignment = Alignment.CenterVertically) {
                 Dot(stateColor(card.field("state")))
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(Dim.dotGap))
                 Body(f("text"))
             }
             Kind.Metric -> {
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text(f("value"), color = C.text, fontSize = 38.sp, fontWeight = FontWeight.Bold)
-                    if (f("unit").isNotEmpty()) Text(f("unit"), color = C.dim, fontSize = 16.sp, modifier = Modifier.padding(start = 6.dp, bottom = 7.dp))
+                    Text(f("value"), color = C.text, fontSize = Dim.metric, fontWeight = FontWeight.Bold)
+                    if (f("unit").isNotEmpty()) Text(f("unit"), color = C.dim, fontSize = Dim.metricUnit, modifier = Modifier.padding(start = Dim.metricUnitStart, bottom = Dim.metricBaseline))
                     val delta = f("delta")
                     if (delta.isNotEmpty()) {
-                        Text(delta, color = if (delta.startsWith("+")) C.green else if (delta.startsWith("-")) C.red else C.dim, fontSize = 15.sp, modifier = Modifier.padding(start = 12.dp, bottom = 7.dp))
+                        Text(delta, color = if (delta.startsWith("+")) C.green else if (delta.startsWith("-")) C.red else C.dim, fontSize = Dim.metricDelta, modifier = Modifier.padding(start = Dim.metricDeltaStart, bottom = Dim.metricBaseline))
                     }
                 }
                 if (f("text").isNotEmpty()) Body(f("text"), C.dim)
@@ -117,13 +115,13 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
             Kind.Table -> {
                 val cols = com.fidenit.kite.core.Lang.splitCells(f("cols")).filter { it.isNotEmpty() }
                 if (cols.isNotEmpty()) {
-                    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp)) { cols.forEach { Text(it, color = C.dim, fontSize = 13.sp, modifier = Modifier.weight(1f).padding(end = 8.dp)) } }
+                    Row(Modifier.fillMaxWidth().padding(bottom = Dim.headPadB)) { cols.forEach { Text(it, color = C.dim, fontSize = Dim.small, modifier = Modifier.weight(1f).padding(end = Dim.cellGap)) } }
                 }
                 for (item in card.items) {
                     Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
-                    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = Dim.rowV)) {
                         item.cells.forEachIndexed { i, cell ->
-                            Text(b.show(cell), color = C.text, fontSize = 15.sp, lineHeight = 21.sp, fontWeight = if (i == 0) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f).padding(end = 8.dp))
+                            Text(b.show(cell), color = C.text, fontSize = Dim.body, lineHeight = Dim.bodyLine, fontWeight = if (i == 0) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f).padding(end = Dim.cellGap))
                         }
                     }
                 }
@@ -131,32 +129,32 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
             Kind.Progress -> {
                 val pct = card.field("pct").toIntOrNull()
                 if (pct != null) {
-                    Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(C.line)) {
+                    Box(Modifier.fillMaxWidth().height(Dim.progressH).clip(RoundedCornerShape(Dim.progressCorner)).background(C.line)) {
                         Box(Modifier.fillMaxWidth(pct / 100f).fillMaxHeight().background(C.accent))
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(Dim.inGap))
                 }
                 if (f("text").isNotEmpty()) Body(f("text"), C.dim)
                 for (item in card.items) {
-                    Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.padding(top = Dim.inGap), verticalAlignment = Alignment.CenterVertically) {
                         Dot(stateColor(item.cells[0]))
-                        Spacer(Modifier.width(10.dp))
+                        Spacer(Modifier.width(Dim.dotGap))
                         Body(b.show(item.cells.getOrElse(1) { "" }), if (item.cells[0] == "todo") C.dim else C.text)
                     }
                 }
             }
             Kind.Checklist -> for (item in card.items) {
                 val done = item.cells[0] == "done"
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { vm.toggle(card, item) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(22.dp).clip(RoundedCornerShape(7.dp)).background(if (done) C.green else Color.Transparent).border(1.5.dp, if (done) C.green else C.faint, RoundedCornerShape(7.dp)))
-                    Spacer(Modifier.width(12.dp))
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(Dim.checkRowCorner)).clickable { vm.toggle(card, item) }.padding(vertical = Dim.checkRowV), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(Dim.checkBox).clip(RoundedCornerShape(Dim.checkCorner)).background(if (done) C.green else Color.Transparent).border(1.5.dp, if (done) C.green else C.faint, RoundedCornerShape(Dim.checkCorner)))
+                    Spacer(Modifier.width(Dim.checkGap))
                     Body(b.show(item.cells.getOrElse(1) { "" }), if (done) C.dim else C.text)
                 }
             }
             Kind.Decision -> {
                 if (f("text").isNotEmpty()) {
                     Body(f("text"))
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(Dim.inGap))
                 }
                 val chosen = card.field("chosen").split(',')
                 val multi = card.field("multi") == "yes"
@@ -164,12 +162,12 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                 val answered = card.field("chosen").isNotEmpty()
                 // With several answers a tap only marks the option; the answer goes out with "Done".
                 val marks = remember(card.id) { mutableStateMapOf<String, String>() }
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(Dim.optGap)) {
                     for (item in card.items) {
                         val on = item.id in chosen || (multi && !answered && marks.containsKey(item.id))
                         Column(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(if (on) C.accent.copy(alpha = 0.18f) else Color.Transparent)
-                                .border(1.dp, if (on) C.accent else if (danger) C.red.copy(alpha = 0.6f) else C.line, RoundedCornerShape(16.dp))
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(Dim.optCorner)).background(if (on) C.accent.copy(alpha = 0.18f) else Color.Transparent)
+                                .border(1.dp, if (on) C.accent else if (danger) C.red.copy(alpha = 0.6f) else C.line, RoundedCornerShape(Dim.optCorner))
                                 .clickable {
                                     if (!multi) {
                                         vm.choose(card, item)
@@ -177,10 +175,10 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                                         if (marks.containsKey(item.id)) marks.remove(item.id) else marks[item.id] = "1"
                                     }
                                 }
-                                .padding(14.dp),
+                                .padding(Dim.optPad),
                         ) {
-                            Text(b.show(item.cells[0]), color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                            item.cells.getOrNull(1)?.takeIf { it.isNotEmpty() }?.let { Text(b.show(it), color = C.dim, fontSize = 14.sp, lineHeight = 20.sp) }
+                            Text(b.show(item.cells[0]), color = C.text, fontSize = Dim.optTitle, fontWeight = FontWeight.Bold)
+                            item.cells.getOrNull(1)?.takeIf { it.isNotEmpty() }?.let { Text(b.show(it), color = C.dim, fontSize = Dim.optDesc, lineHeight = Dim.optDescLine) }
                         }
                     }
                     if (multi && !answered && marks.isNotEmpty()) Pill("완료") { vm.chooseMany(card, marks.keys.toSet()) }
@@ -190,47 +188,47 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                 // One thing with named properties: the summary, label and value per field, then its rows.
                 if (f("text").isNotEmpty()) {
                     Body(f("text"), C.dim)
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(Dim.inGap))
                 }
                 for ((name, value) in card.fields) {
                     if (name == "text" || name == "cols") continue
-                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                        Text(name.replace('-', ' ').replace('_', ' '), color = C.dim, fontSize = 13.sp, modifier = Modifier.width(104.dp))
-                        Text(b.show(value), color = C.text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Row(Modifier.fillMaxWidth().padding(vertical = Dim.recordFieldV)) {
+                        Text(name.replace('-', ' ').replace('_', ' '), color = C.dim, fontSize = Dim.small, modifier = Modifier.width(Dim.keyCol))
+                        Text(b.show(value), color = C.text, fontSize = Dim.body, fontWeight = FontWeight.Bold)
                     }
                 }
                 val cols = com.fidenit.kite.core.Lang.splitCells(card.field("cols")).filter { it.isNotEmpty() }
                 if (card.items.isNotEmpty() && cols.isNotEmpty()) {
-                    Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp)) { cols.forEach { Text(it, color = C.dim, fontSize = 13.sp, modifier = Modifier.weight(1f).padding(end = 8.dp)) } }
+                    Row(Modifier.fillMaxWidth().padding(top = Dim.inGap, bottom = Dim.headPadB)) { cols.forEach { Text(it, color = C.dim, fontSize = Dim.small, modifier = Modifier.weight(1f).padding(end = Dim.cellGap)) } }
                 }
                 for (item in card.items) {
                     Box(Modifier.fillMaxWidth().height(1.dp).background(C.line))
-                    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = Dim.rowV)) {
                         item.cells.forEachIndexed { i, cell ->
-                            Text(b.show(cell), color = C.text, fontSize = 15.sp, lineHeight = 21.sp, fontWeight = if (i == 0) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f).padding(end = 8.dp))
+                            Text(b.show(cell), color = C.text, fontSize = Dim.body, lineHeight = Dim.bodyLine, fontWeight = if (i == 0) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f).padding(end = Dim.cellGap))
                         }
                     }
                 }
             }
             Kind.Input -> InputCard(vm, card)
             Kind.Timeline -> for (item in card.items) {
-                Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.Top) {
-                    Box(Modifier.padding(top = 6.dp)) { Dot(stateColor(item.cells.getOrElse(2) { "" })) }
-                    Spacer(Modifier.width(10.dp))
-                    Text(b.show(item.cells[0]), color = C.dim, fontSize = 14.sp, modifier = Modifier.width(84.dp))
+                Row(Modifier.padding(vertical = Dim.timeRowV), verticalAlignment = Alignment.Top) {
+                    Box(Modifier.padding(top = Dim.timeDotTop)) { Dot(stateColor(item.cells.getOrElse(2) { "" })) }
+                    Spacer(Modifier.width(Dim.dotGap))
+                    Text(b.show(item.cells[0]), color = C.dim, fontSize = Dim.smallPlus, modifier = Modifier.width(Dim.timeCol))
                     Body(b.show(item.cells.getOrElse(1) { "" }))
                 }
             }
             Kind.Route -> {
-                if (f("total").isNotEmpty()) Text(f("total"), color = C.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                if (f("total").isNotEmpty()) Text(f("total"), color = C.text, fontSize = Dim.routeTotal, fontWeight = FontWeight.Bold)
                 if (f("text").isNotEmpty()) Body(f("text"), C.dim)
                 for (item in card.items) {
-                    Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.padding(top = Dim.inGap), verticalAlignment = Alignment.CenterVertically) {
                         Dot(C.accent)
-                        Spacer(Modifier.width(10.dp))
-                        Text(item.cells[0], color = C.text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.width(Dim.dotGap))
+                        Text(item.cells[0], color = C.text, fontSize = Dim.body, fontWeight = FontWeight.Bold)
                     }
-                    item.cells.getOrNull(2)?.takeIf { it.isNotEmpty() }?.let { Text(it, color = C.dim, fontSize = 13.sp, modifier = Modifier.padding(start = 20.dp, top = 2.dp)) }
+                    item.cells.getOrNull(2)?.takeIf { it.isNotEmpty() }?.let { Text(it, color = C.dim, fontSize = Dim.small, modifier = Modifier.padding(start = Dim.dot + Dim.dotGap, top = Dim.noteTop)) }
                 }
             }
             Kind.Draw -> {
@@ -241,9 +239,9 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                 val uri = LocalUriHandler.current
                 val target = card.field(if (card.kind == Kind.Web) "url" else "src")
                 if (f("text").isNotEmpty()) Body(f("text"))
-                Text(target, color = C.dim, fontSize = 13.sp, maxLines = 2)
+                Text(target, color = C.dim, fontSize = Dim.small, maxLines = 2)
                 if (target.startsWith("http")) {
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(Dim.inGap))
                     Pill("열기") {
                         try {
                             uri.openUri(target)
@@ -261,7 +259,7 @@ private fun InputCard(vm: KiteViewModel, card: Card) {
     val b = vm.board
     if (card.field("text").isNotEmpty()) {
         Body(b.show(card.field("text")))
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(Dim.inGap))
     }
     val sent = card.field("sent").isNotEmpty()
     val values = remember(card.id) { mutableStateMapOf<String, String>() }
@@ -273,8 +271,8 @@ private fun InputCard(vm: KiteViewModel, card: Card) {
         val name = item.cells[0]
         val hint = item.cells.getOrElse(1) { "" }
         if (sent) {
-            Row(Modifier.padding(vertical = 4.dp)) {
-                Text(name, color = C.dim, fontSize = 14.sp, modifier = Modifier.width(96.dp))
+            Row(Modifier.padding(vertical = Dim.sentRowV)) {
+                Text(name, color = C.dim, fontSize = Dim.smallPlus, modifier = Modifier.width(Dim.keyCol))
                 Body(item.cells.getOrElse(2) { "" })
             }
             continue
@@ -287,33 +285,32 @@ private fun InputCard(vm: KiteViewModel, card: Card) {
             val hi = range.getOrElse(1) { 100f }.coerceAtLeast(lo + 1f)
             val unit = parts.getOrElse(1) { "" }
             val v = values[item.id]?.toFloatOrNull() ?: ((lo + hi) / 2f).also { values[item.id] = it.toInt().toString() }
-            Text("$name  ${v.toInt()}${if (unit.isNotEmpty()) " $unit" else ""}", color = C.text, fontSize = 15.sp)
+            Text("$name  ${v.toInt()}${if (unit.isNotEmpty()) " $unit" else ""}", color = C.text, fontSize = Dim.body)
             Slider(value = v, onValueChange = { values[item.id] = it.toInt().toString() }, valueRange = lo..hi)
         } else if (hint.startsWith("choice ")) {
             // "choice Train / Car / Flight": one of the listed values, picked with a press
-            Text(name, color = C.dim, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp, bottom = 6.dp))
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp)) {
+            Text(name, color = C.dim, fontSize = Dim.small, modifier = Modifier.padding(top = Dim.choiceLabelTop, bottom = Dim.choiceLabelBottom))
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = Dim.inGap)) {
                 for (option in hint.removePrefix("choice ").split('/').map { it.trim() }.filter { it.isNotEmpty() }) {
                     Pill(option, selected = values[item.id] == option) { values[item.id] = option }
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(Dim.choiceGap))
                 }
             }
         } else {
             val at = boxes.indexOf(item.id)
-            OutlinedTextField(
+            FieldBox(
                 value = values[item.id].orEmpty(),
                 onValueChange = { values[item.id] = it },
-                label = { Text(name) },
-                placeholder = { Text(if (hint == "date") "예: 12/3" else if (hint == "time") "예: 18:30" else if (hint == "number") "숫자" else hint, color = C.faint) },
-                singleLine = true,
+                label = name,
+                placeholder = if (hint == "date") "예: 12/3" else if (hint == "time") "예: 18:30" else if (hint == "number") "숫자" else hint,
                 keyboardOptions = KeyboardOptions(keyboardType = if (hint == "number") KeyboardType.Number else KeyboardType.Text, imeAction = if (at == boxes.lastIndex) ImeAction.Done else ImeAction.Next),
                 keyboardActions = KeyboardActions(onNext = { focus.getOrNull(at + 1)?.requestFocus() }, onDone = { hide() }),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).focusRequester(focus[at]).testTag("card-field"),
+                modifier = Modifier.focusRequester(focus[at]).testTag("card-field"),
             )
         }
     }
     if (!sent) {
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(Dim.submitTop))
         // A box whose name ends with `*` must be filled before the form can be sent.
         val missing = card.items.any { it.cells[0].trimEnd().endsWith("*") && values[it.id].isNullOrBlank() }
         Pill(if (vm.store.lang == "en") "Send" else "보내기", selected = !missing, modifier = Modifier.testTag("card-submit")) {
@@ -334,7 +331,7 @@ private fun Chart(vm: KiteViewModel, card: Card) {
     when (card.field("form")) {
         "line" -> {
             val min = rows.minOf { it.second }
-            Canvas(Modifier.fillMaxWidth().height(140.dp)) {
+            Canvas(Modifier.fillMaxWidth().height(Dim.lineChart)) {
                 val span = (max - min).coerceAtLeast(1e-9)
                 val path = Path()
                 rows.forEachIndexed { i, (_, v) ->
@@ -345,42 +342,42 @@ private fun Chart(vm: KiteViewModel, card: Card) {
                 }
                 drawPath(path, C.accent, style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round))
             }
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("${rows.first().first} ${label(rows.first().second)}", color = C.dim, fontSize = 13.sp)
-                if (rows.size > 1) Text("${rows.last().first} ${label(rows.last().second)}", color = C.text, fontSize = 13.sp)
+            Row(Modifier.fillMaxWidth().padding(top = Dim.inGap), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("${rows.first().first} ${label(rows.first().second)}", color = C.dim, fontSize = Dim.small)
+                if (rows.size > 1) Text("${rows.last().first} ${label(rows.last().second)}", color = C.text, fontSize = Dim.small)
             }
         }
         "donut" -> {
             val total = rows.sumOf { it.second }.coerceAtLeast(1e-9)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Canvas(Modifier.size(110.dp)) {
+                Canvas(Modifier.size(Dim.donut)) {
                     var start = -90f
-                    val w = 18.dp.toPx()
+                    val w = Dim.donutStroke.toPx()
                     rows.forEachIndexed { i, (_, v) ->
                         val sweep = (v / total * 360).toFloat()
                         drawArc(shades[i % shades.size], start, sweep - 1.5f, false, Offset(w / 2, w / 2), Size(size.width - w, size.height - w), style = Stroke(w))
                         start += sweep
                     }
                 }
-                Spacer(Modifier.width(16.dp))
+                Spacer(Modifier.width(Dim.donutGap))
                 Column {
                     rows.forEachIndexed { i, (name, v) ->
-                        Row(Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.padding(vertical = Dim.legendRowV), verticalAlignment = Alignment.CenterVertically) {
                             Dot(shades[i % shades.size])
-                            Spacer(Modifier.width(8.dp))
-                            Text("$name  ${label(v)} (${"%.0f".format(v / total * 100)}%)", color = C.text, fontSize = 14.sp)
+                            Spacer(Modifier.width(Dim.dotGap))
+                            Text("$name  ${label(v)} (${"%.0f".format(v / total * 100)}%)", color = C.text, fontSize = Dim.smallPlus)
                         }
                     }
                 }
             }
         }
         else -> for ((name, v) in rows) {
-            Column(Modifier.padding(vertical = 5.dp)) {
+            Column(Modifier.padding(vertical = Dim.chartRowV)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(name, color = C.text, fontSize = 14.sp)
-                    Text(label(v), color = C.dim, fontSize = 14.sp)
+                    Text(name, color = C.text, fontSize = Dim.smallPlus)
+                    Text(label(v), color = C.dim, fontSize = Dim.smallPlus)
                 }
-                Box(Modifier.padding(top = 4.dp).fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(C.line)) {
+                Box(Modifier.padding(top = Dim.chartBarTop).fillMaxWidth().height(Dim.chartBar).clip(RoundedCornerShape(Dim.chartBarCorner)).background(C.line)) {
                     Box(Modifier.fillMaxWidth((v / max).toFloat().coerceIn(0f, 1f)).fillMaxHeight().background(if (v == max) C.accent else C.dim))
                 }
             }
@@ -405,9 +402,9 @@ private fun Drawing(card: Card) {
             val text = item.cells.getOrElse(2) { "" }
             val color = named(item.cells.getOrElse(3) { "" })
             val sp = when (item.cells.getOrElse(4) { "" }.trim()) {
-                "s" -> 11.sp
-                "l" -> 17.sp
-                else -> 13.sp
+                "s" -> Dim.drawS
+                "l" -> Dim.drawL
+                else -> Dim.drawM
             }
             val stroke = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round)
             when (shape) {

@@ -1,0 +1,155 @@
+// 화면의 모든 크기 (글자 sp, 간격·모양 dp). "조금 더 작게/크게"는 여기 한 줄만 고친다.
+// 값은 memory/specs/aperit-pro-screen-density-v1.md §2 의 '후' 값. §2 에 없는 것은 0.3.1 값 그대로 (주석 '그대로').
+package com.fidenit.kite.ui
+
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+object Dim {
+    // 글자
+    val topic = 15.sp
+    val title = 15.sp
+    val body = 14.sp
+    val bodyLine = 20.sp
+    val small = 12.sp
+    val smallPlus = 13.sp
+    val optTitle = 14.sp
+    val optDesc = 13.sp
+    val optDescLine = 18.sp
+    val metric = 30.sp
+    val metricUnit = 13.sp
+    val metricDelta = 13.sp
+    val routeTotal = 17.sp
+    val say = 15.sp
+    val sayLine = 21.sp
+    val status = 12.sp
+    val input = 15.sp
+    val pill = 13.sp
+    val talk = 12.sp
+    val error = 13.sp
+    val pageTitle = 17.sp
+    val logUser = 13.sp
+    val logUserLine = 18.sp
+    val logReply = 14.sp
+    val logReplyLine = 20.sp
+    val emptyHint = 14.sp
+    val emptyHintLine = 20.sp
+    val drawS = 10.sp
+    val drawM = 12.sp
+    val drawL = 15.sp
+
+    // 카드
+    val cardPad = 12.dp
+    val cardCorner = 16.dp
+    val cardGap = 8.dp
+    val listPadH = 10.dp
+    val listPadV = 4.dp
+    val titleGap = 6.dp
+    val inGap = 6.dp
+    val dot = 8.dp
+    val dotGap = 8.dp
+    val checkBox = 18.dp
+    val checkCorner = 5.dp
+    val checkRowV = 6.dp
+    val checkGap = 10.dp
+    val checkRowCorner = 10.dp // 그대로
+    val rowV = 6.dp
+    val headPadB = 4.dp
+    val cellGap = 8.dp // 그대로
+    val recordFieldV = 4.dp // 그대로
+    val optPad = 10.dp
+    val optCorner = 12.dp
+    val optGap = 6.dp
+    val timeRowV = 4.dp
+    val timeCol = 72.dp
+    val timeDotTop = 6.dp // 그대로
+    val keyCol = 88.dp
+    val metricUnitStart = 6.dp // 그대로
+    val metricDeltaStart = 12.dp // 그대로
+    val metricBaseline = 7.dp // 그대로
+    val noteTop = 2.dp // 그대로
+    val progressH = 5.dp
+    val progressCorner = 3.dp // 그대로
+    val chartBar = 6.dp
+    val chartBarCorner = 4.dp // 그대로
+    val chartBarTop = 4.dp // 그대로
+    val chartRowV = 5.dp // 그대로
+    val lineChart = 110.dp
+    val donut = 88.dp
+    val donutStroke = 14.dp
+    val donutGap = 16.dp // 그대로
+    val legendRowV = 3.dp // 그대로
+    val sentRowV = 4.dp // 그대로
+    val choiceLabelTop = 4.dp // 그대로
+    val choiceLabelBottom = 6.dp // 그대로
+    val choiceGap = 8.dp // 그대로
+    val submitTop = 4.dp // 그대로
+
+    // 알약 버튼 (아래 줄 밖의 모든 알약)
+    val PILL_H = 32.dp
+    val pillPadH = 12.dp
+
+    // 글 칸 (입력 카드·설정이 같이 쓴다)
+    val FIELD_H = 44.dp
+    val fieldCorner = 10.dp
+    val fieldPadH = 12.dp
+    val fieldPadV = 10.dp // 여러 줄 칸(설정의 개인 키)의 위아래
+    val fieldLabel = 8.dp // 테두리 위에 뜬 이름이 칸 위로 나오는 만큼 (Material 과 같은 값)
+    val fieldGap = 4.dp // 칸 아래 (칸 위끝에서 다음 칸 위끝까지 8 + 44 + 4 = 56)
+
+    // 위 줄
+    val topPadH = 12.dp // 그대로
+    val topPadTop = 6.dp
+    val topPadBottom = 4.dp
+    val topicPadH = 6.dp
+    val topicCorner = 10.dp // 그대로
+    val topicGap = 8.dp // 그대로
+    val topPillGap = 6.dp // 그대로
+    val topTopicsGap = 8.dp // 그대로
+
+    // 빨간 상자
+    val errPadH = 10.dp
+    val errPadV = 4.dp
+    val errInner = 10.dp
+    val errCorner = 12.dp
+
+    // 아래 줄
+    val BAR_H = 44.dp
+    val barPadH = 12.dp
+    val barPadV = 8.dp
+    val barRowTop = 6.dp
+    val statusTop = 2.dp
+    val barGap = 8.dp // 그대로
+    val inputCorner = 22.dp
+    val inputPadH = 14.dp
+    val inputPadV = 10.dp // 두 줄부터 (한 줄일 때는 BAR_H 안에 가운데)
+
+    // 대화 기록
+    val logPadH = 14.dp // 그대로
+    val logTitleV = 10.dp // 그대로
+    val logGap = 12.dp // 그대로
+    val logReplyTop = 2.dp // 그대로
+
+    // 설정 (§2 에 없음: 그대로)
+    val setPadH = 16.dp
+    val setPadV = 10.dp
+    val setSectionTop = 22.dp
+    val setSectionBottom = 8.dp
+    val setSection = 18.sp
+    val setLabel = 15.sp
+    val setSmall = 14.sp
+    val setResultLine = 20.sp
+    val hint = 13.sp
+    val hintLine = 19.sp
+    val hintTop = 2.dp
+    val hintBottom = 6.dp
+    val keyText = 11.sp
+    val keyTextLine = 15.sp
+    val keyTextV = 6.dp
+    val setGap = 8.dp
+    val setLabelTop = 8.dp
+    val setSliderTop = 10.dp
+    val setStateTop = 4.dp
+    val setChoiceV = 4.dp
+    val setEnd = 40.dp
+}
