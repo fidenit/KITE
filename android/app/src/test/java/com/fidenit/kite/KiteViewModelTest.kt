@@ -802,4 +802,47 @@ class KiteViewModelTest {
         vm.flushWrites()
         assertFalse(exists("inflight.json"))
     }
+
+    // R8: with 40 exchanges saved, a turn that is interrupted before it was saved takes no real exchange with it
+    @Test
+    fun anInterruptedTurnAfterFortyExchangesLosesNoRealExchange() {
+        write("board.txt", board)
+        val saved = org.json.JSONArray()
+        for (n in 1..40) saved.put(org.json.JSONArray().put("말 $n").put("답 $n"))
+        write("recent.json", saved.toString())
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val fake = Fake(gate = gate)
+        val first = vm()
+        first.runnerOverride = fake
+        first.send("마흔한째 말")
+        until("the engine has the turn") { fake.started.count == 0L }
+        first.flushWrites()
+        assertTrue(exists("inflight.json"))
+        // the app is killed here: nothing of this turn was saved. The next start keeps all 40 exchanges.
+        val again = vm()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(40, again.recent.size)
+        assertEquals("말 40" to "답 40", again.recent.last())
+        assertEquals("말 1" to "답 1", again.recent.first())
+        gate.countDown()
+    }
+
+    // R8: at the 40 cap, a turn that was saved before the kill is taken out once and put back once by the replay
+    @Test
+    fun atTheFortyCapATurnSavedBeforeTheKillIsNotThereTwice() {
+        serverSettings()
+        write("board.txt", board)
+        val saved = org.json.JSONArray()
+        for (n in 2..40) saved.put(org.json.JSONArray().put("말 $n").put("답 $n").put(n))
+        saved.put(org.json.JSONArray().put("여행 짐 정리해 줘").put("끝").put(41)) // the turn itself, saved before the kill
+        write("recent.json", saved.toString())
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 41, "u@h:22"))
+        val vm = vm()
+        vm.runnerOverride = Fake(lines = "say 끝\n")
+        until("replay ends") { !vm.busy }
+        assertEquals(40, vm.recent.size)
+        assertEquals("말 40" to "답 40", vm.recent[38])
+        assertEquals("여행 짐 정리해 줘" to "끝", vm.recent.last())
+        assertEquals(1, vm.recent.count { it.first == "여행 짐 정리해 줘" })
+    }
 }

@@ -211,6 +211,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     /** 다시 붙는 동안 만진 카드: 따라잡기가 끝난 뒤에 순서대로 반영한다 (그 턴이 만든 카드를 만졌을 수 있다) */
     private var replayTaps: List<String> = emptyList()
 
+    /** `recent` 의 첫 말의 차례 번호 (저장은 마지막 40개만 하므로 0이 아닐 수 있다). `recent[k]` 의 번호는 `recentBase + k`. */
+    private var recentBase = 0
+
     /** 서버에서 돌던 턴을 다시 받는 중인가. 그동안 만진 카드는 바로 반영하지 않고 [lateTaps] 에 모았다가, 따라잡은 뒤에 순서대로 반영한다. */
     private var replaying = false
     private val lateTaps = mutableListOf<String>()
@@ -259,6 +262,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val a = JSONArray(File(files, "recent.json").readText())
             for (i in 0 until a.length()) a.getJSONArray(i).let { recent.add(it.getString(0) to it.getString(1)) }
+            if (a.length() > 0) recentBase = a.getJSONArray(0).optInt(2, 0)
         } catch (_: Exception) {
         }
         val q = journal.readQueue()
@@ -302,8 +306,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             board = Lang.load(i.board)
         } catch (_: Exception) {
         }
-        // 저장은 했는데 기록을 지우기 전에 꺼졌다면 주고받은 말에 이 턴이 이미 들어 있다: 턴 시작 전 길이로 되돌린다
-        if (i.recentLen >= 0) while (recent.size > i.recentLen) recent.removeAt(recent.size - 1)
+        // 저장은 했는데 기록을 지우기 전에 꺼졌다면 주고받은 말에 이 턴이 이미 들어 있다: 이 턴의 차례 번호부터는 뺀다.
+        // 차례 번호로 가린다: 40개까지만 저장하는 것과 상관없이 이 턴의 말만 빠지고, 그 전의 말은 하나도 빠지지 않는다. 번호가 없는 옛 기록이면 빼지 않는다.
+        if (i.recentSeq >= 0) while (recent.isNotEmpty() && recentBase + recent.size > i.recentSeq) recent.removeAt(recent.size - 1)
         restoreView()
         if (serverTurn && useSsh && !needsSetup() && !stoppedBefore) {
             // 그 사이 만진 카드는 따라잡은 뒤에 반영한다 (그 턴이 만든 카드를 만졌을 수 있다)
@@ -368,9 +373,11 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             board = Board()
         }
         recent.clear()
+        recentBase = 0
         try {
             val a = JSONArray(File(files, "recent.json").readText())
             for (k in 0 until a.length()) a.getJSONArray(k).let { recent.add(it.getString(0) to it.getString(1)) }
+            if (a.length() > 0) recentBase = a.getJSONArray(0).optInt(2, 0)
         } catch (_: Exception) {
         }
         restoreView()
@@ -484,7 +491,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         try {
             journal.writeFile("board.txt", Lang.save(board))
             val a = JSONArray()
-            recent.takeLast(40).forEach { a.put(JSONArray().put(it.first).put(it.second)) }
+            // 마지막 40개만 저장한다. 셋째 값은 그 말의 차례 번호 (다시 붙을 때 어디까지가 그 턴 이전인지 가린다)
+            for (k in maxOf(0, recent.size - 40) until recent.size) a.put(JSONArray().put(recent[k].first).put(recent[k].second).put(recentBase + k))
             journal.writeFile("recent.json", a.toString())
             journal.writeCurrent(current)
         } catch (_: Exception) {
@@ -686,7 +694,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val text = turnText(input)
         val shown = input.ifEmpty { if (english) "(screen action)" else "(화면 조작)" }
         // 네트워크를 쓰기 전에 남긴다: 앱이 이 턴 도중 꺼져도 다음에 켤 때 이어 받거나, 끊겼다고 알릴 수 있다.
-        val record = Inflight(if (useSsh) "ssh" else "api", "", text, shown, before, System.currentTimeMillis(), minOf(recent.size, 39), if (useSsh) serverSig() else "")
+        val record = Inflight(if (useSsh) "ssh" else "api", "", text, shown, before, System.currentTimeMillis(), recentBase + recent.size, if (useSsh) serverSig() else "")
         synchronized(recordLock) {
             recordOwner = turnSeq + 1 // runTurn 이 매길 이 턴의 번호
             journal.writeInflight(record)
@@ -1384,6 +1392,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         }
         board = Board()
         recent.clear()
+        recentBase = 0
         events.clear()
         // 옛 화면에 딸린 것은 모두 버린다: 다시 붙는 동안 모아 둔 카드 조작, 다음 턴에 알리려던 거부
         replayTaps = emptyList()
