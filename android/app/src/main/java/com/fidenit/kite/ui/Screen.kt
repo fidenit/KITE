@@ -197,6 +197,7 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
         // 지금 무엇을 하는지
         val status = when {
             vm.activity.isNotEmpty() -> vm.activity
+            !vm.busy && vm.proLine.isNotEmpty() -> vm.proLine
             vm.transcribing -> if (english) "Writing down what you said…" else "받아쓰는 중…"
             vm.standby -> if (english) "Waiting. Say \"Aperit\" to continue." else "기다리는 중. \"아페리트\"라고 부르면 이어 갑니다."
             vm.speaking -> if (english) "Speaking. Talk over me to interrupt." else "말하는 중. 말을 걸면 멈추고 듣습니다."

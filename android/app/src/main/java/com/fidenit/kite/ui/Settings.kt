@@ -43,7 +43,10 @@ private fun Section(title: String) {
 }
 
 @Composable
-private fun Hint(text: String) = Text(text, color = C.dim, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 2.dp, bottom = 6.dp))
+private fun Hint(text: String) {
+    // APERIT Pro 의 화면에는 설명 문장을 두지 않는다 (제목·짧은 버튼·숫자·상태·오류만)
+    if (!BuildConfig.PRO) Text(text, color = C.dim, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 2.dp, bottom = 6.dp))
+}
 
 /** 적으면 바로 저장되는 칸 */
 @Composable
@@ -99,12 +102,9 @@ fun SettingsScreen(vm: KiteViewModel, onBack: () -> Unit) {
         }
 
         if (BuildConfig.PRO) {
-            Section("구독")
-            Hint("APERIT Pro 는 키를 넣지 않아도 바로 씁니다. AI 사용량은 매달 구독에 들어 있습니다.")
-            Pill("이번 달 사용량 보기") { scope.launch { usage = vm.usage() } }
-            if (usage.isNotEmpty()) Text(usage, color = if (usage.startsWith("실패")) C.red else C.green, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
-            // 결제 연결 전 시험용: 개발용 빌드에서만 보인다.
-            if (BuildConfig.DEBUG) Field("시험용 토큰 (개발용 빌드에만 보임)", s.relayToken, secret = true) { s.relayToken = it.trim() }
+            Section("연결")
+            Text(vm.proState, color = if (vm.proState == "연결됨" || vm.proState == "Connected") C.green else C.text, fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp))
+            Text("기기 ${vm.proShortId}", color = C.dim, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         } else {
             Section("엔진")
             Hint("폰에서 바로: 이 폰이 Claude API 를 직접 부릅니다. 내 서버: SSH 로 붙은 서버의 Claude Code 를 씁니다(고급).")
@@ -114,7 +114,9 @@ fun SettingsScreen(vm: KiteViewModel, onBack: () -> Unit) {
             }
         }
 
-        if (kind == "api") {
+        if (BuildConfig.PRO) {
+            // Pro: 엔진·키·서버 칸이 없다 (서버가 정한다)
+        } else if (kind == "api") {
             if (!BuildConfig.PRO) {
                 Field("Claude API 키", s.apiKey, secret = true) { s.apiKey = it.trim() }
                 Hint("platform.claude.com 에서 발급합니다. 쓴 만큼 Anthropic 에 직접 냅니다. Max·Team 요금제에 들어 있는 월 API 크레딧도 이 키로 쓸 수 있습니다. 키는 이 폰에만 암호화해서 둡니다.")
@@ -145,8 +147,10 @@ fun SettingsScreen(vm: KiteViewModel, onBack: () -> Unit) {
 
         Section("음성")
         Hint("말로 대화하려면 ElevenLabs 키가 필요합니다.")
-        Field("ElevenLabs 키", s.elevenKey, secret = true) { s.elevenKey = it.trim() }
-        Field("목소리 ID (비우면 기본 목소리)", s.voiceId) { s.voiceId = it.trim() }
+        if (!BuildConfig.PRO) {
+            Field("ElevenLabs 키", s.elevenKey, secret = true) { s.elevenKey = it.trim() }
+            Field("목소리 ID (비우면 기본 목소리)", s.voiceId) { s.voiceId = it.trim() }
+        }
         Text("대화 언어", color = C.text, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
         Choice(listOf("ko" to "한국어", "en" to "English"), s.lang) { s.lang = it }
         Text("마이크 민감도  ${"%.3f".format(threshold)}" + if (vm.converse) "   지금 들리는 크기 ${"%.3f".format(vm.micLevel)}" else "", color = C.text, fontSize = 15.sp, modifier = Modifier.padding(top = 10.dp))
@@ -156,9 +160,11 @@ fun SettingsScreen(vm: KiteViewModel, onBack: () -> Unit) {
             s.micThreshold = "%.3f".format(it)
         }, valueRange = 0.005f..0.1f)
 
-        Section("판단 모델 (선택)")
-        Hint("주제 고르기, 카드 순서를 빠르게 합니다. 없어도 그대로 동작합니다.")
-        Field("TypeSafe Jev 키", s.jevKey, secret = true) { s.jevKey = it.trim() }
+        if (!BuildConfig.PRO) {
+            Section("판단 모델 (선택)")
+            Hint("주제 고르기, 카드 순서를 빠르게 합니다. 없어도 그대로 동작합니다.")
+            Field("TypeSafe Jev 키", s.jevKey, secret = true) { s.jevKey = it.trim() }
+        }
 
         Section("화면")
         Hint("주제 이름을 길게 누르면 그 주제가 보관함으로 내려갑니다.")

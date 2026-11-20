@@ -7,7 +7,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
 import kotlin.reflect.KProperty
 
-class Store(context: Context) : DeviceStore {
+class Store(context: Context) : DeviceStore, com.fidenit.kite.engine.StateMarks {
     private val prefs: SharedPreferences = openSettings(
         BuildConfig.PRO,
         open = {
@@ -47,6 +47,13 @@ class Store(context: Context) : DeviceStore {
     override var proStatus by Text()
     override var proCode by Text()
     override var ticketUsed by Text()
+
+    /** 암호화 저장소를 열지 못해 이번 실행 동안만 메모리에 둔다 (Pro). */
+    override val memoryOnly: Boolean get() = prefs is MemoryPrefs
+
+    // APERIT Pro: 서버와 마지막으로 맞춘 상태의 판 번호, 그 뒤로 올리지 않은 변경이 있는지 ("1")
+    override var stateRev by Text()
+    override var stateDirty by Text()
 
     // 서버
     var host by Text()

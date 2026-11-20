@@ -22,15 +22,26 @@ android {
             dimension = "track"
             buildConfigField("boolean", "PRO", "false")
             buildConfigField("String", "RELAY_URL", "\"\"")
+            buildConfigField("String", "GATEWAY_URL", "\"\"")
+            buildConfigField("String", "ENROLL_TICKET", "\"\"")
             resValue("string", "app_name", "APERIT")
         }
         create("pro") {
             dimension = "track"
             applicationIdSuffix = ".pro"
+            // Pro 0.2.0: 게이트웨이 판 (무료 앱의 판은 그대로)
+            versionCode = 3
+            versionName = "0.2.0"
             buildConfigField("boolean", "PRO", "true")
             // 중계 서버 주소는 빌드할 때 정한다: ./gradlew -PkiteRelayUrl=https://... assembleProDebug
             val relay = (project.findProperty("kiteRelayUrl") as String?) ?: "http://10.0.2.2:8787"
             buildConfigField("String", "RELAY_URL", "\"$relay\"")
+            // 게이트웨이 주소와 (있으면) 한 번만 쓰는 등록 표는 빌드할 때 넣는다: -PaperitGatewayUrl=https://… -PaperitEnrollTicket=apt_…
+            // 등록 표는 저장소에 두지 않는다.
+            val gateway = (project.findProperty("aperitGatewayUrl") as String?) ?: "http://10.0.2.2:8787"
+            val ticket = (project.findProperty("aperitEnrollTicket") as String?) ?: ""
+            buildConfigField("String", "GATEWAY_URL", "\"$gateway\"")
+            buildConfigField("String", "ENROLL_TICKET", "\"$ticket\"")
             resValue("string", "app_name", "APERIT Pro")
         }
     }

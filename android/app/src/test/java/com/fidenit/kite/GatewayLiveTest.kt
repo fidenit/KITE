@@ -11,6 +11,8 @@ import com.fidenit.kite.engine.EngineConfig
 import com.fidenit.kite.engine.Ev
 import com.fidenit.kite.engine.GatewayLink
 import com.fidenit.kite.engine.NOTE
+import com.fidenit.kite.engine.PutResult
+import com.fidenit.kite.engine.StateClient
 import com.fidenit.kite.engine.gatewayClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -122,5 +124,30 @@ class GatewayLiveTest {
         assertEquals("0번 줄부터 다시 받은 줄 = 끊겼다 붙으며 받은 줄 (빠짐·겹침 없음)", again, fed)
         assertTrue("result 줄이 있어야 한다", fed.any { it.contains("\"type\":\"result\"") })
         r.cc.clean(id)
+    }
+
+    /**
+     * 상태 왕복 (part B): 받기 → 그 판 위에 올리기 → 같은 것을 다시 받기 → 옛 판으로 올리면 412 와 서버의 판. 서버에 있던 문서는 끝에 그 위에 다시 올려 되돌린다
+     * (같은 사용자의 보드이므로). 서버에 아무것도 없었으면 시험 문서가 남는다.
+     */
+    @Test
+    fun stateRoundTripsWithRevHandling() {
+        assumeTrue("APERIT_LIVE_GATEWAY_URL / APERIT_LIVE_GATEWAY_TOKEN not set", env("APERIT_LIVE_GATEWAY_URL").isNotEmpty() && env("APERIT_LIVE_GATEWAY_TOKEN").isNotEmpty())
+        val c = StateClient(env("APERIT_LIVE_GATEWAY_URL"), { env("APERIT_LIVE_GATEWAY_TOKEN") }, gatewayClient("0.2.0-pro"))
+        val before = c.get()
+        val base = before?.rev ?: 0
+        val doc = org.json.JSONObject().put("v", 1).put("board", "").put("note", tag + System.currentTimeMillis())
+        val put = c.put(doc, base)
+        assertTrue("put on the current rev: $put", put is PutResult.Ok && put.rev == base + 1)
+        val got = c.get()!!
+        assertEquals(base + 1, got.rev)
+        assertTrue("same document back", doc.similar(got.doc))
+        val stale = c.put(doc, base)
+        assertEquals("a stale rev is refused with the server's rev", PutResult.Conflict(base + 1), stale)
+        if (before != null) {
+            val back = c.put(before.doc, base + 1)
+            assertTrue("restored: $back", back is PutResult.Ok)
+        }
+        println("상태: 처음 판 $base → 시험 ${base + 1}" + if (before != null) " → 되돌림 ${base + 2}" else " (서버에 없던 상태: 시험 문서가 남음)")
     }
 }

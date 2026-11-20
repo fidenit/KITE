@@ -30,6 +30,13 @@ import com.fidenit.kite.engine.ABANDONED
 import com.fidenit.kite.engine.ClaudeCode
 import com.fidenit.kite.engine.EngineConfig
 import com.fidenit.kite.engine.GONE
+import com.fidenit.kite.engine.DeviceStatus
+import com.fidenit.kite.engine.Enroller
+import com.fidenit.kite.engine.GatewayLink
+import com.fidenit.kite.engine.GatewayText
+import com.fidenit.kite.engine.StateClient
+import com.fidenit.kite.engine.StateSync
+import com.fidenit.kite.engine.gatewayClient
 import com.fidenit.kite.engine.Decide
 import com.fidenit.kite.engine.Detached
 import com.fidenit.kite.engine.Ev
@@ -138,6 +145,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 내 서버의 Claude Code 를 쓰는가 (무료 앱에서만 고를 수 있다) */
     private val useSsh: Boolean get() = !BuildConfig.PRO && store.engineKind == "ssh"
+
+    /** 턴을 서버에서 떼어 돌리는가: 내 서버의 Claude Code(SSH), 또는 APERIT Pro(게이트웨이). 돌던 턴의 기록·다시 붙기·치우기는 둘이 같다. */
+    private val serverEngine: Boolean get() = useSsh || BuildConfig.PRO
 
     /** 데스크톱과 같은 지시문 (src/prompt.md, 빌드할 때 복사해 온다) */
     private val basePrompt: String by lazy {
@@ -273,6 +283,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         restoreView()
         resumeInterrupted()
         settleWhenReachable() // 멈춤을 전하지 못한 채 꺼졌던 실행이 있으면 서버에 닿는 대로 멈추고 치운다
+        if (BuildConfig.PRO) proRefresh() // 처음 켰으면 이 폰을 등록한다 (넣을 것은 없다)
     }
 
     /** 보던 주제와 화면 아래 한마디를 되살린다 (`board.say` 는 보드 파일에 들어 있지 않다). */
@@ -293,7 +304,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val serverTurn = i.engine == "ssh" && i.id.isNotEmpty()
-        if (serverTurn && useSsh && !needsSetup() && i.server != serverSig()) {
+        if (serverTurn && serverEngine && !needsSetup() && i.server != serverSig()) {
             // 다른 서버에서 돌던 턴이다 (어느 서버인지 적히지 않은 옛 기록도): 지금 서버에서는 받을 수 없고, 다시 시작하면 같은 말이 두 번 돈다.
             // 저장된 화면을 그대로 두고, 기록만 지우고, 한 줄로 알린다. (그 실행 번호는 이 서버의 치울 목록에 넣지 않는다.)
             synchronized(recordLock) { recordOwner = RESTORED }
@@ -312,7 +323,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         // 차례 번호로 가린다: 40개까지만 저장하는 것과 상관없이 이 턴의 말만 빠지고, 그 전의 말은 하나도 빠지지 않는다. 번호가 없는 옛 기록이면 빼지 않는다.
         if (i.recentSeq >= 0) while (recent.isNotEmpty() && recentBase + recent.size > i.recentSeq) recent.removeAt(recent.size - 1)
         restoreView()
-        if (serverTurn && useSsh && !needsSetup() && !stoppedBefore) {
+        if (serverTurn && serverEngine && !needsSetup() && !stoppedBefore) {
             // 그 사이 만진 카드는 따라잡은 뒤에 반영한다 (그 턴이 만든 카드를 만졌을 수 있다)
             replayTaps = events.toList()
             lateTaps.clear()
@@ -339,7 +350,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         settleTurn(RESTORED, null, null)
         val why = when {
             stoppedBefore -> if (english) "The last message was stopped before the app closed" else "앱이 꺼지기 전에 멈춘 말입니다"
-            i.engine == "ssh" && i.id.isNotEmpty() && !useSsh ->
+            i.engine == "ssh" && i.id.isNotEmpty() && !serverEngine ->
                 if (english) "The engine is now \"directly from the phone\", so the message that was running on the server cannot be picked up again" else "엔진이 '폰에서 바로'로 바뀌어 서버에서 돌던 말을 이어 받을 수 없습니다"
             i.engine == "ssh" && i.id.isNotEmpty() ->
                 if (english) "The server settings changed, so the last message cannot be picked up again" else "서버 설정이 바뀌어 마지막 말을 이어 받을 수 없습니다"
@@ -351,7 +362,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 서버를 가리는 이름: 계정@주소:포트. 돌던 턴의 기록에 적어 두고, 다시 붙을 때 같은 서버인지 본다. */
-    private fun serverSig(): String = "${store.user.trim()}@${store.host.trim()}:${store.port.toIntOrNull() ?: 22}"
+    private fun serverSig(): String = if (BuildConfig.PRO) "APERIT Pro" else "${store.user.trim()}@${store.host.trim()}:${store.port.toIntOrNull() ?: 22}"
 
     private fun otherServerLine(i: Inflight): String {
         val where = if (i.server.isEmpty()) "" else " (${i.server})"
@@ -440,6 +451,16 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     /** 치울 목록의 실행을 서버에서 멈추고 치운다 (턴의 엔진과 다른, 자기 연결로). 멈추고 치운 번호를 돌려준다. 입출력 스레드에서 부른다. */
     private fun settleOnce(ids: List<String>): List<String> {
         settleOverride?.let { return it(ids) }
+        if (BuildConfig.PRO) {
+            val pc = proEngine()
+            ids.forEach { pc.addToClean(it) }
+            try {
+                pc.settle()
+            } catch (_: Exception) {
+            }
+            val rest = pc.toClean.toSet()
+            return ids.filter { it !in rest }
+        }
         if (!useSsh || needsSetup()) return emptyList()
         val s = newSsh()
         val cc = ClaudeCode(s, EngineConfig(store.claude, store.dir, store.permission, store.effort, store.extra))
@@ -462,7 +483,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private fun settleWhenReachable() {
         if (settleJob?.isActive == true) return
         if (journal.readToClean().isEmpty()) return
-        if (settleOverride == null && (!useSsh || needsSetup())) return
+        if (settleOverride == null && (!serverEngine || needsSetup())) return
         settleJob = viewModelScope.launch {
             var attempt = 0
             while (true) {
@@ -497,6 +518,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             for (k in maxOf(0, recent.size - 40) until recent.size) a.put(JSONArray().put(recent[k].first).put(recent[k].second).put(recentBase + k))
             journal.writeFile("recent.json", a.toString())
             journal.writeCurrent(current)
+            if (BuildConfig.PRO && !applyingRemote) stateSync.changed(stateDoc(a)) // Pro: 조금 뒤에 서버에도 올린다
         } catch (_: Exception) {
         }
     }
@@ -515,10 +537,15 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             (engine as? ClaudeCode)?.abandon() // 바꾸는 엔진은 따라 읽기를 그만둔다 (새 엔진이 따라 읽는 실행을 치우지 못하게)
             ssh?.close()
             ssh = null
-            e = if (useSsh) {
-                val s = Ssh(Server(store.host, store.port.toIntOrNull() ?: 22, store.user, store.password, store.privateKey, store.passphrase, store.fingerprint)) { store.fingerprint = it }
-                ssh = s
-                ClaudeCode(s, EngineConfig(store.claude, store.dir, store.permission, store.effort, store.extra)).also { cc ->
+            e = if (serverEngine) {
+                val made = if (BuildConfig.PRO) {
+                    proEngine()
+                } else {
+                    val s = Ssh(Server(store.host, store.port.toIntOrNull() ?: 22, store.user, store.password, store.privateKey, store.passphrase, store.fingerprint)) { store.fingerprint = it }
+                    ssh = s
+                    ClaudeCode(s, EngineConfig(store.claude, store.dir, store.permission, store.effort, store.extra))
+                }
+                made.also { cc ->
                     cc.cleanAfterRun = false // 서버 파일은 앱이 보드를 저장하고 기록을 지운 뒤에 치운다 (finishServerRun)
                     synchronized(cleanLock) {
                         val ids = journal.readToClean()
@@ -542,9 +569,10 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             engineSig = sig
             prepared = false
         }
+        if (BuildConfig.PRO) proReady() // 보내기 전에 이 폰이 허용됐는지 서버에 묻는다
         if (!prepared) {
             if (e is ClaudeCode) {
-                ssh!!.connect()
+                e.connect()
                 val (os, home) = e.where()
                 serverOs = os
                 serverHome = home
@@ -557,6 +585,186 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             prepared = true
         }
         return e
+    }
+
+    // ---------------------------------------------------------------- APERIT Pro: 등록과 상태
+
+    /** APERIT Pro: 화면 아래 상태 줄에 보일 것 (`허용 대기 482913`). 허용됐거나 무료 앱이면 빈 글. */
+    var proLine by mutableStateOf("")
+        private set
+
+    private var lastProLogged = ""
+
+    /** APERIT Pro: 설정의 연결 상태 (`연결됨` / `허용 대기 482913` / `연결 안 됨`). */
+    var proState by mutableStateOf("")
+        private set
+
+    /** 게이트웨이 요청에 붙는 앱 판 (`X-Aperit-App`). */
+    private val proHttp by lazy { gatewayClient(BuildConfig.VERSION_NAME + "-pro") }
+
+    private val device: ProDevice by lazy {
+        ProDevice(store, Enroller(BuildConfig.GATEWAY_URL, proHttp), { Triple(android.os.Build.MODEL.orEmpty(), android.os.Build.VERSION.RELEASE.orEmpty(), BuildConfig.VERSION_NAME) }, BuildConfig.ENROLL_TICKET)
+    }
+
+    /** 설정에 보이는 짧은 기기 번호 (기기 번호의 앞 8글자. 서버가 대표에게 보내는 알림에도 같은 8글자가 나온다). */
+    val proShortId: String get() = if (BuildConfig.PRO) store.deviceId.take(8) else ""
+
+    /** Pro 의 엔진: 게이트웨이로 닿는 ClaudeCode. 서버의 설정(claude, 폴더, 권한, 모델)은 서버가 정한다. 생각의 깊이는 보내지 않는다. */
+    private fun proEngine(): ClaudeCode {
+        val link = GatewayLink(BuildConfig.GATEWAY_URL, { store.deviceSecret }, "", { english }, proHttp)
+        link.onRefused = { kind, code ->
+            device.refused(kind, code)
+            viewModelScope.launch { proShow(DeviceStatus(store.proStatus, store.proCode), "") }
+        }
+        return ClaudeCode(link, EngineConfig("claude", "", "default", "", ""))
+    }
+
+    /** 받은 상태를 화면에 낸다 (메인 스레드). `st` 가 null 이면 서버에 닿지 않았다. */
+    private fun proShow(st: DeviceStatus?, ticketRejected: String) {
+        val en = english
+        val now = st?.status ?: "offline"
+        if (now != lastProLogged) {
+            lastProLogged = now
+            Thread { proLog("device status=$now id=${store.deviceId.take(8)}" + if (ticketRejected.isNotEmpty()) " ticket=$ticketRejected" else "") }.start()
+        }
+        when (st?.status) {
+            "approved" -> {
+                proState = if (en) "Connected" else "연결됨"
+                proLine = ""
+                if (!stateStarted) {
+                    stateStarted = true
+                    stateSync.start(if (File(files, "board.txt").exists()) stateDoc() else null)
+                }
+            }
+            "pending" -> {
+                proState = if (en) "Waiting ${st.code}" else "허용 대기 ${st.code}"
+                proLine = proState
+            }
+            else -> {
+                proState = if (en) "Not connected" else "연결 안 됨"
+                proLine = ""
+            }
+        }
+        if (st?.status == "revoked") error = GatewayText.refused("revoked", "", en)
+        if (st?.status in setOf("refused", "conflict", "nostore")) error = proBroken(st!!.status, en)
+        if (ticketRejected.isNotEmpty() && st?.status == "pending") error = GatewayText.ticketRejected(ticketRejected, st.code, en)
+    }
+
+    /** 이 폰의 상태를 서버에 묻는다 (처음 켤 때는 등록한다). 앱이 켜질 때와 앞으로 돌아올 때 부른다. 실패해도 아무 일도 막지 않는다. */
+    private fun proRefresh() {
+        viewModelScope.launch {
+            yield() // init 이 끝난 뒤에 돈다 (아래에 선언된 속성을 읽는다)
+            val r = withContext(Dispatchers.IO) { runCatching { device.check() to device.ticketRejected } }
+            proShow(r.getOrNull()?.first, r.getOrNull()?.second.orEmpty())
+        }
+    }
+
+    // ---------------------------------------------------------------- APERIT Pro: 상태를 서버에도 (spec §4)
+
+    private var stateStarted = false
+
+    /** 서버에서 받은 상태를 반영하는 동안은 그 저장을 다시 올리지 않는다. */
+    private var applyingRemote = false
+
+    private val stateSync: StateSync by lazy {
+        StateSync(StateClient(BuildConfig.GATEWAY_URL, { store.deviceSecret }, proHttp), store, ::applyRemoteState, {
+            viewModelScope.launch {
+                error = if (english) "The server had a newer board → it replaced this phone's last change (the phone's copy was kept aside) → say it again if something is missing"
+                else "서버에 더 새로운 화면이 있었습니다 → 이 폰의 마지막 변경 대신 서버의 것을 띄웠습니다 (폰의 것은 따로 남겼습니다) → 빠진 것이 있으면 다시 말해 주세요"
+            }
+        }, log = ::proLog)
+    }
+
+    /** 서버에 둘 문서 v1: 보드, 주고받은 말(저장하는 40개), 보던 주제. 메인 스레드에서 뜬다. */
+    private fun stateDoc(recentJson: JSONArray? = null): org.json.JSONObject {
+        val a = recentJson ?: JSONArray().also { r ->
+            for (k in maxOf(0, recent.size - 40) until recent.size) r.put(JSONArray().put(recent[k].first).put(recent[k].second).put(recentBase + k))
+        }
+        return org.json.JSONObject().put("v", 1).put("board", Lang.save(board)).put("recent", a).put("current", current ?: "")
+    }
+
+    /** 서버의 문서로 바꾼다 (상태 스레드에서 불린다. 실제 일은 메인 스레드에서). 턴이 도는 중이면 하지 않는다. 바꾸기 전의 폰 것은 state-backup.json 에 남긴다. */
+    private fun applyRemoteState(doc: org.json.JSONObject): Boolean {
+        val done = java.util.concurrent.CompletableFuture<Boolean>()
+        viewModelScope.launch {
+            done.complete(
+                try {
+                    if (busy || cleared || doc.optInt("v", 0) != 1) {
+                        false
+                    } else {
+                        journal.writeFile("state-backup.json", stateDoc().toString())
+                        val b = Lang.load(doc.optString("board"))
+                        val r = doc.optJSONArray("recent") ?: JSONArray()
+                        board = b
+                        recent.clear()
+                        recentBase = 0
+                        for (k in 0 until r.length()) r.getJSONArray(k).let { recent.add(it.getString(0) to it.getString(1)) }
+                        if (r.length() > 0) recentBase = r.getJSONArray(0).optInt(2, 0)
+                        board.say = recent.lastOrNull()?.second.orEmpty()
+                        current = doc.optString("current").takeIf { id -> board.topics.any { it.id == id } } ?: board.topics.lastOrNull()?.id
+                        rev++
+                        applyingRemote = true
+                        try {
+                            save()
+                        } finally {
+                            applyingRemote = false
+                        }
+                        true
+                    }
+                } catch (_: Exception) {
+                    false
+                },
+            )
+        }
+        return try {
+            done.get(10, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private val proLogLock = Any()
+
+    /** Pro 의 기록 (등록 상태, 상태 맞추기의 판 번호·크기, 앱 판). 비밀 글·등록 표·내용은 적지 않는다. 기록이 실패해도 아무 일도 없다. */
+    private fun proLog(line: String) {
+        try {
+            synchronized(proLogLock) {
+                val f = File(files, "pro.log")
+                val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(Date())
+                if (f.length() > 256 * 1024) f.writeText(f.readText().takeLast(128 * 1024))
+                f.appendText("$stamp v${BuildConfig.VERSION_NAME}  $line\n")
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    /** 보내기 전 (입출력 스레드): 허용된 폰이 아니면 이 말을 보내지 않는다. 서버에 묻는 간격은 [ProDevice] 가 지킨다. */
+    private fun proReady() {
+        val st = device.check()
+        val rejected = device.ticketRejected
+        viewModelScope.launch { proShow(st, rejected) }
+        val en = english
+        when (st.status) {
+            "approved" -> return
+            "offline" -> throw Exception(
+                if (en) "The server cannot be reached → this message was not sent → check the connection and send it again"
+                else "서버에 닿지 않습니다 → 이 말은 보내지 않았습니다 → 연결을 확인한 뒤 다시 보내 주세요",
+            )
+            "limited", "error" -> throw Exception(
+                if (en) "The server cannot take requests right now → this message was not sent → send it again in a minute"
+                else "서버가 지금 요청을 받지 못합니다 → 이 말은 보내지 않았습니다 → 1분쯤 뒤 다시 보내 주세요",
+            )
+            "refused", "conflict", "nostore" -> throw SshFatal(proBroken(st.status, en))
+            else -> throw SshFatal(GatewayText.refused(st.status, st.code, en))
+        }
+    }
+
+    /** 다시 해도 소용없는 등록 문제의 한 줄. */
+    private fun proBroken(kind: String, en: Boolean): String = when (kind) {
+        "nostore" -> if (en) "This phone's encrypted storage cannot be opened → the phone was not registered and nothing was sent → restart the phone and open the app again"
+        else "이 폰의 암호화 저장소를 열 수 없습니다 → 등록하지 않았고 보내지도 않았습니다 → 폰을 다시 켠 뒤 앱을 다시 열어 주세요"
+        else -> if (en) "The server refused to register this phone ($kind) → nothing was sent → reinstall the app"
+        else "서버가 이 폰의 등록을 받지 않았습니다 ($kind) → 아무것도 보내지 않았습니다 → 앱을 다시 설치해 주세요"
     }
 
     /** 처음 켰을 때 설정부터 보여 줘야 하는가 (무료 앱에서 키나 서버가 비어 있을 때). Pro 는 넣을 것이 없다. */
@@ -656,7 +864,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         if (english) t.append("<lang>en</lang>\n")
         events.clear()
         val now = SimpleDateFormat("yyyy-MM-dd (E) HH:mm", if (english) Locale.ENGLISH else Locale.KOREAN).format(Date())
-        if (useSsh) {
+        if (serverEngine) {
             t.append("<env>\n지금: $now\n운영체제: $serverOs (Claude Code 가 도는 서버. 사용자의 화면은 안드로이드 폰)\n사용자 홈 폴더: $serverHome\n기억 보관함 폴더: $serverHome/.kite/vault\n</env>\n")
         } else {
             val memory = tools.list()
@@ -696,7 +904,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val text = turnText(input)
         val shown = input.ifEmpty { if (english) "(screen action)" else "(화면 조작)" }
         // 네트워크를 쓰기 전에 남긴다: 앱이 이 턴 도중 꺼져도 다음에 켤 때 이어 받거나, 끊겼다고 알릴 수 있다.
-        val record = Inflight(if (useSsh) "ssh" else "api", "", text, shown, before, System.currentTimeMillis(), recentBase + recent.size, if (useSsh) serverSig() else "")
+        val record = Inflight(if (serverEngine) "ssh" else "api", "", text, shown, before, System.currentTimeMillis(), recentBase + recent.size, if (serverEngine) serverSig() else "")
         synchronized(recordLock) {
             recordOwner = turnSeq + 1 // runTurn 이 매길 이 턴의 번호
             journal.writeInflight(record)
@@ -962,7 +1170,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         while (true) {
             if (cleared) throw Exception(ABANDONED)
             // 설정이 그사이 다른 서버로 바뀌었으면 그 서버에는 붙지 않는다 (거기서 이 턴이 새로 시작되면 같은 말이 두 번 돈다)
-            if (!useSsh || needsSetup() || record.server != serverSig()) throw Exception(OTHER_SERVER)
+            if (!serverEngine || needsSetup() || record.server != serverSig()) throw Exception(OTHER_SERVER)
             try {
                 return engine()
             } catch (e: SshFatal) {
@@ -1424,6 +1632,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 앱이 앞으로 돌아왔다: 다시 붙기를 기다리는 중이면 바로 시도한다. */
     fun foreground() {
+        if (BuildConfig.PRO) proRefresh()
         resumeWaker.wake()
         (engine as? ClaudeCode)?.wake()
         settleWaker.wake()
