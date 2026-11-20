@@ -1,0 +1,126 @@
+package com.fidenit.kite
+
+import com.fidenit.kite.core.Author
+import com.fidenit.kite.core.Board
+import com.fidenit.kite.core.Chunk
+import com.fidenit.kite.core.Lang
+import com.fidenit.kite.core.LineStream
+import com.fidenit.kite.core.partsTable
+import com.fidenit.kite.engine.ClaudeCode
+import com.fidenit.kite.engine.EngineConfig
+import com.fidenit.kite.engine.Ev
+import com.fidenit.kite.engine.GatewayLink
+import com.fidenit.kite.engine.NOTE
+import com.fidenit.kite.engine.gatewayClient
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Test
+import java.io.File
+
+/**
+ * 실제 게이트웨이(aperit-gateway)에 붙어 Pro 앱과 같은 코드(GatewayLink + ClaudeCode)로 턴을 돌려 본다. free 변형에서 돈다 (BuildConfig.PRO 가 필요 없다).
+ * 환경 변수가 둘 다 있을 때만 돈다 (없으면 건너뛴다):
+ *   APERIT_LIVE_GATEWAY_URL    게이트웨이 주소 (예: http://127.0.0.1:8787)
+ *   APERIT_LIVE_GATEWAY_TOKEN  이미 허용된 기기의 비밀 글. 이 시험은 등록하지 않고, 이 글을 찍지 않는다.
+ *   APERIT_LIVE_EFFORT         (있으면) 보낼 생각의 깊이
+ */
+class GatewayLiveTest {
+    private fun env(k: String) = System.getenv(k).orEmpty()
+
+    /** 이 서버를 쓰는 사람의 말로 기록되지 않게 시험 입력 앞에 붙인다. */
+    private val tag = "[f048 시험 — 대표 말 아님] "
+
+    /** 앱이 하는 것처럼 줄을 보드에 반영한다 (LiveTest 와 같다). */
+    private class Applier {
+        val board = Board()
+        private val stream = LineStream()
+        val rejected = mutableListOf<String>()
+        val activity = mutableListOf<String>()
+
+        private fun line(l: String) {
+            try {
+                Lang.parse(l)?.let { board.apply(it, Author.Ai) }
+            } catch (e: Exception) {
+                rejected.add("$l → ${e.message}")
+            }
+        }
+
+        fun send(ev: Ev) {
+            when (ev) {
+                is Ev.Delta -> stream.feed(ev.text).forEach { if (it is Chunk.Line) line(it.text) }
+                is Ev.Activity -> if (ev.text.isNotEmpty()) activity.add(ev.text)
+                is Ev.Screen -> ev.reply.complete("반영됨")
+            }
+        }
+
+        fun finish() {
+            stream.finish()?.let { line(it) }
+        }
+    }
+
+    private class Rig(val link: GatewayLink, val cc: ClaudeCode, val home: String)
+
+    private fun rig(): Rig {
+        assumeTrue("APERIT_LIVE_GATEWAY_URL / APERIT_LIVE_GATEWAY_TOKEN not set", env("APERIT_LIVE_GATEWAY_URL").isNotEmpty() && env("APERIT_LIVE_GATEWAY_TOKEN").isNotEmpty())
+        val effort = env("APERIT_LIVE_EFFORT")
+        val link = GatewayLink(env("APERIT_LIVE_GATEWAY_URL"), { env("APERIT_LIVE_GATEWAY_TOKEN") }, effort, { false }, gatewayClient("0.2.0-pro"))
+        val cc = ClaudeCode(link, EngineConfig("claude", "", "default", effort, ""))
+        val (_, home) = cc.where()
+        println("게이트웨이의 Claude Code: ${cc.version()}, 폴더 $home")
+        cc.prepare(File("../../src/prompt.md").readText().replace("{{PARTS}}", partsTable().trimEnd()) + NOTE)
+        return Rig(link, cc, home)
+    }
+
+    private fun turn(r: Rig, input: String) =
+        "<board>\n</board>\n<voice>on</voice>\n<env>\n지금: 2026-11-20 (금) 12:00\n운영체제: Linux (Claude Code 가 도는 서버. 사용자의 화면은 안드로이드 폰)\n사용자 홈 폴더: ${r.home}\n기억 보관함 폴더: ${r.home}/.kite/vault\n</env>\n<input>$tag$input</input>"
+
+    /** 지시문을 올리고, 실제 턴 하나가 보드에 카드를 만든다. */
+    @Test
+    fun aRealTurnMakesACard() {
+        val r = rig()
+        val a = Applier()
+        val stats = r.cc.run(turn(r, "다음 주 제주 2박 3일 여행 준비물을 체크리스트 카드 한 장으로 만들어 줘. 다섯 개만."), { false }, a::send)
+        a.finish()
+        println("${stats.model}  첫 반응 ${stats.firstMs}ms  전체 ${stats.totalMs}ms  입력 ${stats.inputTokens} 출력 ${stats.outputTokens}")
+        println("거부된 줄: ${a.rejected}")
+        println(Lang.serialize(a.board))
+        assertTrue("카드가 만들어져야 한다", a.board.cards.isNotEmpty())
+    }
+
+    /**
+     * 따라 읽는 도중에 한 번 끊는다 → 엔진이 받은 줄 수(n)부터 다시 붙어 끝까지 받는다. 그 뒤 같은 실행을 0번 줄부터 다시 받아
+     * 서버의 줄과 엔진이 처리한 줄이 줄마다 같은지(빠지거나 겹치지 않았는지) 본다.
+     */
+    @Test
+    fun aCutMidFollowIsReattachedFromNWithNoLineLostOrDoubled() {
+        val r = rig()
+        r.cc.cleanAfterRun = false
+        val a = Applier()
+        val fed = mutableListOf<String>()
+        var cut = false
+        r.cc.onDataLine = { line ->
+            fed.add(line)
+            if (!cut && fed.size >= 3) {
+                cut = true
+                Thread { r.link.close() }.start() // 읽는 스레드가 아닌 곳에서 끊는다
+            }
+        }
+        val input = "먼저 say 한 줄을 내고, Bash 로 \"for i in 1 2 3 4 5; do date; sleep 2; done\" 를 한 번 실행한 다음, 카드 한 장에 '끝'이라고 써 줘."
+        r.cc.run(turn(r, input), { false }, a::send)
+        a.finish()
+        val id = r.cc.runId!!
+        println("실행 $id: 받은 줄 ${r.cc.linesReceived}, 상태 줄 ${a.activity.filter { it.contains("연결이 끊겼습니다") }}")
+        assertTrue("한 번 끊었어야 한다", cut)
+        assertTrue("스스로 다시 붙었다고 알려야 한다: ${a.activity}", a.activity.any { it.contains("연결이 끊겼습니다 →") })
+        assertTrue("카드가 있어야 한다", a.board.cards.isNotEmpty())
+        assertEquals("엔진이 센 줄 수 = 처리한 줄 수", fed.size, r.cc.linesReceived)
+
+        val again = mutableListOf<String>()
+        r.cc.onDataLine = { again.add(it) }
+        r.cc.resume(id, null, 0, { false }) {}
+        assertEquals("0번 줄부터 다시 받은 줄 = 끊겼다 붙으며 받은 줄 (빠짐·겹침 없음)", again, fed)
+        assertTrue("result 줄이 있어야 한다", fed.any { it.contains("\"type\":\"result\"") })
+        r.cc.clean(id)
+    }
+}
