@@ -65,8 +65,11 @@ object LiveWire {
 
     // ------------------------------------------------------------ 게이트웨이 → 폰
     sealed class In {
-        object Ready : In()
-        data class Partial(val text: String) : In()
+        /** [vadS] = 게이트웨이가 쓰는 말 끝 기다림(초), 없으면 null (v1.1) */
+        data class Ready(val vadS: Double? = null) : In()
+
+        /** [tp] = 이 partial 에서 말이 끝났을 확률 (0..1), 없으면 null (v1.1) */
+        data class Partial(val text: String, val tp: Double? = null) : In()
         data class Final(val text: String, val lang: String) : In()
         data class Start(val id: Int) : In()
         data class Done(val id: Int, val chars: Int) : In()
@@ -84,8 +87,8 @@ object LiveWire {
         }
         val id = j.opt("id") as? Number
         return when (j.optString("type")) {
-            "ready" -> In.Ready
-            "partial" -> In.Partial(j.optString("text"))
+            "ready" -> In.Ready((j.opt("vad_s") as? Number)?.toDouble()?.takeIf { it > 0 && it < 60 })
+            "partial" -> In.Partial(j.optString("text"), (j.opt("tp") as? Number)?.toDouble()?.takeIf { it in 0.0..1.0 })
             "final" -> In.Final(j.optString("text"), j.optString("lang"))
             "start" -> id?.let { In.Start(it.toInt()) }
             "done" -> id?.let { In.Done(it.toInt(), j.optInt("chars", 0)) }

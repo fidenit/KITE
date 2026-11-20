@@ -30,8 +30,8 @@ android {
             dimension = "track"
             applicationIdSuffix = ".pro"
             // Pro 0.4.0: 0.3.2 + 여러 칸 보드 + 입력 줄 바로 위의 "내 차례" 칸 (무료 앱의 판은 그대로)
-            versionCode = 7
-            versionName = "0.4.0"
+            versionCode = 8
+            versionName = "0.5.0"
             buildConfigField("boolean", "PRO", "true")
             // 중계 서버 주소는 빌드할 때 정한다: ./gradlew -PkiteRelayUrl=https://... assembleProDebug
             val relay = (project.findProperty("kiteRelayUrl") as String?) ?: "http://10.0.2.2:8787"

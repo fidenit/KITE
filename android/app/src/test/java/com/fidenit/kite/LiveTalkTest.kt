@@ -126,9 +126,28 @@ class LiveTalkTest {
         host.run()
     }
 
+    private val loudFrame = ShortArray(320) { 3000 }
+    private val quietFrame = ShortArray(320)
+
+    /** 20 ms of real sound from the mic (level 0.09 > threshold 0.02) */
+    private fun loud(ms: Int = 20) = repeat(ms / 20) { talk.frame(loudFrame, 320) }
+
+    /** 20 ms frames of silence, with the view model's tick between them */
+    private fun quiet(ms: Int) = repeat(ms / 20) {
+        talk.frame(quietFrame, 320)
+        talk.tick()
+        host.run()
+    }
+
+    /** The owner said something (real sound), then the gateway's final */
+    private fun fin(text: String) {
+        loud()
+        gw(In.Final(text, "kor"))
+    }
+
     private fun started(): Sock {
         talk.start()
-        gw(In.Ready)
+        gw(In.Ready())
         return socks.last()
     }
 
@@ -142,7 +161,7 @@ class LiveTalkTest {
         gw(In.Partial("회의"))
         gw(In.Partial("회의 일정"))
         clock += 300
-        gw(In.Final("회의 일정 정리해 줘", "kor"))
+        fin("회의 일정 정리해 줘")
         assertEquals(listOf("회의", "회의 일정", null), host.tails)
         assertEquals(listOf("회의 일정 정리해 줘"), host.sent)
         assertTrue(host.logs.any { it == "live final chars=11 after_partial_ms=300" })
@@ -154,16 +173,16 @@ class LiveTalkTest {
     @Test
     fun standbyWakeWaitStopAndEchoGoThroughTodaysRules() {
         started()
-        gw(In.Final("잠깐만", "kor"))
+        fin("잠깐만")
         assertTrue(host.standby)
-        gw(In.Final("이거 정리해 줘", "kor"))
+        fin("이거 정리해 줘")
         assertEquals("waiting: not sent", emptyList<String>(), host.sent)
-        gw(In.Final("아페리트 이제 말해", "kor"))
+        fin("아페리트 이제 말해")
         assertEquals(listOf("아페리트 이제 말해"), host.sent)
         host.standby = false
-        gw(In.Final("그만", "kor"))
+        fin("그만")
         host.spoken.add("오늘 회의는 세 시에 시작합니다")
-        gw(In.Final("오늘 회의는 세 시에 시작합니다", "kor"))
+        fin("오늘 회의는 세 시에 시작합니다")
         assertEquals(listOf(Words.Heard.WAIT, Words.Heard.IGNORE, Words.Heard.SEND, Words.Heard.STOP, Words.Heard.IGNORE), host.routed)
         assertEquals(1, host.sent.size)
     }
@@ -182,18 +201,151 @@ class LiveTalkTest {
     }
 
     @Test
-    fun whileSpeakingANonEchoPartialBargesInAndEchoOrFragmentDoesNot() {
-        started()
+    fun whileSpeakingANonEchoPartialThatHeldWithSoundBargesIn() {
+        val s = started()
         host.speaking = true
         host.busy = true
         host.reading = "오늘 회의는 세 시에 시작합니다"
+        loud()
         gw(In.Partial("오늘 회의는"))
-        gw(In.Partial("회의"))
-        gw(In.Partial("응"))
-        assertEquals(0, host.barged)
-        assertEquals("speaking: no hush either", 0, host.hushed)
-        gw(In.Partial("잠깐 멈춰 봐"))
+        gw(In.Partial("오늘 회의는 세"))
+        assertEquals("echo of the sentence being read, with sound", 0, host.barged)
+        gw(In.Final("오늘 회의는 세", "kor"))
+        loud()
+        gw(In.Partial("회의는"))
+        gw(In.Partial("회의는 세"))
+        assertEquals("a fragment", 0, host.barged)
+        gw(In.Final("회의는 세", "kor"))
+        loud()
+        gw(In.Partial("잠깐"))
+        assertEquals("first partial of the utterance: not yet", 0, host.barged)
+        gw(In.Partial("잠깐 멈춰"))
         assertEquals(1, host.barged)
+        assertEquals("speaking: no hush", 0, host.hushed)
+        assertEquals(0, s.commits)
+    }
+
+    @Test
+    fun aSingleGhostPartialInSilenceDoesNotBargeIn() {
+        started()
+        host.speaking = true
+        host.reading = "오늘 회의는 세 시에 시작합니다"
+        quiet(1_000)
+        gw(In.Partial("클로드."))
+        assertEquals(0, host.barged)
+        gw(In.Final("", ""))
+        loud()
+        quiet(600)
+        gw(In.Partial("잠깐만"))
+        gw(In.Partial("잠깐만 기다려"))
+        assertEquals("two partials but the last sound was 0.6 s ago", 0, host.barged)
+        loud()
+        gw(In.Partial("잠깐만 기다려 봐"))
+        assertEquals(1, host.barged)
+    }
+
+    @Test
+    fun aShorterSecondPartialDoesNotBargeIn() {
+        started()
+        host.speaking = true
+        loud()
+        gw(In.Partial("잠깐만 기다려"))
+        gw(In.Partial("잠깐"))
+        assertEquals(0, host.barged)
+    }
+
+    @Test
+    fun aFinalWithNoRealSoundSinceTheLastFinalIsDropped() {
+        started()
+        quiet(2_000)
+        gw(In.Partial("네."))
+        gw(In.Final("네.", "kor"))
+        assertTrue(host.sent.isEmpty())
+        assertTrue(host.logs.contains("live final dropped quiet"))
+        fin("내일 일정 알려 줘")
+        assertEquals(listOf("내일 일정 알려 줘"), host.sent)
+        gw(In.Final("그 다음은", "kor"))
+        assertEquals("sound is counted again from each final", 1, host.sent.size)
+    }
+
+    private fun earlyAfter(tp: Double?, vad: Double? = null): Pair<Sock, Int?> {
+        talk.start()
+        gw(In.Ready(vad))
+        val s = socks.last()
+        loud(200)
+        gw(In.Partial("내일 일정 알려 줘", tp))
+        var at: Int? = null
+        for (k in 1..100) {
+            quiet(20)
+            if (s.commits > 0) {
+                at = k * 20
+                break
+            }
+        }
+        return s to at
+    }
+
+    @Test
+    fun earlyCommitWaitsVadTimesOneMinusTp() {
+        assertEquals("tp 0.9 -> 0.15 s", 160, earlyAfter(0.9).second)
+        assertTrue(host.logs.contains("live commit early tp=0.90 quiet_ms=160"))
+    }
+
+    @Test
+    fun earlyCommitTp05WaitsHalfTheBackstop() {
+        assertEquals("tp 0.5 -> 0.75 s", 760, earlyAfter(0.5).second)
+    }
+
+    @Test
+    fun earlyCommitUsesVadFromReady() {
+        assertEquals("vad 1.0, tp 0.5 -> 0.5 s", 500, earlyAfter(0.5, 1.0).second)
+    }
+
+    @Test
+    fun aMidSentencePauseWaitsAlmostTheWholeBackstopAndNoTpMeansNoEarlyCommit() {
+        assertEquals("tp 0.02 -> 1.47 s", 1480, earlyAfter(0.02).second)
+        val t2 = LiveTalk(opener, host) { clock }
+        t2.start()
+        gw(In.Ready(null))
+        val s = socks.last()
+        repeat(10) { t2.frame(loudFrame, 320) }
+        gw(In.Partial("내일 일정", null))
+        repeat(150) {
+            t2.frame(quietFrame, 320)
+            t2.tick()
+        }
+        assertEquals("no tp -> the upstream's own backstop", 0, s.commits)
+    }
+
+    @Test
+    fun oneEarlyCommitPerUtteranceAndAMaybeCutIsLogged() {
+        val (s, at) = earlyAfter(0.9)
+        assertEquals(160, at)
+        gw(In.Partial("내일 일정 알려 줘", 0.95))
+        quiet(1_000)
+        assertEquals("one per utterance", 1, s.commits)
+        gw(In.Final("내일 일정 알려 줘", "kor"))
+        clock += 400
+        loud()
+        gw(In.Partial("그리고", 0.1))
+        assertTrue(host.logs.any { it == "live commit maybe-cut gap_ms=400" })
+    }
+
+    @Test
+    fun noEarlyCommitWhileSpeakingOrWithoutSound() {
+        talk.start()
+        gw(In.Ready())
+        val s = socks.last()
+        quiet(200)
+        gw(In.Partial("응.", 0.9))
+        quiet(1_000)
+        assertEquals("a ghost partial in silence", 0, s.commits)
+        gw(In.Final("", ""))
+        host.speaking = true
+        loud(200)
+        gw(In.Partial("내일 일정", 0.9))
+        quiet(1_000)
+        assertEquals("while the AI speaks", 0, s.commits)
     }
 
     @Test
@@ -206,7 +358,7 @@ class LiveTalkTest {
         assertEquals(1, s.commits)
         after(40)
         assertEquals(1, s.commits)
-        gw(In.Final("아주 긴 말 끝", "kor"))
+        fin("아주 긴 말 끝")
         after(60_000)
         assertEquals(1, s.commits)
     }
@@ -245,7 +397,7 @@ class LiveTalkTest {
         repeat(5) {
             drop()
             after(500)
-            gw(In.Ready)
+            gw(In.Ready())
         }
         assertEquals(6, socks.size)
         assertTrue(host.fallbacks.isEmpty())
@@ -361,7 +513,7 @@ class LiveTalkTest {
         old.events.message(In.Final("옛 소켓의 말", "kor"))
         host.run()
         assertTrue(host.sent.isEmpty())
-        gw(In.Final("새 소켓의 말", "kor"))
+        fin("새 소켓의 말")
         assertEquals(listOf("새 소켓의 말"), host.sent)
     }
 

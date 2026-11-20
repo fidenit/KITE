@@ -58,6 +58,9 @@ import com.fidenit.kite.engine.SshFatal
 import com.fidenit.kite.engine.Waker
 import com.fidenit.kite.voice.Eleven
 import com.fidenit.kite.voice.LiveListen
+import com.fidenit.kite.voice.LiveRead
+import com.fidenit.kite.voice.LiveSpeak
+import com.fidenit.kite.voice.OkLiveSpeak
 import com.fidenit.kite.voice.LiveTalk
 import com.fidenit.kite.voice.OkLiveListen
 import com.fidenit.kite.voice.liveClient
@@ -381,13 +384,19 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     internal var jevUrl: String = Jev.baseUrl
 
     // 소리
-    private val speech = ArrayDeque<Pair<String, MutableList<String>>>()
+    /** 읽을 문장과 그 문장 차례에 낼 카드 줄. [id] = 실시간 읽기 소켓으로 보낸 번호 (0 = 아직 안 보냄 / 예전 방식). */
+    private class Said(val text: String, val cmds: MutableList<String>) {
+        var id = 0
+    }
+
+    private val speech = ArrayDeque<Said>()
     private val turnSpoken = mutableListOf<String>()
     private var quietSay: String? = null
     private var hush = false
 
     @Volatile
     private var speakEpoch = 0
+    @Volatile
     private var player: Player? = null
     private var deviceTts: TextToSpeech? = null
     private var deviceTtsReady = CompletableDeferred<Boolean>()
@@ -402,6 +411,23 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     // Pro 실시간 음성 (spec aperit-pro-voice-realtime-v1 §3): 서버가 `voice_live` 라고 했을 때만, 대화 한 번마다 새로
     private var live: LiveTalk? = null
+    private var liveRead: LiveRead? = null
+
+    /** 이번 답의 남은 문장은 예전 방식(speak)으로 읽는다 (실시간 읽기가 문장 하나를 못 읽었거나 답 중간에 끊겼다). 턴이 시작할 때 풀린다. */
+    private var replyHttp = false
+
+    /** 실시간으로 읽는 중인 문장 (에코 거르기) */
+    private var liveReadingText: String? = null
+
+    /** 시험에서 게이트웨이의 읽기 소켓과 스피커 대신 쓴다. 앱은 바꾸지 않는다. */
+    internal var liveSpeakOverride: LiveSpeak.Opener? = null
+    internal var sinkOverride: Eleven.Sink? = null
+
+    /** 시험에서 끈다: 마이크 조각을 듣기 소켓으로 넘기지 않는다 (시험이 조각을 직접 넣는다). 앱은 바꾸지 않는다. */
+    internal var micFramesOn = true
+
+    /** 시험용: 지금 대화의 실시간 듣기 (마이크 조각을 넣어 본다) */
+    internal val liveTalk: LiveTalk? get() = live
 
     /** 시험에서 게이트웨이의 듣기 소켓 대신 쓴다 (주면 무료 변형에서도 실시간으로 듣는다). 앱은 바꾸지 않는다. */
     internal var liveListenOverride: LiveListen.Opener? = null
@@ -1113,6 +1139,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         touched.clear()
         turnSpoken.clear()
         proVoiceSkip = false // 새 답은 서버의 목소리를 다시 써 본다 (D-A4)
+        replyHttp = false
+        if (voice && !standby) liveRead?.prepare() // 실시간 읽기: 답이 곧 온다 (게이트웨이가 미리 이어 둔다)
         quietSay = null
         lines = LineStream()
         val before = Lang.save(board)
@@ -1278,7 +1306,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             }
             // 다른 말이 없었으면 남겨 둔 한마디를 읽는다.
             quietSay?.let {
-                if (voice && !hush && !standby) speech.addLast(it to mutableListOf())
+                if (voice && !hush && !standby) speech.addLast(Said(it, mutableListOf()))
                 quietSay = null
             }
             advanceSpeech()
@@ -1338,7 +1366,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val ack = pre.ack ?: return record
         liveSay = ack
         if (voice && !hush && !standby) {
-            speech.addLast(ack to mutableListOf())
+            speech.addLast(Said(ack, mutableListOf()))
             advanceSpeech()
         }
         return record.copy(turnText = record.turnText + Decide.alreadySaid(ack))
@@ -1516,7 +1544,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         if (sayText != null && saidAny) {
             quietSay = sayText
             val last = speech.lastOrNull()
-            if (last != null) last.second.add(line) else applyLine(line, Author.Ai)
+            if (last != null) last.cmds.add(line) else applyLine(line, Author.Ai)
             return
         }
         val tellText = if (t.startsWith("tell ")) t.removePrefix("tell ").trim().takeIf { it.isNotEmpty() } else null
@@ -1524,11 +1552,11 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val spoken = tellText ?: sayText
         if (spoken != null) {
             // say 는 화면 아래 한마디도 함께 바꾼다
-            speech.addLast(spoken to if (sayText != null) mutableListOf(line) else mutableListOf())
+            speech.addLast(Said(spoken, if (sayText != null) mutableListOf(line) else mutableListOf()))
         } else if (t.startsWith("tell ")) {
             return
         } else if (speech.isNotEmpty()) {
-            speech.last().second.add(line) // 아직 읽지 않은 문장에 딸린 명령: 그 문장 차례까지 기다린다
+            speech.last().cmds.add(line) // 아직 읽지 않은 문장에 딸린 명령: 그 문장 차례까지 기다린다
         } else {
             applyLine(line, Author.Ai) // 지금 읽는 문장에 딸린 명령: 바로 나간다
         }
@@ -1537,8 +1565,16 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 앞 문장을 다 읽었으면 다음 문장을 읽기 시작하고 그 문장의 카드를 띄운다. */
     private fun advanceSpeech() {
+        val lr = liveRead
+        if (lr != null && lr.usable && !replyHttp) {
+            // Pro 실시간 읽기: 줄에 선 문장을 모두 바로 보낸다. 카드 줄은 그 문장의 소리가 시작될 때 낸다 (liveStarted).
+            for (e in speech) if (e.id == 0) e.id = lr.say(board.show(e.text))
+            if (speech.none { it.id == 0 }) return
+            replyHttp = true // 보내지 못했다: 이 답의 남은 문장은 예전 방식으로
+            for (e in speech) e.id = 0
+        }
         if (speaking) return
-        val (sentence, cmds) = speech.removeFirstOrNull() ?: return
+        val (sentence, cmds) = speech.removeFirstOrNull()?.let { it.text to it.cmds } ?: return
         turnSpoken.add(sentence)
         cmds.forEach { applyLine(it, Author.Ai) }
         speak(sentence)
@@ -1557,9 +1593,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         // Pro: 키 없이 서버의 목소리로 (서버가 쓸 수 있다고 했을 때만)
         val target = if (BuildConfig.PRO && ProVoice.tryServer(proVoiceOn, proVoiceSkip)) proVoiceTarget() else null
         val viaEleven: () -> Unit = if (target != null) {
-            { Eleven.speak(target, store.voiceId.trim(), board.show(text), player ?: Player(fastStart = live?.listening == true).also { player = it }, { epoch != speakEpoch }) }
+            { Eleven.speak(target, store.voiceId.trim(), board.show(text), player ?: Player(fastStart = liveRead != null).also { player = it }, { epoch != speakEpoch }) }
         } else {
-            { Eleven.speak(key, store.voiceId.trim(), board.show(text), player ?: Player(fastStart = live?.listening == true).also { player = it }) { epoch != speakEpoch } }
+            { Eleven.speak(key, store.voiceId.trim(), board.show(text), player ?: Player(fastStart = liveRead != null).also { player = it }) { epoch != speakEpoch } }
         }
         val useEleven = if (BuildConfig.PRO) target != null else key.isNotEmpty()
         viewModelScope.launch {
@@ -1617,12 +1653,14 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         speakEpoch++
         speaking = false
         quietSay = null
-        player?.stop()
+        (sinkOverride ?: player)?.stop()
         try {
             deviceTts?.stop()
         } catch (_: Exception) {
         }
-        val rest = speech.flatMap { it.second }
+        liveRead?.stop() // 실시간 읽기: 게이트웨이에 남은 것을 버리게 하고, 그 번호까지 오는 소리는 버린다
+        liveReadingText = null
+        val rest = speech.flatMap { it.cmds }
         speech.clear()
         rest.forEach { applyLine(it, Author.Ai) }
     }
@@ -1647,7 +1685,12 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         if (on) {
             player?.release()
             player = null // 통화 경로로 다시 만든다
-            if ((BuildConfig.PRO && store.proVoiceLive == "1") || liveListenOverride != null) live = newLiveTalk().also { it.start() }
+            if ((BuildConfig.PRO && store.proVoiceLive == "1") || liveListenOverride != null) {
+                replyHttp = false
+                live = newLiveTalk().also { it.start() }
+                if (sinkOverride == null) player = Player(fastStart = true) // 실시간 읽기: 첫 소리를 0.5초 버퍼가 찰 때까지 기다리지 않는다
+                liveRead = LiveRead(liveSpeakOverride ?: OkLiveSpeak(liveHttp, BuildConfig.GATEWAY_URL, { store.deviceSecret }, proApp), readHost).also { it.open() }
+            }
             voiceLoop = viewModelScope.launch {
                 while (isActive) {
                     tick()
@@ -1661,6 +1704,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             live = null
             liveHeard = null
             silence()
+            liveRead?.end()
+            liveRead = null
             mic?.finish()
             mic = null
             standby = false
@@ -1674,6 +1719,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
      * 마이크는 AI 가 일하는 동안에도, 말하는 동안에도 열어 둔다. 말하는 중에 사용자가 끼어들면 AI 는 말을 멈추고 듣는다.
      */
     private fun tick() {
+        liveReadTick() // 실시간 읽기는 듣기가 예전 방식으로 돌아가도 계속될 수 있다
         live?.takeIf { it.listening }?.let {
             liveTick(it)
             return
@@ -1758,7 +1804,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val now = System.currentTimeMillis()
         val m = mic
         if (m == null) {
-            mic = Mic(onFrame = { pcm, n -> lt.frame(pcm, n) }, onEffects = { proVoiceLog("live mic $it") })
+            mic = Mic(onFrame = { pcm, n -> if (micFramesOn) lt.frame(pcm, n) }, onEffects = { proVoiceLog("live mic $it") })
             micSince = now
             echo = 0f
             bargeSince = null
@@ -1787,7 +1833,73 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun newLiveTalk(): LiveTalk {
         val opener = liveListenOverride ?: OkLiveListen(liveHttp, BuildConfig.GATEWAY_URL, { store.deviceSecret }, proApp)
-        return LiveTalk(opener, liveHost)
+        return LiveTalk(opener, liveHost, store.micThreshold.toFloatOrNull() ?: 0.02f)
+    }
+
+    private val liveSink: Eleven.Sink? get() = sinkOverride ?: player
+
+    /** 실시간 읽기 (§3.2 Reading): 말하는 중에 tick 마다. 소리가 다 나갔고 남은 문장이 없으면 말하기를 끝낸다. 다음 문장을 기다리며 스피커가 비면 끊김으로 센다. */
+    internal fun liveReadTick() {
+        val lr = liveRead ?: return
+        if (!speaking || replyHttp || liveReadingText == null) return
+        val pending = liveSink?.pendingSecs() ?: 0f
+        val more = speech.isNotEmpty() || lr.outstanding
+        lr.play(more, pending)
+        if (!more && pending <= 0.02f) {
+            speaking = false
+            liveReadingText = null
+            lr.replyDone()
+        }
+    }
+
+    /** 실시간 읽기가 뷰모델에 하는 일 */
+    private val readHost = object : LiveRead.Host {
+        override fun post(block: () -> Unit) {
+            viewModelScope.launch { block() }
+        }
+
+        override val sink: Eleven.Sink? get() = liveSink
+
+        override fun started(id: Int) {
+            val head = speech.firstOrNull()
+            if (head == null || head.id != id) {
+                proVoiceLog("live speak start-mismatch")
+                return
+            }
+            speech.removeFirst()
+            turnSpoken.add(head.text)
+            head.cmds.forEach { applyLine(it, Author.Ai) }
+            speakEpoch++
+            speakStartedAt = System.currentTimeMillis()
+            liveReadingText = head.text
+            speaking = true
+        }
+
+        override fun done(id: Int) {}
+
+        override fun rest(why: String) {
+            // 이번 답의 남은 문장(맨 앞부터)은 예전 방식으로: 게이트웨이에 남은 것은 버리게 하고, 이미 받은 소리는 스피커에서 마저 나간다
+            if (replyHttp) return
+            replyHttp = true
+            liveRead?.stop()
+            for (e in speech) e.id = 0
+            proVoiceLog("live speak rest why=$why left=${speech.size}")
+            liveReadingText = null
+            speaking = false
+            advanceSpeech()
+        }
+
+        override fun fallback(why: String, notice: Boolean) {
+            liveRead = null
+            if (notice && !liveNoticeShown) {
+                liveNoticeShown = true
+                error = ProVoice.liveDropped(english)
+            }
+        }
+
+        override fun device(word: String) = liveHost.device(word)
+
+        override fun log(line: String) = proVoiceLog(line)
     }
 
     /** 실시간 듣기가 뷰모델에 하는 일 */
@@ -1795,7 +1907,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         override val english: Boolean get() = this@KiteViewModel.english
         override val busy: Boolean get() = this@KiteViewModel.busy
         override val speaking: Boolean get() = this@KiteViewModel.speaking
-        override val reading: String? get() = null // 읽는 문장은 읽기 시작할 때 turnSpoken 에 들어간다
+        override val reading: String? get() = liveReadingText
         override val spoken: List<String> get() = turnSpoken.toList()
         override fun post(block: () -> Unit) {
             viewModelScope.launch { block() }

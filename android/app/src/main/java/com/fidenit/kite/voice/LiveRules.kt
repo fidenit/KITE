@@ -12,6 +12,29 @@ object LiveRules {
     /** 읽기 소켓을 이어서 이만큼 못 열면 이번 대화는 예전 방식으로 읽는다 */
     const val SPEAK_OPEN_FAILS = 2
 
+    /** 게이트웨이가 `ready` 에 vad_s 를 주지 않았을 때의 말 끝 기다림 (초, v1.1 §3.2) */
+    const val VAD_S = 1.5
+
+    /** 일찍 끝낸 뒤 이만큼 안에 새 말이 시작되면 잘랐을 수 있다고 적는다 (v1.1 §3.2) */
+    const val MAYBE_CUT_MS = 1000L
+
+    /** 끼어들기: 마지막 0.5초 안에 문턱을 넘는 소리가 있어야 한다 (16 kHz 샘플 수, D4 v1.1) */
+    const val BARGE_SOUND_SAMPLES = MIC_RATE / 2L
+
+    /** 소리 조각의 크기 (RMS, 0..1): 마이크의 `level` 과 같은 계산 */
+    fun level(pcm: ShortArray, n: Int): Float {
+        if (n <= 0) return 0f
+        var sum = 0.0
+        for (i in 0 until n) {
+            val v = pcm[i] / 32768.0
+            sum += v * v
+        }
+        return kotlin.math.sqrt(sum / n).toFloat()
+    }
+
+    /** D11: 이만큼(ms) 조용하면 말이 끝난 것으로 본다 = vad_s × (1 − tp) */
+    fun earlyQuietMs(vadS: Double, tp: Double): Long = (vadS * (1 - tp.coerceIn(0.0, 1.0)) * 1000).toLong()
+
     /** 상태 줄에 보일 들은 말의 끝 부분 길이 (가장 새 낱말이 보이게) */
     const val TAIL = 24
 

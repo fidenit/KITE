@@ -38,7 +38,7 @@ class LiveWireTest {
 
     @Test
     fun gatewayFramesParseAndUnknownOnesAreIgnored() {
-        assertEquals(In.Ready, LiveWire.parse("""{"type":"ready"}"""))
+        assertEquals(In.Ready(), LiveWire.parse("""{"type":"ready"}"""))
         assertEquals(In.Partial("안녕하"), LiveWire.parse("""{"type":"partial","text":"안녕하","extra":1}"""))
         assertEquals(In.Partial(""), LiveWire.parse("""{"type":"partial","text":""}"""))
         assertEquals(In.Final("hello", "eng"), LiveWire.parse("""{"type":"final","text":"hello","lang":"eng"}"""))

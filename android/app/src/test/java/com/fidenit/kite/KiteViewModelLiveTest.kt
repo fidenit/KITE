@@ -3,13 +3,16 @@ package com.fidenit.kite
 import android.app.Application
 import android.os.Looper
 import com.fidenit.kite.voice.LiveEvents
+import com.fidenit.kite.voice.Eleven
 import com.fidenit.kite.voice.LiveListen
+import com.fidenit.kite.voice.LiveSpeak
 import com.fidenit.kite.voice.LiveWire
 import com.fidenit.kite.voice.LiveWire.In
 import com.fidenit.kite.voice.ProVoice
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -40,6 +43,36 @@ class KiteViewModelLiveTest {
     }
 
     private val socks = mutableListOf<Sock>()
+
+    private class Speak(val events: LiveEvents) : LiveSpeak {
+        val sent = mutableListOf<String>()
+        override fun prepare() = sent.add("prepare")
+        override fun say(id: Int, text: String) = sent.add("say $id $text")
+        override fun stop() = sent.add("stop")
+        override fun end() {
+            sent.add("end")
+        }
+    }
+
+    private val speaks = mutableListOf<Speak>()
+
+    private class Sink : Eleven.Sink {
+        val got = mutableListOf<Short>()
+
+        @Volatile
+        var pending = 0f
+        var stops = 0
+        override fun push(pcm: ShortArray, n: Int) {
+            for (i in 0 until n) got.add(pcm[i])
+        }
+
+        override fun pendingSecs() = pending
+        override fun stop() {
+            stops++
+        }
+    }
+
+    private val sink = Sink()
     private lateinit var vm: KiteViewModel
 
     @Before
@@ -50,6 +83,9 @@ class KiteViewModelLiveTest {
         Store(app).elevenKey = "test-key-not-real" // the free flavor needs a key to switch talking on
         vm = KiteViewModel(app)
         vm.liveListenOverride = LiveListen.Opener { _, ev -> Sock(ev).also { socks.add(it) } }
+        vm.liveSpeakOverride = LiveSpeak.Opener { ev -> Speak(ev).also { speaks.add(it) } }
+        vm.sinkOverride = sink
+        vm.micFramesOn = false // Robolectric's microphone sends silence as fast as it can: the test feeds the frames itself
     }
 
     @After
@@ -64,15 +100,46 @@ class KiteViewModelLiveTest {
         idle()
     }
 
+    /** the speak socket's gateway side */
+    private fun sp(m: In) {
+        speaks.last().events.message(m)
+        idle()
+    }
+
+    private fun spAudio(vararg v: Short) {
+        speaks.last().events.audio(shortArrayOf(*v))
+        idle()
+    }
+
+    /** 20 ms of real sound through the same path the mic frames take */
+    private fun loud() = vm.liveTalk!!.frame(ShortArray(320) { 3000 }, 320)
+
+    /** talking on, both sockets open, two sentences with a card each queued and sent ahead */
+    private fun twoSentences() {
+        vm.converse(true)
+        idle()
+        speaks.last().events.opened(5)
+        gw(In.Ready())
+        vm.aiLine("topic t1 일")
+        vm.aiLine("tell 첫 문장입니다")
+        vm.aiLine("card k1 note t1 2x1 첫 카드")
+        vm.aiLine("tell 둘째 문장입니다")
+        vm.aiLine("card k2 note t1 2x1 둘째 카드")
+        idle()
+    }
+
     @Test
     fun partialsShowInTheStatusAndAFinalFollowsTodaysRules() {
         vm.converse(true)
         idle()
         assertEquals("talking on opens one listen socket", 1, socks.size)
-        gw(In.Ready)
+        gw(In.Ready())
         gw(In.Partial("잠깐"))
         assertEquals("잠깐", vm.liveHeard)
         assertTrue(vm.heard)
+        gw(In.Final("잠깐만", "kor"))
+        assertFalse("no real sound since the last final: dropped (D10)", vm.standby)
+        loud()
         gw(In.Final("잠깐만", "kor"))
         assertNull(vm.liveHeard)
         assertFalse(vm.heard)
@@ -113,5 +180,135 @@ class KiteViewModelLiveTest {
         idle()
         assertTrue(vm.converse)
         assertEquals(0, socks.size)
+    }
+
+    @Test
+    fun sentencesAreSentAheadAndCardsComeWithTheirSentencesStart() {
+        twoSentences()
+        assertEquals(listOf("say 1 첫 문장입니다", "say 2 둘째 문장입니다"), speaks.last().sent)
+        assertNull("the card waits for its sentence", vm.board.card("k1"))
+        assertFalse(vm.speaking)
+        sp(In.Start(1))
+        assertTrue(vm.speaking)
+        assertNotNull(vm.board.card("k1"))
+        assertNull(vm.board.card("k2"))
+        spAudio(1, 2)
+        assertEquals(listOf<Short>(1, 2), sink.got)
+        sp(In.Done(1, 8))
+        sp(In.Start(2))
+        assertNotNull(vm.board.card("k2"))
+        sp(In.Done(2, 8))
+        sink.pending = 0.3f
+        vm.liveReadTick()
+        assertTrue("still playing", vm.speaking)
+        sink.pending = 0f
+        vm.liveReadTick()
+        assertFalse("played out, nothing more pending", vm.speaking)
+        vm.converse(false)
+        assertEquals("end", speaks.last().sent.last())
+    }
+
+    @Test
+    fun anEmptySentenceStillAppliesItsCards() {
+        vm.converse(true)
+        idle()
+        vm.aiLine("topic t1 일")
+        vm.aiLine("tell …")
+        vm.aiLine("card k1 note t1 2x1 첫 카드")
+        idle()
+        sp(In.Start(1))
+        sp(In.Done(1, 0))
+        assertNotNull(vm.board.card("k1"))
+    }
+
+    @Test
+    fun aTurnInTalkingModeSendsPrepare() {
+        vm.converse(true)
+        idle()
+        vm.send("안녕")
+        idle()
+        assertEquals("prepare", speaks.last().sent.firstOrNull())
+        vm.stop()
+        idle()
+    }
+
+    @Test
+    fun aBargeInByWordsStopsReadingSendsStopAndIgnoresStaleAudio() {
+        twoSentences()
+        sp(In.Start(1))
+        spAudio(1)
+        loud()
+        gw(In.Partial("잠깐"))
+        assertTrue("one partial is not enough", vm.speaking)
+        loud()
+        gw(In.Partial("잠깐 멈춰"))
+        assertFalse(vm.speaking)
+        assertEquals("stop", speaks.last().sent.last())
+        assertTrue(sink.stops >= 1)
+        assertNotNull("queued cards are still shown", vm.board.card("k2"))
+        spAudio(9)
+        sp(In.Done(1, 8))
+        sp(In.Start(2))
+        spAudio(9)
+        sp(In.Stopped(2))
+        assertEquals(listOf<Short>(1), sink.got)
+        assertFalse(vm.speaking)
+    }
+
+    @Test
+    fun anEchoPartialWithSoundDoesNotBargeIn() {
+        twoSentences()
+        sp(In.Start(1))
+        loud()
+        gw(In.Partial("첫 문장"))
+        loud()
+        gw(In.Partial("첫 문장입니"))
+        assertTrue(vm.speaking)
+        assertFalse(speaks.last().sent.contains("stop"))
+    }
+
+    @Test
+    fun aSkippedSentenceGoesTheEarlierWayWithTheRest() {
+        twoSentences()
+        vm.store.elevenKey = "" // the earlier way then uses the phone's own voice (no network in the test)
+        sp(In.Skipped(1, "limit"))
+        assertEquals("stop", speaks.last().sent.last())
+        assertNotNull("the head left the queue through speak()", vm.board.card("k1"))
+        assertNull(vm.board.card("k2"))
+        sp(In.Start(2))
+        assertNull("nothing live after the skip", vm.board.card("k2"))
+    }
+
+    @Test
+    fun aSpeakSocketDropMidReplyGoesTheEarlierWay() {
+        twoSentences()
+        vm.store.elevenKey = ""
+        sp(In.Start(1))
+        speaks.last().events.closed(LiveWire.Close(null, -1, false))
+        idle()
+        assertNotNull(vm.board.card("k1"))
+        assertNotNull("the second sentence was popped by speak()", vm.board.card("k2"))
+        assertNull("one drop of an open socket is not D9", vm.error)
+    }
+
+    @Test
+    fun twoFailedSpeakOpensShowD9OnceAndReadTheEarlierWay() {
+        vm.converse(true)
+        idle()
+        speaks.last().events.closed(LiveWire.Close(null, -1, false))
+        idle()
+        vm.store.elevenKey = ""
+        vm.aiLine("topic t1 일")
+        vm.aiLine("tell 첫 문장입니다")
+        idle()
+        assertEquals(2, speaks.size)
+        speaks.last().events.closed(LiveWire.Close(null, -1, false))
+        idle()
+        assertEquals(ProVoice.liveDropped(false), vm.error)
+        vm.error = null
+        vm.aiLine("tell 둘째 문장입니다")
+        idle()
+        assertEquals("no more speak sockets", 2, speaks.size)
+        assertNull("D9 once", vm.error)
     }
 }

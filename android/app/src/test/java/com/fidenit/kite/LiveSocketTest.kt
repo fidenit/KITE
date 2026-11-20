@@ -111,7 +111,7 @@ class LiveSocketTest {
         val seen = Seen()
         val l = OkLiveListen(client, gateway, { "dev-secret-test" }, "0.5.0-pro").open(true, seen)
         assertEquals("open", seen.next())
-        assertEquals(In.Ready, seen.next())
+        assertEquals(In.Ready(), seen.next())
         assertEquals("unknown type skipped", In.Partial("안녕"), seen.next())
         assertEquals(In.Final("안녕하세요", "kor"), seen.next())
         val req = server.takeRequest()
@@ -250,7 +250,7 @@ class LiveSocketTest {
             check(System.currentTimeMillis() < end) { "timed out" }
             work.poll(50, TimeUnit.MILLISECONDS)?.invoke()
             if (!framed && talk.listening) {
-                talk.frame(ShortArray(320), 320)
+                talk.frame(ShortArray(320) { 3000 }, 320) // real sound, so the final counts (D10)
                 framed = true
             }
         }

@@ -3,7 +3,13 @@
 // 뷰모델이 하나 가지고, 뷰모델의 스레드에서만 부른다 ([frame] 만 마이크 스레드에서). 안드로이드 API 를 쓰지 않는다 (JVM 에서 시험한다).
 package com.fidenit.kite.voice
 
-class LiveTalk(private val listenOpener: LiveListen.Opener, private val host: Host, private val now: () -> Long = System::currentTimeMillis) {
+/** [threshold] = 사용자의 마이크 민감도 (소리 크기, 오늘의 `micThreshold`). */
+class LiveTalk(
+    private val listenOpener: LiveListen.Opener,
+    private val host: Host,
+    private val threshold: Float = 0.02f,
+    private val now: () -> Long = System::currentTimeMillis,
+) {
     /** 뷰모델 쪽 */
     interface Host {
         val english: Boolean
@@ -62,6 +68,24 @@ class LiveTalk(private val listenOpener: LiveListen.Opener, private val host: Ho
     private val clock = LiveRules.CommitClock()
     private var lastPartialAt: Long? = null
 
+    // 마이크 조각에서 잰 것 (마이크 스레드가 쓰고 뷰모델 스레드가 읽는다; 시간은 받은 소리의 길이로 잰다)
+    /** 지난 final 뒤로 문턱보다 큰 소리가 한 번이라도 있었다 (D10) */
+    @Volatile
+    private var loudSinceFinal = false
+
+    /** 마지막으로 큰 소리가 난 뒤 받은 소리 (샘플 수). 아직 없으면 아주 큰 값. */
+    @Volatile
+    private var samplesSinceLoud = Long.MAX_VALUE / 2
+
+    // 지금 말(utterance)의 partial
+    private var partials = 0
+    private var prevLen = 0
+    private var tp: Double? = null
+    private var hasText = false
+    private var committed = false
+    private var vadS = LiveRules.VAD_S
+    private var earlyAt: Long? = null
+
     fun start() {
         if (listening || fallen) return
         listening = true
@@ -88,6 +112,12 @@ class LiveTalk(private val listenOpener: LiveListen.Opener, private val host: Ho
 
     /** 마이크에서 읽은 조각 하나 (마이크 스레드). 소켓이 없으면 버린다. */
     fun frame(pcm: ShortArray, n: Int) {
+        if (LiveRules.level(pcm, n) > threshold) {
+            loudSinceFinal = true
+            samplesSinceLoud = 0
+        } else {
+            samplesSinceLoud += n
+        }
         sock?.audio(pcm, n)
     }
 
@@ -95,35 +125,69 @@ class LiveTalk(private val listenOpener: LiveListen.Opener, private val host: Ho
         when (m) {
             is LiveWire.In.Ready -> {
                 ready = true
-                host.log("live listen ready ms=${now() - openedAt}")
+                vadS = m.vadS ?: LiveRules.VAD_S
+                host.log("live listen ready ms=${now() - openedAt} vad_s=$vadS")
             }
-            is LiveWire.In.Partial -> partial(m.text)
+            is LiveWire.In.Partial -> partial(m.text, m.tp)
             is LiveWire.In.Final -> final(m.text)
             else -> {}
         }
     }
 
-    private fun partial(text: String) {
+    private fun partial(text: String, p: Double?) {
         val t = now()
         lastPartialAt = t
         clock.partial(text, t)
+        val blank = text.isBlank()
+        val held = !blank && partials >= 1 && text.length >= prevLen // 같은 말의 둘째 partial 부터, 글이 줄지 않았다
+        if (!blank) {
+            // 앞서 일찍 끝낸 말 바로 뒤에 새 말이 이어졌다: 일찍 끝낸 것이 말을 잘랐을 수 있다 (폰에서 맞추려고 남긴다)
+            val e = earlyAt
+            if (partials == 0 && e != null) {
+                if (t - e <= LiveRules.MAYBE_CUT_MS) host.log("live commit maybe-cut gap_ms=${t - e}")
+                earlyAt = null
+            }
+            partials++
+            prevLen = text.length
+            hasText = true
+        }
+        tp = p
         val spoken = host.spoken
-        if (text.isBlank() || LiveRules.echo(text, host.reading, spoken)) {
+        if (blank || LiveRules.echo(text, host.reading, spoken)) {
             host.heard(null)
             return
         }
         host.heard(LiveRules.tail(text))
-        if (LiveRules.barge(text, host.speaking, host.reading, spoken)) host.barge()
+        val sound = samplesSinceLoud <= LiveRules.BARGE_SOUND_SAMPLES
+        if (held && sound && LiveRules.barge(text, host.speaking, host.reading, spoken)) host.barge()
         else if (LiveRules.hush(text, host.busy, host.speaking, spoken)) host.hush()
+    }
+
+    /** 새 말을 기다린다 (final 이 왔거나 소켓이 바뀌었다) */
+    private fun nextUtterance() {
+        partials = 0
+        prevLen = 0
+        tp = null
+        hasText = false
+        committed = false
     }
 
     private fun final(text: String) {
         clock.final()
+        nextUtterance()
         host.heard(null)
         val after = lastPartialAt?.let { now() - it } ?: -1
         lastPartialAt = null
+        val loud = loudSinceFinal
+        loudSinceFinal = false
         host.log("live final chars=${text.length} after_partial_ms=$after")
-        if (text.isNotBlank()) host.final(text)
+        if (text.isBlank()) return
+        // D10: 마이크가 그사이 문턱을 넘는 소리를 한 번도 듣지 못했다 → 조용한 데서 생긴 헛것: 보내지 않는다
+        if (!loud) {
+            host.log("live final dropped quiet")
+            return
+        }
+        host.final(text)
     }
 
     /** 뷰모델의 tick 마다: 다시 열 때가 됐는지, 45초 commit 을 보낼 때인지 */
@@ -139,7 +203,20 @@ class LiveTalk(private val listenOpener: LiveListen.Opener, private val host: Ho
         val s = sock
         if (s != null && ready && clock.due(t)) {
             s.commit()
+            committed = true
             host.log("live commit")
+            return
+        }
+        // D11: 말이 끝났을 확률(tp)이 높을수록 짧게 조용하면 일찍 끝낸다 (vad_s × (1 − tp)), 말하는 중이 아닐 때, 말마다 한 번
+        val p = tp ?: return
+        if (s == null || !ready || committed || !hasText || host.speaking || !loudSinceFinal) return
+        val quiet = samplesSinceLoud
+        if (quiet <= 0 || quiet >= Long.MAX_VALUE / 4) return
+        if (quiet * 1000 >= LiveRules.earlyQuietMs(vadS, p) * MIC_RATE) {
+            s.commit()
+            committed = true
+            earlyAt = t
+            host.log("live commit early tp=${"%.2f".format(java.util.Locale.ROOT, p)} quiet_ms=${quiet * 1000 / MIC_RATE}")
         }
     }
 
@@ -149,6 +226,7 @@ class LiveTalk(private val listenOpener: LiveListen.Opener, private val host: Ho
         ready = false
         host.heard(null)
         clock.final()
+        nextUtterance()
         lastPartialAt = null
         host.log("live listen close=${c.logWord} ms=${now() - openedAt}")
         if (!listening) return
