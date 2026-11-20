@@ -107,9 +107,18 @@ class JournalTest {
         val d = dir()
         val j = Journal(d)
         j.writeInflight(Inflight("ssh", "a-1", "t", "s", "b", 1L, 7))
-        assertEquals(7, j.readInflight()!!.recentLen)
+        assertEquals(7, j.readInflight()!!.recentSeq)
         File(d, "inflight.json").writeText("{\"engine\":\"ssh\",\"id\":\"a-1\",\"turnText\":\"t\",\"shown\":\"s\",\"board\":\"b\",\"startedAt\":1}")
-        assertEquals(-1, j.readInflight()!!.recentLen)
+        assertEquals(-1, j.readInflight()!!.recentSeq)
+        // a record of the version before: its length field is not a sequence number, so nothing is cut; no server; the start counts as made
+        File(d, "inflight.json").writeText("{\"engine\":\"ssh\",\"id\":\"a-1\",\"turnText\":\"t\",\"shown\":\"s\",\"board\":\"b\",\"startedAt\":1,\"recentLen\":39}")
+        val old = j.readInflight()!!
+        assertEquals(-1, old.recentSeq)
+        assertEquals("", old.server)
+        assertTrue(old.started)
+        j.writeInflight(Inflight("ssh", "a-1", "t", "s", "b", 1L, 7, "u@h:22", false))
+        assertEquals("u@h:22", j.readInflight()!!.server)
+        assertFalse(j.readInflight()!!.started)
         d.deleteRecursively()
     }
 
