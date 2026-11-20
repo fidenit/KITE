@@ -253,4 +253,167 @@ class GatewayLiveTest {
         println("voice stt chars=${heard.length} ms=${(System.nanoTime() - s0) / 1_000_000} text=$heard")
         assertTrue("heard: $heard", heard.contains("안녕"))
     }
+
+    /**
+     * Realtime voice (spec aperit-pro-voice-realtime-v1 §3.3/§4.1): only with the two variables above AND `APERIT_LIVE_VOICE=1` (costs credit).
+     * Speech: `APERIT_LIVE_PCM` = comma-separated files (16 kHz mono s16le, raw or WAV), else one ko+en sentence made with the server voice
+     * (`pcm_16000`). Each file + 2 s of silence is fed at real-time pace in 20 ms frames through the app's own `LiveTalk.frame` / `tick`
+     * (the path the mic frames take: levels, D10 and D11 run) over the app's `OkLiveListen`; then 3 sentences through `LiveRead` / `OkLiveSpeak`.
+     * Prints: speech end -> final ms per utterance, whether it was an early commit, transcript, first audio after `say`, largest gap, stop -> silence.
+     */
+    @Test
+    fun realtimeListenAndReadThroughTheAppsOwnSockets() {
+        assumeTrue(
+            "APERIT_LIVE_GATEWAY_URL / APERIT_LIVE_GATEWAY_TOKEN not set or APERIT_LIVE_VOICE != 1",
+            env("APERIT_LIVE_GATEWAY_URL").isNotEmpty() && env("APERIT_LIVE_GATEWAY_TOKEN").isNotEmpty() && env("APERIT_LIVE_VOICE") == "1",
+        )
+        val url = env("APERIT_LIVE_GATEWAY_URL")
+        val token = env("APERIT_LIVE_GATEWAY_TOKEN")
+        val app = "0.5.0-pro"
+        val client = com.fidenit.kite.voice.liveClient()
+        val speeches: List<Pair<String, ShortArray>> = env("APERIT_LIVE_PCM").split(',').map { it.trim() }.filter { it.isNotEmpty() }.map { path ->
+            val b = File(path).readBytes()
+            val body = if (b.size > 44 && String(b, 0, 4) == "RIFF") b.copyOfRange(44, b.size) else b
+            File(path).name to com.fidenit.kite.voice.LiveWire.pcmShorts(body)
+        }.ifEmpty {
+            val got = java.io.ByteArrayOutputStream()
+            Eleven.speak(Eleven.Target.pro(url, token, app), "", "내일 오전 열 시 meeting 일정을 정리해 줘.", object : Eleven.Sink {
+                override fun push(pcm: ShortArray, n: Int) = got.write(com.fidenit.kite.voice.LiveWire.pcmBytes(pcm, n))
+                override fun pendingSecs(): Float = 0f
+                override fun stop() {}
+            }, { false }, format = "pcm_16000")
+            listOf("tts" to com.fidenit.kite.voice.LiveWire.pcmShorts(got.toByteArray()))
+        }
+        // ---- listen
+        val work = java.util.concurrent.LinkedBlockingQueue<() -> Unit>()
+        val logs = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val finals = mutableListOf<Pair<Long, String>>()
+        val host = object : com.fidenit.kite.voice.LiveTalk.Host {
+            override val english = false
+            override val busy = false
+            override val speaking = false
+            override val reading: String? = null
+            override val spoken = emptyList<String>()
+            override fun post(block: () -> Unit) {
+                work.add(block)
+            }
+
+            override fun heard(tail: String?) {}
+            override fun final(text: String) {
+                finals.add(System.nanoTime() / 1_000_000 to text)
+            }
+
+            override fun hush() {}
+            override fun barge() {}
+            override fun fallback(why: String, notice: Boolean) = logs.add("fallback $why").let {}
+            override fun limit() = logs.add("limit").let {}
+            override fun device(word: String) = logs.add("device $word").let {}
+            override fun log(line: String) = logs.add(line).let {}
+        }
+        val talk = com.fidenit.kite.voice.LiveTalk(com.fidenit.kite.voice.OkLiveListen(client, url, { token }, app), host, 0.02f)
+        fun drain() {
+            while (true) (work.poll() ?: break).invoke()
+        }
+        talk.start()
+        val t0 = System.nanoTime() / 1_000_000
+        while (logs.none { it.startsWith("live listen ready") } && System.nanoTime() / 1_000_000 - t0 < 10_000) {
+            work.poll(50, java.util.concurrent.TimeUnit.MILLISECONDS)?.invoke()
+        }
+        for ((name, pcm) in speeches) {
+            val all = pcm + ShortArray(com.fidenit.kite.voice.MIC_RATE * 2)
+            var speechEnd = 0L
+            val before = finals.size
+            val logsBefore = logs.size
+            var next = System.nanoTime()
+            var i = 0
+            while (i < all.size) {
+                val n = minOf(320, all.size - i)
+                val frame = all.copyOfRange(i, i + n)
+                talk.frame(frame, n)
+                if (i < pcm.size && com.fidenit.kite.voice.LiveRules.level(frame, n) > 0.02f) speechEnd = System.nanoTime() / 1_000_000
+                drain()
+                talk.tick()
+                i += n
+                next += 20_000_000
+                val wait = (next - System.nanoTime()) / 1_000_000
+                if (wait > 0) Thread.sleep(wait)
+            }
+            val end = System.nanoTime() / 1_000_000 + 3_000
+            while (finals.size == before && System.nanoTime() / 1_000_000 < end) work.poll(50, java.util.concurrent.TimeUnit.MILLISECONDS)?.invoke()
+            val early = logs.drop(logsBefore).filter { it.startsWith("live commit") }
+            val f = finals.drop(before).firstOrNull()
+            println("live stt $name speech_end_to_final_ms=${f?.let { it.first - speechEnd } ?: -1} early=${early.joinToString(";").ifEmpty { "none" }} text=${f?.second ?: "(none)"}")
+        }
+        talk.stop()
+        println("live stt logs ${logs.joinToString(" | ")}")
+        // ---- speak
+        val audioAt = java.util.Collections.synchronizedList(mutableListOf<Long>())
+        val rlogs = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val started = java.util.Collections.synchronizedList(mutableListOf<Int>())
+        val rwork = java.util.concurrent.LinkedBlockingQueue<() -> Unit>()
+        val read = com.fidenit.kite.voice.LiveRead(com.fidenit.kite.voice.OkLiveSpeak(client, url, { token }, app), object : com.fidenit.kite.voice.LiveRead.Host {
+            override fun post(block: () -> Unit) {
+                rwork.add(block)
+            }
+
+            override val sink: Eleven.Sink = object : Eleven.Sink {
+                override fun push(pcm: ShortArray, n: Int) {
+                    audioAt.add(System.nanoTime() / 1_000_000)
+                }
+
+                override fun pendingSecs(): Float = 0f
+                override fun stop() {}
+            }
+
+            override fun started(id: Int) = started.add(id).let {}
+            override fun done(id: Int) {}
+            override fun rest(why: String) = rlogs.add("rest $why").let {}
+            override fun fallback(why: String, notice: Boolean) = rlogs.add("fallback $why").let {}
+            override fun device(word: String) = rlogs.add("device $word").let {}
+            override fun log(line: String) = rlogs.add(line).let {}
+        })
+        fun rdrain(ms: Long) {
+            val e = System.nanoTime() / 1_000_000 + ms
+            while (System.nanoTime() / 1_000_000 < e) rwork.poll(20, java.util.concurrent.TimeUnit.MILLISECONDS)?.invoke()
+        }
+        read.open()
+        rdrain(1_000)
+        read.prepare()
+        val say0 = System.nanoTime() / 1_000_000
+        listOf("첫 번째 문장입니다.", "두 번째 문장은 조금 더 깁니다.", "세 번째로 끝냅니다.").forEach { read.say(it) }
+        rdrain(8_000)
+        val first = audioAt.firstOrNull()?.let { it - say0 } ?: -1
+        val gap = audioAt.zipWithNext { a, b -> b - a }.maxOrNull() ?: -1
+        println("live tts first_audio_after_say_ms=$first largest_gap_ms=$gap frames=${audioAt.size} started=$started logs=${rlogs.joinToString(" | ")}")
+        read.end()
+        // stop -> silence, measured on the raw socket (LiveRead itself drops audio at once after stop)
+        val raw = java.util.concurrent.LinkedBlockingQueue<Pair<Long, Any>>()
+        val sp = com.fidenit.kite.voice.OkLiveSpeak(client, url, { token }, app).open(object : com.fidenit.kite.voice.LiveEvents {
+            override fun message(m: com.fidenit.kite.voice.LiveWire.In) = raw.add(System.nanoTime() / 1_000_000 to m).let {}
+            override fun audio(pcm: ShortArray) = raw.add(System.nanoTime() / 1_000_000 to "audio").let {}
+            override fun closed(c: com.fidenit.kite.voice.LiveWire.Close) = raw.add(System.nanoTime() / 1_000_000 to c).let {}
+        })
+        sp.prepare()
+        sp.say(1, "이 문장은 읽는 도중에 멈춥니다. 조금 길게 써서 멈출 시간이 있게 합니다.")
+        while (true) {
+            val (_, m) = raw.poll(10, java.util.concurrent.TimeUnit.SECONDS) ?: break
+            if (m == "audio") break
+        }
+        val stopAt = System.nanoTime() / 1_000_000
+        sp.stop()
+        var lastAudio = stopAt
+        var stoppedAt = -1L
+        while (true) {
+            val (t, m) = raw.poll(3, java.util.concurrent.TimeUnit.SECONDS) ?: break
+            if (m == "audio") lastAudio = t
+            if (m is com.fidenit.kite.voice.LiveWire.In.Stopped) {
+                stoppedAt = t
+                break
+            }
+        }
+        println("live tts stop_to_last_audio_ms=${lastAudio - stopAt} stop_to_stopped_ms=${if (stoppedAt < 0) -1 else stoppedAt - stopAt}")
+        sp.end()
+        assertTrue("finals arrived", finals.isNotEmpty())
+        assertTrue("audio arrived", audioAt.isNotEmpty())
+    }
 }
