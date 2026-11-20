@@ -155,7 +155,7 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
                 if (board.topics.isEmpty()) Text(if (com.fidenit.kite.BuildConfig.PRO) "APERIT Pro" else "APERIT", color = C.text, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(6.dp))
             }
             Spacer(Modifier.width(8.dp))
-            Pill(if (english) "Talk log" else "대화", onClick = onLog)
+            Pill(if (english) "Talk log" else "대화 기록", onClick = onLog)
             Spacer(Modifier.width(6.dp))
             Pill(if (english) "Settings" else "설정", onClick = onSettings)
         }
@@ -300,7 +300,7 @@ private fun TalkLog(vm: KiteViewModel, onBack: () -> Unit) {
     val english = vm.store.lang == "en"
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(if (english) "Talk log" else "대화", color = C.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text(if (english) "Talk log" else "대화 기록", color = C.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             Pill(if (english) "Back" else "돌아가기", onClick = onBack)
         }
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp), reverseLayout = true) {

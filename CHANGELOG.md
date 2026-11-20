@@ -7,6 +7,7 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 ## Android 0.3.1 (not released yet)
 
 - The input box and the buttons beside it (Send, Stop, Talk) have the same height.
+- The button that opens what was said, and its page, are now called 대화 기록 in Korean, so they are no longer named like the round 대화 button that starts talking.
 
 ## Android 0.3.0 (not released yet)
 
