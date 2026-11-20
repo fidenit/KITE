@@ -98,9 +98,11 @@ object Speaking {
      * `start`: 읽기를 시작시킨다. 엔진이 받아들였으면 참을 돌려주고, 읽기가 끝나면 넘겨받은 `done` 을 부른다 (오류로 끝났으면 거짓으로).
      * 엔진이 안 켜졌거나, 읽기를 받아들이지 않았거나, 읽다가 오류가 났으면 예외를 낸다: 그 문장은 읽지 못한 것이다.
      * 어느 경우에도 끝없이 기다리지 않는다 (받아들이지 않은 읽기에는 끝났다는 알림이 오지 않는다).
+     * 엔진이 켜지기를 기다리는 사이에 멈췄으면 (`current` 가 거짓) 읽지 않는다: 그사이 다음 말이 다른 목소리로 나가고 있을 수 있다.
      */
-    suspend fun phone(ready: suspend () -> Boolean, start: (done: (Boolean) -> Unit) -> Boolean) {
+    suspend fun phone(ready: suspend () -> Boolean, current: () -> Boolean, start: (done: (Boolean) -> Unit) -> Boolean) {
         if (!ready()) throw Exception("the phone's speech engine did not start")
+        if (!current()) return
         val done = CompletableDeferred<Boolean>()
         if (!start { done.complete(it) }) throw Exception("the phone's speech engine did not take the sentence")
         if (!done.await()) throw Exception("the phone's speech engine failed while reading")

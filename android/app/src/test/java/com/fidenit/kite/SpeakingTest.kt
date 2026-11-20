@@ -143,14 +143,14 @@ class SpeakingTest {
     }
 
     /** Reads one sentence with a fake phone voice: what the engine was asked to do, and the error if the sentence was not read. */
-    private fun phone(ready: Boolean = true, accepted: Boolean = true, ok: Boolean = true): Pair<List<String>, Throwable?> {
+    private fun phone(ready: Boolean = true, accepted: Boolean = true, ok: Boolean = true, current: Boolean = true): Pair<List<String>, Throwable?> {
         val calls = ArrayList<String>()
         val error = runBlocking {
             runCatching {
                 Speaking.phone(ready = {
                     calls.add("ready")
                     ready
-                }) { done ->
+                }, current = { current }) { done ->
                     calls.add("start")
                     if (accepted) done(ok)
                     accepted
@@ -171,8 +171,16 @@ class SpeakingTest {
         assertEquals(listOf("ready"), notReady.first)
         assertTrue(notReady.second != null)
         // through read(): the line on screen is the "not read aloud" one, not "read with the phone's own voice"
-        val out = runBlocking { Speaking.read(null, stop = {}, current = { true }, phone = { Speaking.phone(ready = { true }) { done -> done(false); true } }) }
+        val out = runBlocking { Speaking.read(null, stop = {}, current = { true }, phone = { Speaking.phone(ready = { true }, current = { true }) { done -> done(false); true } }) }
         assertTrue(out.phoneFailed)
         assertTrue(Speaking.notice(out, false)!!.contains("소리 내어 읽지 못했습니다"))
+    }
+
+    /** T1: silenced while the phone's speech engine was still starting: the old sentence is not spoken (and that is no failure). */
+    @Test
+    fun aSentenceSilencedWhileThePhoneVoiceWasStartingIsNotSpoken() {
+        val late = phone(current = false)
+        assertEquals(listOf("ready"), late.first)
+        assertNull(late.second)
     }
 }
