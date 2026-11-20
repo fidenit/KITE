@@ -537,7 +537,7 @@ class ClaudeCode(private val ssh: Link, private val cfg: EngineConfig) : Runner 
                         when (val st = Detached.judgeUpload(code, err)) {
                             is Step.Ok -> phase = Phase.START
                             is Step.Retry -> throw java.io.IOException("upload cut")
-                            is Step.Fail -> throw Fatal("서버에 이 말을 저장하지 못했습니다 → 이번 말은 보내지 않았습니다 → 서버의 저장 공간과 폴더 권한을 확인한 뒤 다시 보내 주세요. (${st.detail})")
+                            is Step.Fail -> throw Fatal(ssh.uploadRefusedText(st.detail))
                         }
                     }
                     if (stopped()) continue
@@ -634,7 +634,7 @@ class ClaudeCode(private val ssh: Link, private val cfg: EngineConfig) : Runner 
                 broken = if (exit == null && !any && Detached.followBroken(rc)) broken + 1 else 0
                 if (broken >= 3) {
                     addToClean(id)
-                    throw Fatal("서버에서 결과를 읽어 오지 못합니다 → 서버의 작업은 다음에 연결할 때 멈춥니다 → 서버의 bash 설정을 확인한 뒤 같은 말을 다시 보내 주세요.")
+                    throw Fatal(ssh.followBrokenText())
                 }
                 return exit
             } finally {

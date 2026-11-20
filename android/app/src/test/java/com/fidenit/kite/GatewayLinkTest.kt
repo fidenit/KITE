@@ -145,7 +145,7 @@ class GatewayLinkTest {
     fun sseEventsSplitAcrossChunksArriveWholeAndInOrder() {
         for (crlf in listOf(false, true)) {
             val nl = if (crlf) "\r\n" else "\n"
-            val body = "id: 1${nl}data: >$init$nl$nl: keep-alive$nl${nl}data: APERITBEAT$nl${nl}id: 2${nl}data: >$delta$nl$nl" + sse("APERITEXIT 0", crlf = crlf)
+            val body = "id: 6${nl}data: >$init$nl$nl: keep-alive$nl${nl}data: APERITBEAT$nl${nl}id: 7${nl}data: >$delta$nl$nl" + sse("APERITEXIT 0", crlf = crlf)
             server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(body).throttleBody(3, 2, TimeUnit.MILLISECONDS))
             val got = mutableListOf<String>()
             val (rc, _) = link().follow("r-1", 5) { got.add(it) }
@@ -168,7 +168,7 @@ class GatewayLinkTest {
     @Test
     fun cutInTheMiddleOfAnEventDeliversOnlyWholeEventsAndCountsAsADrop() {
         val body = sse(">short") + "data: >" + "B".repeat(400) + "\n\n"
-        server.enqueue(MockResponse().setBody(body).setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(body).setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))
         val got = mutableListOf<String>()
         val (rc, _) = link().follow("r-1", 0) { got.add(it) }
         assertTrue("a broken stream is a drop (negative), got $rc", rc < 0)
@@ -236,7 +236,9 @@ class GatewayLinkTest {
         assertEquals(2, l.follow("r-1", 0) {}.first) // follow broken
         // Korean texts
         server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"pending","code":"1234"}"""))
-        assertEquals("이 폰은 아직 허용되지 않았습니다 (허용 대기 1234) → 이 말은 보내지 않았습니다 → 허용된 뒤 다시 보내 주세요.", runCatching { link().clean("r-1") }.exceptionOrNull()!!.message)
+        assertEquals("이 폰은 아직 허용되지 않았습니다 (허용 대기 1234) → 서버에 멈춤·치우기를 전하지 못했습니다 → 허용된 뒤 다시 보내 주세요.", runCatching { link().clean("r-1") }.exceptionOrNull()!!.message)
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"pending","code":"1234"}"""))
+        assertEquals("이 폰은 아직 허용되지 않았습니다 (허용 대기 1234) → 이 말은 보내지 않았습니다 → 허용된 뒤 다시 보내 주세요.", runCatching { link().upload("r-1", "t") }.exceptionOrNull()!!.message)
     }
 
     // ------------------------------------------------------------ ClaudeCode 의 고리 그대로
@@ -268,7 +270,7 @@ class GatewayLinkTest {
                 p.contains("/follow") -> {
                     val n = request.requestUrl!!.queryParameter("n")!!.toInt()
                     follows.add(n)
-                    followAnswer(follows.size, n)
+                    followAnswer(follows.size, n).also { if (it.headers["Content-Type"] == null) it.setHeader("Content-Type", "text/event-stream") }
                 }
                 p.endsWith("/stop") -> MockResponse().setResponseCode(204)
                 p.endsWith("/err") -> MockResponse().setBody(errBody)
@@ -403,5 +405,156 @@ class GatewayLinkTest {
         h.followAnswer = { call, _ -> MockResponse().setBody(if (call == 1) sse("APERITEXIT none") else sse(">$init", ">$result", "APERITEXIT 0")) }
         cc(h).resume("a-2", "again", 0, { false }) {}
         assertEquals(1, h.inputs) // none + nothing received: started once more with the same id
+    }
+
+    /** 끝난 값은 엔진 고리 전체를 지나 그 값으로 끝난다 (다시 붙지 않는다). `>` 줄에는 게이트웨이처럼 `id:` 를 붙인다. */
+    @Test
+    fun endValuesLeaveTheLoopWithTheirMessage() {
+        fun withIds(vararg data: String): String {
+            var n = 0
+            return data.joinToString("") { if (it.startsWith(">")) "id: ${++n}\ndata: $it\n\n" else "data: $it\n\n" }
+        }
+        val f = Fake()
+        f.followAnswer = { _, _ -> MockResponse().setBody(withIds(">$init", "APERITEXIT lost")) }
+        val lost = runCatching { cc(f).run("t", { false }) {} }.exceptionOrNull()
+        assertTrue(lost?.message, lost!!.message!!.contains("사라졌습니다"))
+        assertEquals("not followed again", 1, f.follows.size)
+        assertEquals("no second upload after APERITEXIT", 1, f.inputs)
+        assertEquals("no second start after APERITEXIT", 1, f.log.count { it.startsWith("start ") })
+
+        val g = Fake()
+        g.followAnswer = { _, _ -> MockResponse().setBody(withIds("APERITEXIT gone")) }
+        assertEquals(com.fidenit.kite.engine.GONE, runCatching { cc(g).resume("a-1", null, 3, { false }) {} }.exceptionOrNull()!!.message)
+        assertEquals(1, g.follows.size)
+
+        val h = Fake()
+        h.followAnswer = { _, _ -> MockResponse().setBody(withIds(">$init", "APERITEXIT 1")) }
+        h.errBody = "boom: not logged in"
+        val failed = runCatching { cc(h).run("t", { false }) {} }.exceptionOrNull()
+        assertTrue(failed?.message, failed!!.message!!.contains("답 없이") && failed.message!!.contains("boom: not logged in"))
+        assertEquals(1, h.follows.size)
+        assertEquals(1, h.inputs)
+        assertEquals(1, h.log.count { it.startsWith("start ") })
+        assertTrue(h.log.contains("GET /v1/runs/ID/err true"))
+        assertTrue(h.log.contains("DELETE /v1/runs/ID true"))
+
+        val k = Fake()
+        val err = """{"type":"result","is_error":true,"result":"model overloaded","usage":{}}"""
+        k.followAnswer = { _, _ -> MockResponse().setBody(withIds(">$init", ">$err", "APERITEXIT 0")) }
+        val isErr = runCatching { cc(k).run("t", { false }) {} }.exceptionOrNull()
+        assertEquals("Claude Code: model overloaded", isErr!!.message)
+        assertEquals(1, k.follows.size)
+        assertEquals(1, k.inputs)
+
+        // a stream that closes without APERITEXIT is still a drop: re-attached from n
+        val d = Fake()
+        d.followAnswer = { call, _ -> MockResponse().setBody(if (call == 1) withIds(">$init") else "id: 2\ndata: >$result\n\ndata: APERITEXIT 0\n\n") }
+        cc(d).run("t", { false }) {}
+        assertEquals(listOf(0, 1), d.follows.toList())
+    }
+
+    // ------------------------------------------------------------ review rv4b
+
+    @Test
+    fun redirectsAreNotFollowedAndAreRefusals() {
+        val other = MockWebServer()
+        other.start()
+        try {
+            server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", other.url("/v1/runs/r-1/input").toString()))
+            server.enqueue(MockResponse().setResponseCode(301).setHeader("Location", other.url("/v1/system").toString()))
+            server.enqueue(MockResponse().setResponseCode(307).setHeader("Location", other.url("/v1/enroll").toString()))
+            val l = link()
+            assertEquals(302, l.upload("r-1", "t").first)
+            assertTrue(runCatching { l.prepare("s") }.exceptionOrNull() is RemoteFail)
+            assertEquals("refused", Enroller(base(), com.fidenit.kite.engine.gatewayClient("0.2.0-pro")).enroll("i", tok, "m", "a", "b").status)
+            assertEquals(0, other.requestCount)
+        } finally {
+            other.shutdown()
+        }
+    }
+
+    @Test
+    fun a401MidFollowSaysTheTurnWasSent() {
+        val f = Fake()
+        f.followAnswer = { _, _ -> MockResponse().setResponseCode(401).setBody("""{"error":"unknown"}""") }
+        val e = runCatching { cc(f).run("t", { false }) {} }.exceptionOrNull()
+        assertTrue(e is SshFatal)
+        assertTrue(e!!.message!!, e.message!!.contains("보냈지만 결과를 받지 못해"))
+    }
+
+    @Test
+    fun anIdGapIsADropAndNoLineIsDeliveredTwice() {
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody("id: 1\ndata: >a\n\nid: 3\ndata: >c\n\ndata: APERITEXIT 0\n\n"))
+        val got = mutableListOf<String>()
+        assertEquals(-1, link().follow("r-1", 0) { got.add(it) }.first)
+        assertEquals(listOf(">a"), got)
+        // through the loop: re-attached from n=1, the repeated line 1 is not delivered twice
+        val f = Fake()
+        f.followAnswer = { call, n ->
+            MockResponse().setBody(
+                if (call == 1) "id: 1\ndata: >$init\n\nid: 3\ndata: >$result\n\n"
+                else "id: ${n + 1}\ndata: >$delta\n\nid: ${n + 2}\ndata: >$result\n\ndata: APERITEXIT 0\n\n",
+            )
+        }
+        val c = cc(f)
+        val fed = mutableListOf<String>()
+        c.onDataLine = { fed.add(it) }
+        c.run("t", { false }) {}
+        assertEquals(listOf(0, 1), f.follows.toList())
+        assertEquals(listOf(init, delta, result), fed)
+    }
+
+    @Test
+    fun answersThatAreNotTheGatewaysAreRefusals() {
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "text/html").setBody("<html>login</html>"))
+        assertEquals(2, link().follow("r-1", 0) {}.first)
+        server.enqueue(MockResponse().setResponseCode(200).setBody("<html>login</html>"))
+        assertTrue(link().upload("r-1", "t").first > 0)
+        server.enqueue(MockResponse().setResponseCode(200).setBody("<html>login</html>"))
+        assertTrue(link().start("r-1") {}.first > 0)
+    }
+
+    @Test
+    fun aBadBaseUrlIsAConfigurationErrorNotADrop() {
+        val l = GatewayLink("not a url", { tok })
+        val e = runCatching { l.upload("r-1", "t") }.exceptionOrNull()
+        assertTrue("$e", e is SshFatal)
+        val h = GatewayLink(base(), { "apd_bad\nvalue" })
+        assertTrue(runCatching { h.clean("r-1") }.exceptionOrNull() is SshFatal)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun anOverlongSseLineIsLost() {
+        val got = mutableListOf<String>()
+        val r = runCatching { com.fidenit.kite.engine.readSseEvents(Buffer().writeUtf8("data: >ok\n\ndata: >" + "x".repeat(200) + "\n\n"), maxLine = 100) { _, d -> got.add(d) } }
+        assertTrue(r.exceptionOrNull() is com.fidenit.kite.engine.SseTooLong)
+        assertEquals(listOf(">ok"), got)
+    }
+
+    @Test
+    fun followFailuresMapToRetryOrBroken() {
+        // 429 and 503 are drops (re-attach), three 500s in a row end the turn with the gateway's own text
+        val f = Fake()
+        f.followAnswer = { call, _ -> if (call == 1) MockResponse().setResponseCode(429) else MockResponse().setResponseCode(500).setBody("""{"error":"internal"}""") }
+        val e = runCatching { cc(f).run("t", { false }) {} }.exceptionOrNull()
+        assertTrue(e!!.message!!, e.message!!.contains("세 번 이어서 읽지 못했습니다"))
+        assertEquals(4, f.follows.size)
+        // 413 at upload: the gateway's text, not "folder permissions"
+        val g = Fake()
+        g.inputPlan = { MockResponse().setResponseCode(413).setBody("""{"error":"too_large"}""") }
+        val u = runCatching { cc(g).run("t", { false }) {} }.exceptionOrNull()
+        assertTrue(u!!.message!!, u.message!!.contains("서버가 이 말을 받지 않았습니다 (HTTP 413 too_large)"))
+    }
+
+    @Test
+    fun lostWithNoLineReceivedRunsExactlyOnce() {
+        val f = Fake()
+        f.followAnswer = { _, _ -> MockResponse().setBody(sse("APERITEXIT lost")) }
+        val e = runCatching { cc(f).run("t", { false }) {} }.exceptionOrNull()
+        assertTrue(e!!.message!!, e.message!!.contains("사라졌습니다"))
+        assertEquals(1, f.inputs)
+        assertEquals(1, f.log.count { it.startsWith("start ") })
+        assertEquals(1, f.follows.size)
     }
 }
