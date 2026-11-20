@@ -196,7 +196,7 @@ class KiteViewModelJevTest {
         Store(app).host = "127.0.0.1"
         Store(app).port = "1" // nothing listens here: the real sshd of this machine is never touched
         Store(app).user = "nobody"
-        Journal(files).writeInflight(Inflight("ssh", "20261120-013000-a1b2", "<input>x</input>", "여행 짐", board, 1L))
+        Journal(files).writeInflight(Inflight("ssh", "20261120-013000-a1b2", "<input>x</input>", "여행 짐", board, 1L, -1, "nobody@127.0.0.1:1")) // the record says which server it ran on: the one set above
         val vm = vm("k") // resumes; it never reaches a server, the point is that it does not call Jev
         assertTrue(vm.busy)
         repeat(20) {
