@@ -290,10 +290,11 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
 
     /**
      * 앱이 보드를 저장하고 기록을 지운 뒤에 부른다 (그 전에 치우면 앱이 그 사이에 꺼졌을 때 턴이 다시 돌 수 있다).
-     * 5초 안에 못 하면 치울 목록에 둔다. 치웠으면 참. 시간이 넘어도 연결은 끊지 않는다: 그 연결을 다음 턴이 쓰고 있을 수 있다.
+     * 5초 안에 못 하면 치울 목록에 둔다. 치웠으면 참. 짧은 명령 둘이 5초를 넘겼다면 그 연결은 다음 턴에도 못 쓴다: 연결을 끊어
+     * 다음 턴이 바로 다시 붙게 한다 (그대로 두면 다음 턴이 죽은 연결에서 1분쯤 매달린다; 끊긴 연결은 턴이 스스로 다시 붙어 받은 줄 다음부터 이어 읽는다).
      */
     fun cleanRun(id: String): Boolean {
-        val ok = bounded(5000, cut = false) {
+        val ok = bounded(5000) {
             // 멈춤이 닿지 않았던 실행은 먼저 멈춤 요청을 적는다. 감싼 bash 가 끝내기를 기다리지 않는다 (돌고 있는 실행을 치워도 멈춤 요청은 남아 그 실행은 끝난다)
             if (leftover.contains(id) && !ended.contains(id)) sendStop(id, java.util.concurrent.atomic.AtomicBoolean(), wait = false)
             ssh.run(cmds.clean(id))
@@ -367,10 +368,10 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
     }
 
     /**
-     * 서버에 짧은 명령을 `ms` 안에 돌린다. 못 하면 거짓을 돌려준다. `cut` 이 참이면 그때 연결을 끊어 막힌 곳을 풀어 준다
-     * (반쯤 죽은 연결에서 오래 매달리지 않으려고); 거짓이면 연결은 그대로 두고 돌아온다 (다른 턴이 같은 연결을 쓰고 있을 수 있을 때).
+     * 서버에 짧은 명령을 `ms` 안에 돌린다. 못 하면 연결을 끊어 막힌 곳을 풀고 거짓을 돌려준다 (반쯤 죽은 연결에서 오래 매달리지 않으려고:
+     * 같은 연결을 쓰는 턴은 끊긴 것을 바로 알고 다시 붙는다).
      */
-    private fun bounded(ms: Long, cut: Boolean = true, work: () -> Unit): Boolean {
+    private fun bounded(ms: Long, work: () -> Unit): Boolean {
         var ok = false
         val t = Thread {
             try {
@@ -384,7 +385,6 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
         }
         t.join(ms)
         if (t.isAlive) {
-            if (!cut) return false
             ssh.close()
             t.join(500)
             return false
