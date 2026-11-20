@@ -1,6 +1,6 @@
 // 보드를 여러 칸의 줄로 그린다 (memory/specs/aperit-pro-grid-dock-v1.md §A2-A4). 줄 나누기는 core/BoardLayout.kt.
 // 한 줄의 카드는 폭을 똑같이 나누고 높이가 같다. 글자는 줄이지 않는다.
-// 줄 안에는 BoxWithConstraints·SubcomposeLayout·지연 목록을 넣지 않는다 (같은 높이를 재는 intrinsic 측정이 그것들에서 실패한다).
+// 줄 안에서는 카드마다 실제 높이를 재고 가장 높은 값으로 다시 그린다 (EqualRow). 줄은 intrinsic 측정을 쓰지 않는다.
 package com.fidenit.kite.ui
 
 import androidx.compose.animation.core.Animatable
@@ -8,13 +8,12 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -41,13 +40,16 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsPropertyKey
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.fidenit.kite.KiteViewModel
@@ -135,17 +137,54 @@ fun BoardGrid(vm: KiteViewModel, cards: List<Card>, rev: Int, state: LazyListSta
             verticalArrangement = Arrangement.spacedBy(Dim.cardGap),
         ) {
             items(rows, key = { it.first().card.id }) { row ->
-                // 여러 장이면 가장 높은 카드에 맞춰 같은 높이 (혼자면 잴 필요가 없다)
-                val rowMod = if (row.size > 1) Modifier.height(IntrinsicSize.Min) else Modifier
-                val cardW = BoardLayout.cardWidth(row.size, inner, sizes).dp
-                Row(Modifier.fillMaxWidth().then(rowMod).testTag("board-row"), horizontalArrangement = Arrangement.spacedBy(Dim.cardGap)) {
-                    for (cell in row) {
-                        val m = Modifier.weight(1f).fillMaxHeight().flashMark(cell.card.id in flashing) { flash.value }
-                        CompositionLocalProvider(LocalCardWidth provides cardW) {
-                            if (cell.compact) AskCompact(vm, cell.card, m) else CardView(vm, cell.card, rev, m)
+                val draw: @Composable (Cell, Modifier) -> Unit = { cell, m -> if (cell.compact) AskCompact(vm, cell.card, m) else CardView(vm, cell.card, rev, m) }
+                if (row.size == 1) {
+                    // 혼자면 잴 필요가 없다
+                    val cell = row[0]
+                    Row(Modifier.fillMaxWidth().testTag("board-row")) {
+                        CompositionLocalProvider(LocalCardWidth provides BoardLayout.cardWidth(1, inner, sizes).dp) {
+                            draw(cell, Modifier.weight(1f).flashMark(cell.card.id in flashing) { flash.value })
                         }
                     }
+                } else {
+                    EqualRow(row, Modifier.fillMaxWidth().testTag("board-row")) { cell, measuring ->
+                        draw(cell, if (measuring) Modifier else Modifier.flashMark(cell.card.id in flashing) { flash.value })
+                    }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 여러 장이 나란한 줄: 카드마다 제 폭에서 실제 높이를 먼저 재고, 가장 높은 값으로 모든 카드를 그린다 (같은 높이, 사이 cardGap).
+ * intrinsic 측정(IntrinsicSize.Min)은 글꼴 2.0 에서 실제보다 한 줄쯤 낮게 나와 글이 잘렸다 (a06). 재는 쪽은 그리지 않고 semantics 도 없다.
+ */
+@Composable
+private fun EqualRow(row: List<Cell>, modifier: Modifier, card: @Composable (Cell, measuring: Boolean) -> Unit) {
+    SubcomposeLayout(modifier) { constraints ->
+        val gap = Dim.cardGap.roundToPx()
+        val n = row.size
+        val free = (constraints.maxWidth - gap * (n - 1)).coerceAtLeast(0)
+        val widths = IntArray(n) { i -> free / n + if (i < free % n) 1 else 0 }
+        val probe = subcompose("measure") {
+            row.forEachIndexed { i, cell ->
+                Box(Modifier.clearAndSetSemantics {}) {
+                    CompositionLocalProvider(LocalCardWidth provides widths[i].toDp()) { card(cell, true) }
+                }
+            }
+        }
+        val h = probe.mapIndexed { i, m -> m.measure(Constraints(minWidth = widths[i], maxWidth = widths[i])).height }.maxOrNull() ?: 0
+        val real = subcompose("draw") {
+            row.forEachIndexed { i, cell ->
+                CompositionLocalProvider(LocalCardWidth provides widths[i].toDp()) { card(cell, false) }
+            }
+        }.mapIndexed { i, m -> m.measure(Constraints.fixed(widths[i], h)) }
+        layout(constraints.maxWidth, h) {
+            var x = 0
+            real.forEachIndexed { i, p ->
+                p.place(x, 0)
+                x += widths[i] + gap
             }
         }
     }
