@@ -320,12 +320,13 @@ class DetachedCommands(private val cfg: EngineConfig) {
 
     /**
      * 치우기: `.in .out .err .pid` 를 지운다. 아직 도는 실행(`.pid` 가 있고 `.exit` 가 없다)이면 멈춤 요청 `.stop` 을 남겨 감싼 bash 가 끝내게 하고,
-     * 아니면 `.stop` 도 지운다. `.exit` 는 남긴다 (이레 뒤 정리에서 지워진다): 이미 끝나 치워진 실행에 다시 붙으면
+     * 아니면 `.stop` 도 지운다. `.in` 을 맨 먼저 지운다 (`.stop` 을 지운 뒤 늦게 닿은 시작이 `.in` 을 보고 띄우지 않게). `.exit` 는 남긴다 (이레 뒤 정리에서 지워진다): 이미 끝나 치워진 실행에 다시 붙으면
      * `APERITEXIT gone` 이 나오고, 같은 말이 처음부터 다시 돌지 않는다.
      */
     fun clean(id: String): String = serverShell(
-        "if [ -s ${path(id, "pid")} ] && [ ! -s ${path(id, "exit")} ]; then : > ${path(id, "stop")}; else rm -f ${path(id, "stop")}; fi; " +
-            "rm -f ${path(id, "in")} ${path(id, "out")} ${path(id, "err")} ${path(id, "pid")}",
+        "rm -f ${path(id, "in")}; " +
+            "if [ -s ${path(id, "pid")} ] && [ ! -s ${path(id, "exit")} ]; then : > ${path(id, "stop")}; else rm -f ${path(id, "stop")}; fi; " +
+            "rm -f ${path(id, "out")} ${path(id, "err")} ${path(id, "pid")}",
     )
 
     /** 표준 오류 끝부분 (치우기 전에 읽는다). */
