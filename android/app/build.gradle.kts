@@ -88,6 +88,8 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     // Claude API: 공식 SDK. pro 는 baseUrl 을 중계 서버로 바꿔 같은 코드로 부른다.
     implementation("com.anthropic:anthropic-java:3.3.0")
+    // pro 의 게이트웨이 연결. 위 SDK 가 이미 데려오는 OkHttp 와 같은 판 (둘째 판을 들이지 않는다).
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

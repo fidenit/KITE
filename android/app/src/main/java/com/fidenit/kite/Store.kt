@@ -7,7 +7,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
 import kotlin.reflect.KProperty
 
-class Store(context: Context) {
+class Store(context: Context) : DeviceStore {
     private val prefs: SharedPreferences = try {
         EncryptedSharedPreferences.create(
             "kite-settings",
@@ -36,6 +36,12 @@ class Store(context: Context) {
 
     // APERIT Pro: 중계 서버가 이 기기에 내준 토큰 (구독을 확인하면 받는다)
     var relayToken by Text()
+
+    // APERIT Pro: 게이트웨이에 등록한 이 기기의 이름표·비밀 글(처음 켤 때 앱이 만든다)과 마지막으로 받은 상태. signature() 에는 넣지 않는다.
+    override var deviceId by Text()
+    override var deviceSecret by Text()
+    override var proStatus by Text()
+    override var proCode by Text()
 
     // 서버
     var host by Text()

@@ -192,10 +192,11 @@ const val GONE = "__gone"
 /** 앱 쪽이 이 엔진을 버렸다 (화면이 닫혀 뷰모델이 없어졌다): 서버의 실행은 그대로 두고 따라 읽기만 그만둔다. */
 const val ABANDONED = "__abandoned"
 
-class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
+class ClaudeCode(private val ssh: Link, private val cfg: EngineConfig) : Runner {
+    constructor(ssh: Ssh, cfg: EngineConfig) : this(SshLink(ssh, cfg), cfg)
+
     override val label = "Claude Code"
 
-    private val cmds = DetachedCommands(cfg)
     private val waker = Waker()
     private val leftover = CopyOnWriteArrayList<String>()
 
@@ -261,34 +262,30 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
     /** 다시 붙기를 기다리는 중이면 바로 시도한다 (앱이 앞으로 돌아왔을 때). */
     fun wake() = waker.wake()
 
-    private fun shell(script: String): String = serverShell(script)
-
-    private val claude: String get() = cfg.claude.trim().ifEmpty { "claude" }
-
     /** 서버의 Claude Code 버전. 없으면 예외. */
-    fun version(): String = ssh.run(shell("$claude --version")).trim().lineSequence().lastOrNull().orEmpty()
+    fun version(): String = ssh.version()
 
     /** 서버의 환경: (운영체제, 홈 폴더). */
-    fun where(): Pair<String, String> {
-        val lines = ssh.run("uname -sm; echo \"\$HOME\"").trim().lines()
-        return (lines.getOrNull(0) ?: "") to (lines.getOrNull(1) ?: "~")
-    }
+    fun where(): Pair<String, String> = ssh.where()
 
     /** 지시문을 서버에 올리고 기억 보관함 폴더를 만든다. */
     fun prepare(system: String) {
-        ssh.run("mkdir -p ~/.kite/vault/기억 && cat > ~/.kite/system.txt", system)
+        ssh.prepare(system)
     }
+
+    /** 서버에 닿는다 (게이트웨이는 할 일 없음). */
+    fun connect() = ssh.connect()
 
     /** 늘 기억하고 있는 것 (`기억/핵심.md`). 없으면 빈 글. */
     fun core(): String = try {
-        ssh.run("cat ~/.kite/vault/기억/핵심.md 2>/dev/null || true").trim()
+        ssh.core().trim()
     } catch (_: Exception) {
         ""
     }
 
     /** 서버에서 떼어 돌린 실행의 파일을 치운다. */
     fun clean(id: String) {
-        ssh.run(cmds.clean(id))
+        ssh.clean(id)
     }
 
     /**
@@ -300,7 +297,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
         val ok = bounded(5000) {
             // 멈춤이 닿지 않았던 실행은 먼저 멈춤 요청을 적는다. 감싼 bash 가 끝내기를 기다리지 않는다 (돌고 있는 실행을 치워도 멈춤 요청은 남아 그 실행은 끝난다)
             if (leftover.contains(id) && !ended.contains(id)) sendStop(id, java.util.concurrent.atomic.AtomicBoolean(), wait = false)
-            ssh.run(cmds.clean(id))
+            ssh.clean(id)
         }
         if (ok) {
             leftover.remove(id)
@@ -339,7 +336,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
             if (id == except) continue
             if (bounded(8000) {
                     sendStop(id, java.util.concurrent.atomic.AtomicBoolean(), wait = false)
-                    ssh.run(cmds.clean(id))
+                    ssh.clean(id)
                 }
             ) {
                 leftover.remove(id)
@@ -357,7 +354,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
      */
     private fun sendStop(id: String, sent: java.util.concurrent.atomic.AtomicBoolean, wait: Boolean) {
         try {
-            val (code, err) = ssh.exec(cmds.stop(id), null) {
+            val (code, err) = ssh.stop(id) {
                 if (it.trim() == Detached.STOP_SENT) {
                     sent.set(true)
                     if (!wait) throw StopSent()
@@ -536,7 +533,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
                     }
                     if (phase == Phase.UPLOAD) {
                         uploadTried = true
-                        val (code, err) = ssh.exec(cmds.upload(id), turnText) {}
+                        val (code, err) = ssh.upload(id, turnText)
                         when (val st = Detached.judgeUpload(code, err)) {
                             is Step.Ok -> phase = Phase.START
                             is Step.Retry -> throw java.io.IOException("upload cut")
@@ -546,7 +543,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
                     if (stopped()) continue
                     if (phase == Phase.START) {
                         val out = mutableListOf<String>()
-                        val (code, err) = ssh.exec(cmds.start(id), null) { out.add(it) }
+                        val (code, err) = ssh.start(id) { out.add(it) }
                         when (val st = Detached.judgeStart(code, out, err, id)) {
                             is Step.Ok -> {
                                 phase = Phase.FOLLOW
@@ -612,7 +609,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
                 send(Ev.Activity(""))
             }
             try {
-                val (rc, _) = ssh.exec(cmds.follow(id, received), null, completeLinesOnly = true) { raw ->
+                val (rc, _) = ssh.follow(id, received) { raw ->
                     lastLine = System.currentTimeMillis()
                     attempt = 0
                     when (val c = Detached.classify(raw)) {
@@ -649,12 +646,12 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
             if (!cleanAfterRun) return
             // 멈춤을 누른 뒤라면 누른 때부터 10초쯤 안에 돌아가야 한다: 남은 시간만 쓰고, 모자라면 치울 목록에 두어 다음에 치운다
             val limit = if (stopAt == 0L) 5000L else minOf(5000L, stopAt + 10_000 - System.currentTimeMillis())
-            if (limit < 500 || !bounded(limit) { ssh.run(cmds.clean(id)) }) addToClean(id)
+            if (limit < 500 || !bounded(limit) { ssh.clean(id) }) addToClean(id)
         }
 
         private fun errTail(): String {
             var t = ""
-            bounded(5000) { t = ssh.run(cmds.errTail(id)).trim().takeLast(300) }
+            bounded(5000) { t = ssh.errTail(id).trim().takeLast(300) }
             return t
         }
 
@@ -696,6 +693,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
         private fun startFailure(kind: String, detail: String): String = when (kind) {
             "cd" -> "서버에서 작업 폴더(${cfg.dir.trim().ifEmpty { "~" }})로 갈 수 없습니다 → 이번 말은 실행되지 않았습니다 → 설정에서 작업 폴더를 확인해 주세요."
             "noin" -> "서버에 말이 제대로 올라가지 않았습니다 → 이번 말은 실행되지 않았습니다 → 다시 보내 주세요."
+            "busy" -> "서버에서 이미 다른 말이 여럿 돌고 있습니다 → 이번 말은 실행되지 않았습니다 → 잠시 뒤 다시 보내 주세요."
             else -> "서버에서 Claude Code 를 시작하지 못했습니다 → 이번 말은 실행되지 않았습니다 → 서버를 확인한 뒤 다시 보내 주세요.${if (detail.isNotEmpty()) " ($detail)" else ""}"
         }
     }
