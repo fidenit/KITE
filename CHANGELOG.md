@@ -4,6 +4,12 @@ APERIT was called KITE up to version 0.3; the entries below 0.4.0 use the name o
 
 The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://github.com/fidenit/patet/blob/main/CHANGELOG.md).
 
+## Android 0.3.2 (not released yet)
+
+- Everything on the screen is smaller: text, cards, buttons, the top bar and the bottom bar (body text 14 sp, buttons 32 dp, the bottom row 44 dp, text boxes 44 dp). All sizes are in one file, `android/app/src/main/java/com/fidenit/kite/ui/Dim.kt`.
+- The keyboard can be put away: tap anywhere that is not a text box or a button, send a message, or press Done. In a form card the keyboard key moves to the next box and is Done on the last one; the card's Send puts the keyboard away too. Single-line boxes in Settings have Done.
+- APERIT Pro tells the server the phone's screen size, density and font scale in its app header (`0.3.2-pro_w411h914d2.63f1.00`), so the server log shows what the screen looked like.
+
 ## Android 0.3.1 (not released yet)
 
 - The input box and the buttons beside it (Send, Stop, Talk) have the same height.
