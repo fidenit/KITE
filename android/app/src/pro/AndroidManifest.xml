@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- APERIT Pro 만: 이 폰의 등록 비밀 글이 들어 있는 저장소를 클라우드 백업과 기기 간 옮기기에서 뺀다 (Android 12 이상). 12 미만은 allowBackup="false" 가 맡는다. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:dataExtractionRules="@xml/data_extraction_rules" />
+</manifest>

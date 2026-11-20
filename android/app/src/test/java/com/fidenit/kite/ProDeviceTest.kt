@@ -35,7 +35,11 @@ class ProDeviceTest {
     @After
     fun down() = server.shutdown()
 
-    private fun dev(m: Mem, ticket: String = "") = ProDevice(m, Enroller(server.url("/").toString()), { Triple("Pixel 8", "14", "0.2.0") }, ticket)
+    /** 시험의 시계: 기다림 규칙을 건너뛰려면 앞으로 돌린다. */
+    private var clock = 1_000_000L
+
+    private fun dev(m: Mem, ticket: String = "", gap: Long = 0, model: String = "Pixel 8") =
+        ProDevice(m, Enroller(server.url("/").toString()), { Triple(model, "14", "0.2.0") }, ticket, { clock }, gap)
 
     @Test
     fun theBuildTicketIsSentOnlyUntilApproved() {
@@ -135,16 +139,137 @@ class ProDeviceTest {
     }
 
     @Test
-    fun rateLimitKeepsTheLastStatusAndNetworkErrorsThrow() {
+    fun rateLimitKeepsTheLastStatusAndWaitsBeforeAskingAgain() {
         val m = Mem().apply { deviceId = "x"; deviceSecret = "apd_s"; proStatus = "pending"; proCode = "4821" }
         val d = dev(m)
-        server.enqueue(MockResponse().setResponseCode(429))
+        server.enqueue(MockResponse().setResponseCode(429).setBody("""{"error":"rate_limited"}"""))
         assertEquals("limited", d.check().status)
         assertEquals("pending", m.proStatus)
         assertEquals("4821", m.proCode)
+        // within the back-off (15 s) nothing is asked, whatever the callers do
+        repeat(5) { assertEquals("limited", d.check().status) }
+        clock += 14_000
+        assertEquals("limited", d.check().status)
+        assertEquals(1, server.requestCount)
+        clock += 2_000
+        server.enqueue(MockResponse().setResponseCode(429))
+        assertEquals("limited", d.check().status)
+        assertEquals(2, server.requestCount)
+        clock += 20_000 // second back-off is 30 s
+        assertEquals("limited", d.check().status)
+        assertEquals(2, server.requestCount)
+        // offline: no exception, status offline, the stored state is kept
         server.shutdown()
-        assertTrue(runCatching { d.check() }.exceptionOrNull() is java.io.IOException)
+        clock += 60_000
+        assertEquals("offline", d.check().status)
         assertEquals("pending", m.proStatus)
+    }
+
+    @Test
+    fun rapidCallsMakeOneExchange() {
+        val m = Mem()
+        val d = dev(m, gap = 10_000)
+        server.enqueue(MockResponse().setBody("""{"status":"approved","code":""}"""))
+        val threads = (1..8).map { Thread { d.check() } }
+        threads.forEach { it.start() }
+        threads.forEach { it.join() }
+        repeat(10) { assertEquals("approved", d.check().status) }
+        assertEquals(1, server.requestCount)
+        clock += 10_001
+        server.enqueue(MockResponse().setBody("""{"status":"approved","code":""}"""))
+        assertEquals("approved", d.check().status)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun enrollRefusalsAreNotRetriedFastAndFieldsAreCleaned() {
+        for (code in listOf(400, 413)) {
+            val m = Mem()
+            val d = dev(m)
+            server.enqueue(MockResponse().setResponseCode(code).setBody("""{"error":"bad_request"}"""))
+            assertEquals("refused", d.check().status)
+            clock += 3_600_000
+            assertEquals("refused", d.check().status) // never asked again in this run
+        }
+        val m5 = Mem()
+        val d5 = dev(m5)
+        server.enqueue(MockResponse().setResponseCode(500).setBody("""{"error":"internal"}"""))
+        assertEquals("error", d5.check().status)
+        assertEquals("error", d5.check().status) // back-off
+        assertEquals(3, server.requestCount)
+        clock += 16_000
+        server.enqueue(MockResponse().setBody("""{"status":"pending","code":"123456"}"""))
+        assertEquals("pending", d5.check().status)
+        repeat(4) { server.takeRequest() }
+        // a model name with a control character still enrolls (cleaned before sending)
+        val mc = Mem()
+        server.enqueue(MockResponse().setBody("""{"status":"pending","code":"654321"}"""))
+        assertEquals("pending", dev(mc, model = "Pixel\u0000 8\u001f\u007f" + "x".repeat(300)).check().status)
+        val sent = JSONObject(server.takeRequest().body.readUtf8()).getString("model")
+        assertEquals(("Pixel 8" + "x".repeat(300)).take(200), sent)
+        assertEquals("Pixel 8", com.fidenit.kite.engine.cleanField("Pixel\n 8"))
+    }
+
+    @Test
+    fun twoThreadsAtFirstLaunchMakeOneIdentity() {
+        repeat(20) {
+            val m = Mem()
+            val d = dev(m)
+            val a = Thread { d.ensure() }
+            val b = Thread { d.ensure() }
+            a.start(); b.start(); a.join(); b.join()
+            val id = m.deviceId
+            val secret = m.deviceSecret
+            d.ensure()
+            assertEquals(id, m.deviceId)
+            assertEquals(secret, m.deviceSecret)
+            assertTrue(secret.startsWith("apd_"))
+        }
+    }
+
+    @Test
+    fun aSecond409DoesNotMakeIdentitiesForever() {
+        val m = Mem()
+        val d = dev(m)
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"conflict"}"""))
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"conflict"}"""))
+        assertEquals("conflict", d.check().status)
+        val id = m.deviceId
+        clock += 3_600_000
+        assertEquals("conflict", d.check().status)
+        assertEquals(id, m.deviceId)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun aTicketWithoutVerdictIsSentTwiceAtMost() {
+        val m = Mem()
+        val d = dev(m, "tkt-9")
+        server.enqueue(MockResponse().setBody("""{"status":"pending","code":"111110"}"""))
+        repeat(2) {
+            server.enqueue(MockResponse().setResponseCode(401))
+            server.enqueue(MockResponse().setBody("""{"status":"pending","code":"11111$it"}"""))
+        }
+        d.check() // enroll #1 with ticket (no verdict)
+        d.check() // me 401 -> enroll #2 with ticket (no verdict)
+        d.check() // me 401 -> enroll #3 without ticket
+        val bodies = (1..5).map { server.takeRequest() }.filter { it.path == "/v1/enroll" }.map { JSONObject(it.body.readUtf8()) }
+        assertEquals(listOf(true, true, false), bodies.map { it.has("ticket") })
+    }
+
+    @Test
+    fun memoryOnlyStoreNeverEnrolls() {
+        val m = object : DeviceStore {
+            override var deviceId = ""
+            override var deviceSecret = ""
+            override var proStatus = ""
+            override var proCode = ""
+            override var ticketUsed = ""
+            override val memoryOnly = true
+        }
+        val d = ProDevice(m, Enroller(server.url("/").toString()), { Triple("", "", "") })
+        assertEquals("nostore", d.check().status)
+        assertEquals(0, server.requestCount)
     }
 
     @Test

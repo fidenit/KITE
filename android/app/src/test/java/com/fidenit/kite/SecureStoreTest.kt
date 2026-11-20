@@ -2,6 +2,7 @@ package com.fidenit.kite
 
 import android.content.SharedPreferences
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -13,7 +14,7 @@ class SecureStoreTest {
     @get:Rule
     val timeout: Timeout = Timeout.seconds(60)
 
-    private class Rig(var failOpens: Int, val readFails: Boolean = false) {
+    private class Rig(var failOpens: Int, val readFails: Boolean = false, val error: () -> Exception = { java.security.GeneralSecurityException("keyset") }) {
         var opens = 0
         var wipes = 0
         var plains = 0
@@ -28,11 +29,12 @@ class SecureStoreTest {
             pro,
             open = {
                 opens++
-                if (failOpens-- > 0) throw java.security.GeneralSecurityException("keyset") else enc
+                if (failOpens-- > 0) throw error() else enc
             },
             wipe = { wipes++ },
             plain = { plains++; plain },
             memory = { memories++; mem },
+            pause = {},
         )
     }
 
@@ -45,18 +47,47 @@ class SecureStoreTest {
 
     @Test
     fun proWipesAnUnreadableStoreAndStartsEmptyNeverPlain() {
-        val r = Rig(1)
+        // a failure that goes away is retried, never wiped
+        val r = Rig(2)
         assertSame(r.enc, r.open(true))
-        assertEquals(1, r.wipes)
-        assertEquals(0, r.plains)
-        // opens but values cannot be decrypted (restored onto another phone): wiped, and if still unreadable, memory only
+        assertEquals(3, r.opens)
+        assertEquals(0, r.wipes)
+        // still unreadable after 3 tries (restored onto another phone): wiped once, then opened empty
+        val w = Rig(3)
+        assertSame(w.enc, w.open(true))
+        assertEquals(1, w.wipes)
+        assertEquals(0, w.plains)
+        // opens but values cannot be decrypted: wiped, and if still unreadable, memory only
         val u = Rig(0, readFails = true)
         assertSame(u.mem, u.open(true))
         assertEquals(1, u.wipes)
         assertEquals(0, u.plains)
-        val v = Rig(5)
+        val v = Rig(9)
         assertSame(v.mem, v.open(true))
         assertEquals(0, v.plains)
+    }
+
+    @Test
+    fun aTransientKeystoreErrorIsNeverWiped() {
+        val r = Rig(9, error = { java.security.KeyStoreException("keystore busy") })
+        assertSame(r.mem, r.open(true))
+        assertEquals(0, r.wipes)
+        assertEquals(3, r.opens)
+        val p = Rig(9, error = { java.security.ProviderException("transient") })
+        assertSame(p.mem, p.open(true))
+        assertEquals(0, p.wipes)
+    }
+
+    @Test
+    fun whichFailuresCountAsUnreadable() {
+        assertTrue(unreadable(javax.crypto.AEADBadTagException("tag")))
+        assertTrue(unreadable(java.security.InvalidKeyException("key")))
+        assertTrue(unreadable(SecurityException("Could not decrypt value")))
+        assertTrue(unreadable(RuntimeException("wrap", java.security.UnrecoverableKeyException("x"))))
+        assertFalse(unreadable(java.security.KeyStoreException("busy")))
+        assertFalse(unreadable(java.security.ProviderException("p")))
+        assertFalse(unreadable(IllegalStateException("s")))
+        assertFalse(unreadable(java.io.IOException("io")))
     }
 
     @Test
