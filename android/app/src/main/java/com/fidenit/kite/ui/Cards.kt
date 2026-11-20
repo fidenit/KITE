@@ -64,7 +64,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
@@ -97,13 +96,13 @@ private fun named(c: String): Color = when (c.trim()) {
 @Composable
 private fun Dot(color: Color) = Box(Modifier.size(Dim.dot).clip(CircleShape).background(color))
 
-/** 본문: 좁은 카드에서도 같은 크기, 문단 줄바꿈. */
+/** 본문: 좁은 카드에서도 같은 크기. 줄바꿈은 기본값 (Heading/Paragraph 는 font 2.0 에서 줄 높이를 재는 값과 그린 높이가 한 줄 달라 글이 잘렸다, a06). */
 @Composable
-internal fun Body(s: String, color: Color = C.text, modifier: Modifier = Modifier) = Text(s, color = color, fontSize = Dim.body, lineHeight = Dim.bodyLine, style = LocalTextStyle.current.merge(TextStyle(lineBreak = LineBreak.Paragraph)), modifier = modifier)
+internal fun Body(s: String, color: Color = C.text, modifier: Modifier = Modifier) = Text(s, color = color, fontSize = Dim.body, lineHeight = Dim.bodyLine, modifier = modifier)
 
-/** 카드 제목: 말줄임 없이 줄을 바꾼다 (제목 줄바꿈). */
+/** 카드 제목: 말줄임 없이 줄을 바꾼다 (기본 줄바꿈, 위 Body 와 같은 까닭). */
 @Composable
-internal fun CardTitle(s: String) = Text(s, color = C.text, fontSize = Dim.title, fontWeight = FontWeight.Bold, style = LocalTextStyle.current.merge(TextStyle(lineBreak = LineBreak.Heading)))
+internal fun CardTitle(s: String) = Text(s, color = C.text, fontSize = Dim.title, fontWeight = FontWeight.Bold)
 
 /** 카드 하나. `rev` 는 보드가 바뀌었을 때 다시 그리게 하려고 받는다. `modifier` 는 카드 바탕(`card`)에 붙는다 (줄 안의 폭·높이, 반짝임). */
 @Composable
@@ -312,7 +311,7 @@ private fun MetricLine(value: String, unit: String, delta: String) {
                 if (unit.isNotEmpty() && delta.isNotEmpty()) append("  ")
                 if (delta.isNotEmpty()) withStyle(SpanStyle(color = deltaColor)) { append(delta) }
             }
-            Text(rest, fontSize = Dim.metricDelta, style = LocalTextStyle.current.merge(TextStyle(lineBreak = LineBreak.Paragraph)))
+            Text(rest, fontSize = Dim.metricDelta)
         }
     }
 }
