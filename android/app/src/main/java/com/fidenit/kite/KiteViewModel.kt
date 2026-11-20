@@ -15,6 +15,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.fidenit.kite.core.Author
 import com.fidenit.kite.core.Board
+import com.fidenit.kite.core.BoardPoint
 import com.fidenit.kite.core.Card
 import com.fidenit.kite.core.Chunk
 import com.fidenit.kite.core.Item
@@ -177,6 +178,12 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     /** 턴 뒤 판단이 매긴 카드별 중요도(0~1). 화면은 기다리는 카드 다음에 이 순서(세 단계)로 놓는다. */
     var importance by mutableStateOf<Map<String, Double>>(emptyMap())
         private set
+
+    // --- board pointing: the grid (A) shows it, the dock (C) asks for it ---
+    var dockedId by mutableStateOf<String?>(null)          // card shown in the dock; the board leaves it out
+    var boardPoint by mutableStateOf<BoardPoint?>(null)     // scroll to + flash these cards once (new seq = new request)
+    fun dockAsk(id: String) { dockedId = id }              // C: real picker call
+
     private var lines = LineStream()
     private var eventTimer: Job? = null
 

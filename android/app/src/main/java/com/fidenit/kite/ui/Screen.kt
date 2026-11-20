@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -208,6 +209,7 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
     val rev = vm.rev // 보드가 바뀌면 다시 그린다
     val board = vm.board
     val english = vm.store.lang == "en"
+    val listState = rememberLazyListState() // 보드 목록의 스크롤 (가리키기가 움직인다)
     Column(Modifier.fillMaxSize()) {
         // 주제
         Row(Modifier.fillMaxWidth().testTag("top-bar").padding(start = Dim.topPadH, end = Dim.topPadH, top = Dim.topPadTop, bottom = Dim.topPadBottom), verticalAlignment = Alignment.CenterVertically) {
@@ -246,12 +248,10 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
             )
         }
 
-        // 카드: 답을 기다리는 것이 맨 위
-        val cards = board.cards.filter { it.topic == vm.current }
-        val waiting = cards.filter { (it.kind.asks) && it.field("chosen").isEmpty() && it.field("sent").isEmpty() }
-        // 그다음은 중요한 것부터 세 단계로 (같은 단계 안에서는 원래 순서 그대로)
+        // 카드: 중요한 것부터 세 단계로 (같은 단계 안에서는 원래 순서 그대로). 내 차례 칸에 붙은 카드는 보드에서 뺀다.
         val importance = vm.importance
-        val ordered = waiting + cards.filter { it !in waiting }.sortedBy { -Decide.level(importance[it.id]) }
+        val docked = vm.dockedId
+        val ordered = board.cards.filter { it.topic == vm.current && it.id != docked }.sortedBy { -Decide.level(importance[it.id]) }
         if (ordered.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth().testTag("board-empty"), contentAlignment = Alignment.Center) {
                 // Pro 에는 말로 대화하기가 없고 화면에 안내 문장을 두지 않는다 (A2)
@@ -265,9 +265,7 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
                 }
             }
         } else {
-            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("board-list"), contentPadding = PaddingValues(horizontal = Dim.listPadH, vertical = Dim.listPadV), verticalArrangement = Arrangement.spacedBy(Dim.cardGap)) {
-                items(ordered, key = { it.id }) { card -> CardView(vm, card, rev) }
-            }
+            BoardGrid(vm, ordered, rev, listState, Modifier.weight(1f).fillMaxWidth())
         }
 
         BottomBar(vm, english)
