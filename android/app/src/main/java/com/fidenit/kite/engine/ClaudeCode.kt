@@ -196,7 +196,10 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
     private val waker = Waker()
     private val leftover = CopyOnWriteArrayList<String>()
 
-    /** 새 실행 번호가 정해지면 (네트워크를 쓰기 전에) 불린다. 앱은 이 번호를 저장해 두었다가 다시 켜졌을 때 [resume] 에 쓴다. */
+    /**
+     * 새 실행 번호가 정해지면 (네트워크를 쓰기 전에) 불린다. 앱은 이 번호를 디스크에 적어 두었다가 다시 켜졌을 때 [resume] 에 쓴다.
+     * 여기서 예외가 나면 (번호를 적지 못했다) 서버에 아무것도 올리지 않고 그 예외로 턴이 끝난다.
+     */
     @Volatile
     var onRunId: ((String) -> Unit)? = null
 
@@ -288,10 +291,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
     override fun run(turnText: String, stopped: () -> Boolean, send: (Ev) -> Unit): Stats {
         val id = Detached.newId()
         runId = id
-        try {
-            onRunId?.invoke(id)
-        } catch (_: Exception) {
-        }
+        onRunId?.invoke(id) // 번호를 적지 못했으면 여기서 끝난다: 적히지 않은 실행을 서버에 만들지 않는다
         return Drive(id, turnText, 0, true, stopped, send).go()
     }
 

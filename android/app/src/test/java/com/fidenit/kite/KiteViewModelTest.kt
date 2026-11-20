@@ -453,4 +453,89 @@ class KiteViewModelTest {
         assertFalse(vm.busy)
         assertFalse(exists("inflight.json"))
     }
+
+    // R2(a): the record that carries the run id is on disk before the engine makes its first connection for that run
+    @Test
+    fun theRecordWithTheRunIdIsOnDiskBeforeTheEngineTouchesTheNetwork() {
+        val server = java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress())
+        val arrived = java.util.concurrent.CountDownLatch(1)
+        val seen = java.util.concurrent.atomic.AtomicReference("")
+        val accepting = kotlin.concurrent.thread {
+            try {
+                while (true) {
+                    server.accept().use {
+                        if (arrived.count > 0) {
+                            seen.set(try { File(files, "inflight.json").readText() } catch (_: Exception) { "" })
+                            arrived.countDown()
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+        val vm = vm()
+        // The writer is held on the record with the run id until the engine's connection has arrived (at most 500 ms):
+        // an engine that does not wait for the disk gets to the server first.
+        vm.journal.beforeApply = { name, text ->
+            if (name == "inflight.json" && text != null && org.json.JSONObject(text).getString("id").isNotEmpty()) arrived.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+        }
+        vm.runnerOverride = com.fidenit.kite.engine.ClaudeCode(
+            com.fidenit.kite.engine.Ssh(com.fidenit.kite.engine.Server("127.0.0.1", server.localPort, "u", "", "", "", "")) {},
+            com.fidenit.kite.engine.EngineConfig("", "", "default", "", ""),
+        )
+        vm.send("뭔가 해 줘")
+        until("the engine connects") { arrived.count == 0L }
+        val onDisk = seen.get()
+        assertTrue("the record on disk carries the run id when the first connection arrives: '$onDisk'", onDisk.isNotEmpty() && org.json.JSONObject(onDisk).getString("id").isNotEmpty())
+        vm.stop()
+        until("turn ends") { !vm.busy }
+        server.close()
+        accepting.join(2000)
+    }
+
+    // R2(b): at turn end the board and the conversation reach the disk before the record is deleted, and the delete before the server files are cleaned
+    @Test
+    fun atTurnEndTheBoardIsOnDiskBeforeTheRecordGoesAndTheRecordBeforeTheServerIsCleaned() {
+        serverSettings()
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        val vm = vm()
+        val log = java.util.concurrent.CopyOnWriteArrayList<String>()
+        vm.journal.beforeApply = { name, text ->
+            if (name == "board.txt") {
+                Thread.sleep(200) // the writer is held on the board: what is queued behind it by then shows below
+                if ("inflight.json" in vm.journal.queuedNames()) log.add("the delete of the record is queued while the board is not on disk")
+            }
+            log.add(if (text == null) "delete $name" else "write $name")
+        }
+        vm.cleanOverride = { log.add("clean $it") }
+        vm.runnerOverride = Fake(lines = "card k3 note t2 새 카드\nsay 끝\n")
+        until("replay ends") { !vm.busy }
+        assertTrue(vm.flushWrites())
+        val text = log.toString()
+        assertFalse(text, log.contains("the delete of the record is queued while the board is not on disk"))
+        val deleted = log.indexOf("delete inflight.json")
+        assertTrue(text, log.indexOf("write board.txt") in 0 until deleted)
+        assertTrue(text, log.indexOf("write recent.json") in 0 until deleted)
+        assertTrue(text, deleted < log.indexOf("clean a-1"))
+        assertFalse(exists("inflight.json"))
+    }
+
+    // R2(b): the board cannot be written: the record stays and the server files are not cleaned, so the next start replays the turn
+    @Test
+    fun aBoardThatCannotBeSavedKeepsTheRecordAndTheServerFiles() {
+        serverSettings()
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        val vm = vm()
+        val cleaned = java.util.concurrent.CopyOnWriteArrayList<String>()
+        vm.cleanOverride = { cleaned.add(it) }
+        File(files, "board.txt").delete()
+        File(files, "board.txt/x").mkdirs() // a folder in the file's place: the board cannot be written
+        vm.runnerOverride = Fake(lines = "card k3 note t2 새 카드\n")
+        until("replay ends") { !vm.busy }
+        assertFalse(vm.flushWrites())
+        assertTrue(exists("inflight.json"))
+        assertTrue(cleaned.toString(), cleaned.isEmpty())
+    }
 }

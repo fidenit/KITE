@@ -68,12 +68,15 @@ import java.util.Locale
 /** 최근 대화 가운데 모델에게 함께 보내는 턴 수 */
 private const val RECENT = 6
 
+/** `recordOwner` 의 값: 켤 때 이어 받지 못해 되돌린 기록 (어느 턴의 것도 아니다) */
+private const val RESTORED = -1
+
 class KiteViewModel(app: Application) : AndroidViewModel(app) {
     val store = Store(app)
     private val files: File = app.filesDir
 
     /** 앱이 꺼져도 남는 기록: 돌고 있는 턴, 줄 세워 둔 말, 카드 조작 알림, 서버에서 못 치운 실행, 보던 주제 */
-    private val journal = Journal(files, async = true)
+    internal val journal = Journal(files, async = true)
 
     // ---------------------------------------------------------------- 화면이 보는 상태
     var board = Board()
@@ -162,6 +165,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private var eventTimer: Job? = null
 
     /** 화면을 비울 때마다 1씩 는다. 비우기 전에 시작한 턴의 줄과 끝맺음은 새 화면에 닿지 않는다. */
+    @Volatile
     private var generation = 0
 
     @Volatile
@@ -176,6 +180,23 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 엔진에 맡겨 둔, 서버에서 아직 멈추고 치우지 못한 실행 번호 (끝난 뒤 목록에서 뺄 것을 가리려고) */
     private val handed: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
+
+    /** 치울 목록을 고치는 일은 한 번에 하나만 한다 (멈춤이 번호를 적는 것과 턴 끝의 정리가 엇갈려 번호가 빠지지 않게). */
+    private val cleanLock = Any()
+
+    /**
+     * 돌던 턴의 기록(inflight.json)이 지금 어느 턴의 것인가 (`turnSeq`. 없으면 0, 켤 때 되돌린 기록이면 [RESTORED]).
+     * 기록을 쓰고 지우는 일은 이 자물쇠 안에서만 한다: 턴 끝의 지우기(입출력 스레드)가 그사이 시작한 다음 턴의 기록을 지우지 않고,
+     * 실행 번호 적기(입출력 스레드)가 화면을 비운 뒤에 옛 기록을 되살리지 않는다.
+     */
+    private val recordLock = Any()
+    private var recordOwner = 0
+
+    /** 턴 끝의 디스크 정리(기록 지우기, 서버 파일 치우기)가 아직 도는 수. 시험이 끝나기를 기다릴 때 본다. */
+    private val settling = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** 시험에서 서버의 실행 파일 치우기 대신 쓴다 (앱은 바꾸지 않는다). */
+    internal var cleanOverride: ((String) -> Unit)? = null
 
     /** 다시 붙는 동안 만진 카드: 따라잡기가 끝난 뒤에 순서대로 반영한다 (그 턴이 만든 카드를 만졌을 수 있다) */
     private var replayTaps: List<String> = emptyList()
@@ -269,14 +290,17 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             turnSpoken.clear()
             quietSay = null
             lines = LineStream()
+            synchronized(recordLock) { recordOwner = turnSeq + 1 }
             runTurn(i, resume = true)
             return
         }
         // 이어 받을 수 없다: 서버 설정이 바뀌었거나, 엔진이 바뀌었거나, API 엔진이거나, 서버에 올리기 전에 끊겼다
         events.forEach { applyLine(it, Author.User) }
         if (i.id.isNotEmpty()) journal.addToClean(listOf(i.id))
-        journal.clearInflight()
+        // 되돌린 보드를 먼저 저장하고, 그것이 디스크에 닿은 뒤에야 기록을 지운다 (그 전에 꺼지면 다음에 켤 때 똑같이 되돌린다)
+        synchronized(recordLock) { recordOwner = RESTORED }
         save()
+        settleTurn(RESTORED, null, null)
         val why = when {
             i.engine == "ssh" && i.id.isNotEmpty() && !useSsh ->
                 if (english) "The engine is now \"directly from the phone\", so the message that was running on the server cannot be picked up again" else "엔진이 '폰에서 바로'로 바뀌어 서버에서 돌던 말을 이어 받을 수 없습니다"
@@ -299,7 +323,6 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 앱이 저장해 둔 보드와 대화를 다시 읽는다 (이미 끝나 저장된 턴에 다시 붙었을 때). */
     private fun reloadFromDisk() {
-        journal.flush()
         try {
             board = Lang.load(File(files, "board.txt").readText())
         } catch (_: Exception) {
@@ -316,32 +339,47 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 서버에서 멈추고 치워야 할 실행으로 적어 둔다 (파일에 합쳐 쓰고, 지금 엔진에도 알린다). */
-    private fun markToClean(id: String) {
-        journal.addToClean(listOf(id))
+    private fun markToClean(id: String) = synchronized(cleanLock) {
+        journal.addToClean(listOf(id)) // 메모리의 목록에 더하고 쓰기를 줄에 세울 뿐이다: 디스크를 읽거나 기다리지 않는다
         handed.add(id)
         (engine as? ClaudeCode)?.addToClean(id)
     }
 
     /** 엔진이 서버에서 멈추고 치웠다고 확인한 것만 파일 목록에서 빼고, 엔진에 남은 것은 파일에 합친다. */
-    private fun syncToClean(cc: ClaudeCode) {
+    private fun syncToClean(cc: ClaudeCode) = synchronized(cleanLock) {
+        // 엔진의 목록을 읽는 것부터 빼는 것까지 한 자물쇠 안이다: 그사이 멈춤이 적은 번호가 "확인된 것"으로 잘못 빠지지 않는다
         val now = cc.toClean.toSet()
         journal.addToClean(now)
-        val settled = synchronized(handed) { handed.filter { it !in now } }
+        val settled = handed.filter { it !in now }
         if (settled.isNotEmpty()) journal.removeToClean(settled)
-        synchronized(handed) {
-            handed.removeAll(settled.toSet())
-            handed.addAll(now)
-        }
+        handed.removeAll(settled.toSet())
+        handed.addAll(now)
     }
 
-    /** 턴을 다 저장하고 기록을 지운 뒤: 밀린 쓰기가 디스크에 닿은 다음에야 서버의 실행 파일을 치운다. */
-    private fun finishServerRun(cc: ClaudeCode?, id: String?) {
-        if (cc == null) return
+    /**
+     * 턴 끝의 디스크 순서 (입출력 스레드에서 기다린다, 메인 스레드는 기다리지 않는다):
+     * 저장한 보드·대화·치울 목록이 디스크에 닿은 뒤에야 돌던 턴의 기록을 지우고, 그 지우기가 디스크에 닿은 뒤에야 서버의 실행 파일을 치운다.
+     * 어느 단계든 디스크에 닿지 못했으면(실패·5초 넘김) 거기서 그만둔다: 기록과 서버 파일이 남아 있으므로 다음에 켤 때 그 턴을 다시 받아 반영한다.
+     * 기록이 이미 다음 턴의 것이면 지우지 않는다 (`seq` 는 이 턴의 번호).
+     */
+    private fun settleTurn(seq: Int, cc: ClaudeCode?, id: String?) {
+        if (cc != null) syncToClean(cc) // 엔진이 멈추지 못해 남긴 실행 번호를, 기록을 지우기 전에 목록에 적는다
+        settling.incrementAndGet()
         viewModelScope.launch(Dispatchers.IO) {
-            journal.flush()
-            if (id != null) cc.cleanRun(id)
-            syncToClean(cc)
-        }
+            if (!journal.flush()) return@launch
+            synchronized(recordLock) {
+                if (recordOwner == seq) {
+                    recordOwner = 0
+                    journal.clearInflight()
+                }
+            }
+            if (!journal.flush()) return@launch
+            if (id != null) {
+                val over = cleanOverride
+                if (over != null) over(id) else cc?.cleanRun(id)
+            }
+            if (cc != null) syncToClean(cc)
+        }.invokeOnCompletion { settling.decrementAndGet() }
     }
 
     private fun save() {
@@ -374,9 +412,11 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 ssh = s
                 ClaudeCode(s, EngineConfig(store.claude, store.dir, store.permission, store.effort, store.extra)).also { cc ->
                     cc.cleanAfterRun = false // 서버 파일은 앱이 보드를 저장하고 기록을 지운 뒤에 치운다 (finishServerRun)
-                    val ids = journal.readToClean()
-                    handed.addAll(ids)
-                    ids.forEach { cc.addToClean(it) } // 멈추고 치우지 못한 실행: 다음에 붙을 때 처리한다
+                    synchronized(cleanLock) {
+                        val ids = journal.readToClean()
+                        handed.addAll(ids)
+                        ids.forEach { cc.addToClean(it) } // 멈추고 치우지 못한 실행: 다음에 붙을 때 처리한다
+                    }
                 }
             } else {
                 // 무료 앱: 사용자의 키로 Anthropic 에 바로. Pro: 같은 요청을 중계 서버로 (키는 서버가 갖고 있다).
@@ -534,7 +574,10 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val shown = input.ifEmpty { if (english) "(screen action)" else "(화면 조작)" }
         // 네트워크를 쓰기 전에 남긴다: 앱이 이 턴 도중 꺼져도 다음에 켤 때 이어 받거나, 끊겼다고 알릴 수 있다.
         val record = Inflight(if (useSsh) "ssh" else "api", "", text, shown, before, System.currentTimeMillis(), minOf(recent.size, 39))
-        journal.writeInflight(record)
+        synchronized(recordLock) {
+            recordOwner = turnSeq + 1 // runTurn 이 매길 이 턴의 번호
+            journal.writeInflight(record)
+        }
         saveQueue()
         runTurn(record, resume = false, input = input)
     }
@@ -562,12 +605,30 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             val turn = if (resume) record else beforeTurn(record, input)
             val result = withContext(turnIo) {
                 runCatching {
+                    // 이 턴의 기록이 디스크에 닿기를 기다린 뒤에 네트워크를 쓴다 (입출력 스레드에서 기다린다)
+                    if (!resume) journal.flush()
                     val e = if (resume) engineWhenReachable(record.id, evs) else engine()
                     if (e is ClaudeCode) {
                         // 서버에서 떼어 돌린다: 실행 번호가 정해지면 (서버에 닿기 전에) 기록에 적는다.
                         e.onRunId = { id ->
-                            currentRunId = id
-                            if (gen == generation) journal.writeInflight(turn.copy(engine = "ssh", id = id))
+                            val mine = synchronized(recordLock) {
+                                if (gen == generation && recordOwner == seq) {
+                                    currentRunId = id
+                                    journal.writeInflight(turn.copy(engine = "ssh", id = id))
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            // 화면을 비운 뒤라면 서버에 아무것도 올리지 않는다
+                            if (!mine) throw Exception(STOPPED)
+                            // 번호가 적힌 기록이 디스크에 닿은 뒤에야 서버에 올리고 시작한다: 그 전에 앱이 꺼지면 서버의 실행을 다시 찾을 길이 없다
+                            if (!journal.flush()) {
+                                throw Exception(
+                                    if (english) "This message could not be saved on the phone → it was not sent to the server → check the phone's free storage and send it again"
+                                    else "폰에 이 말을 저장하지 못했습니다 → 서버에는 보내지 않았습니다 → 폰의 저장 공간을 확인한 뒤 다시 보내 주세요",
+                                )
+                            }
                         }
                         if (resume) e.resume(record.id, turn.turnText, 0, { stopFlag }) { evs.trySend(it) }
                         else e.run(turn.turnText, { stopFlag }) { evs.trySend(it) }
@@ -581,11 +642,13 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             val cc = engine as? ClaudeCode
             val runId = currentRunId
             val msg = result.exceptionOrNull()?.message
+            // 저장된 보드를 다시 읽기 전에 밀린 쓰기가 디스크에 닿게 한다 (입출력 스레드에서 기다린다)
+            if (msg == GONE) withContext(Dispatchers.IO) { journal.flush() }
             if (gen != generation) {
                 // 화면을 비운 뒤에 끝났다: 새 화면에는 아무것도 반영하지 않고, 서버 실행만 치운다
                 activity = ""
                 busy = false
-                finishServerRun(cc, runId)
+                settleTurn(seq, cc, runId)
                 startPendingWords()
                 return@launch
             }
@@ -599,7 +662,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             if (msg == GONE) {
                 // 이 턴은 이미 끝나 저장되고 서버에서도 치워졌다: 저장된 보드를 그대로 보여 주고, 다시 돌리지 않는다
                 reloadFromDisk()
-                journal.clearInflight()
+                settleTurn(seq, cc, null)
                 replayTaps = emptyList()
                 activity = ""
                 busy = false
@@ -633,9 +696,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             activity = ""
             busy = false
             rev++
-            save() // 반영한 것을 먼저 저장하고, 그다음에 돌던 턴의 기록을 지우고, 그다음에야 서버의 실행 파일을 치운다
-            journal.clearInflight()
-            finishServerRun(cc, runId)
+            save() // 반영한 것을 먼저 저장한다. 그것이 디스크에 닿은 뒤에 돌던 턴의 기록을 지우고, 그 지우기가 닿은 뒤에야 서버의 실행 파일을 치운다
+            settleTurn(seq, cc, runId)
             if (result.isSuccess) reviewTurn() else touched.clear()
             // 기억이 바뀌었을 수 있으니 다음 턴을 위해 다시 읽어 둔다.
             launch(Dispatchers.IO) {
@@ -1138,7 +1200,11 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     fun clearAll() {
         currentRunId?.takeIf { busy }?.let { markToClean(it) } // 돌던 서버 실행은 멈추고 치운다
         stop()
-        generation++ // 돌던 턴의 줄과 끝맺음이 새 화면에 닿지 않게
+        synchronized(recordLock) {
+            generation++ // 돌던 턴의 줄과 끝맺음이 새 화면에 닿지 않게
+            recordOwner = 0
+            journal.clearInflight() // 지우지 않으면 다시 켰을 때 옛 보드가 되살아난다. 실행 번호를 적는 쪽과 같은 자물쇠 안이라, 지운 뒤에 옛 기록이 다시 적히지 않는다
+        }
         board = Board()
         recent.clear()
         events.clear()
@@ -1147,7 +1213,6 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         importance = emptyMap()
         current = null
         rev++
-        journal.clearInflight() // 지우지 않으면 다시 켰을 때 옛 보드가 되살아난다
         journal.clearQueue()
         save()
     }
@@ -1166,7 +1231,11 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 시험용: 밀린 쓰기가 끝나기를 기다린다. */
-    internal fun flushWrites() = journal.flush()
+    internal fun flushWrites(): Boolean {
+        val end = System.currentTimeMillis() + 10_000
+        while (settling.get() > 0 && System.currentTimeMillis() < end) Thread.sleep(5) // 턴 끝의 디스크 정리가 끝나기를 기다린다
+        return journal.flush()
+    }
 
     override fun onCleared() {
         cleared = true
