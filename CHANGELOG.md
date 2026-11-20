@@ -4,6 +4,10 @@ APERIT was called KITE up to version 0.3; the entries below 0.4.0 use the name o
 
 The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://github.com/fidenit/patet/blob/main/CHANGELOG.md).
 
+## Android 0.3.0 (not released yet)
+
+- **APERIT Pro can talk.** Speech in and speech out go through our gateway with the phone's own device secret; the ElevenLabs key stays on the server and nothing is entered on the phone. The Talk button, the microphone button and the voice settings (conversation language and microphone sensitivity only) appear when the server says this phone may use its voice, and stay hidden otherwise. When the server's voice fails, the sentence is read with the phone's own voice and one line says so, once per conversation; when the server cannot turn speech into text, the words are not sent and talking is switched off with one line. The free app is unchanged.
+
 ## Android 0.2.0 (not released yet)
 
 - **APERIT Pro works with nothing to enter.** On first launch the phone makes its own device id and secret (kept only in the encrypted store, excluded from backup and transfer) and enrolls with our gateway; it is ready once approved, and shows `허용 대기 482913` / `Waiting 482913` while it waits. Turns run detached on the server's Claude Code through the gateway with the same reconnect and restart rules as the SSH engine. The board is kept on the server too: an approved phone with no saved board loads the board stored on the server. Settings in Pro show only the connection status and the short device id. Pro has no voice yet: the Talk button and the voice settings are not shown.
