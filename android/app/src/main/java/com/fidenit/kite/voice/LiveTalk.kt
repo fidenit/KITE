@@ -77,11 +77,13 @@ class LiveTalk(private val listenOpener: LiveListen.Opener, private val host: Ho
             override fun message(m: LiveWire.In) = host.post { if (g == gen) message(m) }
             override fun closed(c: LiveWire.Close) = host.post { if (g == gen) closed(c) }
         }
-        sock = try {
+        val s = try {
             listenOpener.open(host.english, ev)
-        } catch (e: Exception) {
-            null.also { host.post { if (g == gen) closed(LiveWire.Close(null, -1, false)) } }
+        } catch (_: Exception) {
+            null
         }
+        sock = s
+        if (s == null) host.post { if (g == gen) closed(LiveWire.Close(null, -1, false)) } // 열지도 못했다: 끊긴 것과 같이
     }
 
     /** 마이크에서 읽은 조각 하나 (마이크 스레드). 소켓이 없으면 버린다. */
