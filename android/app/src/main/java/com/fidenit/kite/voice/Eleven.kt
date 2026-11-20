@@ -171,8 +171,8 @@ object Eleven {
                     first = "HTTP $code: ${answer.take(200)}"
                     firstWhy = why(code, answer)
                 }
-                // 키가 거절됐거나 한도에 닿았으면 다른 모델로 다시 불러도 소용없다: 첫 오류를 그대로 알린다
-                if (code == 401 || code == 403 || code == 429) throw Failure(firstWhy, false, first)
+                // 키가 거절됐거나 한도에 닿았으면 다른 모델로 다시 불러도 소용없다: 거기서 끝내고, 끝내게 한 그 답의 까닭을 알린다
+                if (code == 401 || code == 403 || code == 429) throw Failure(why(code, answer), false, "HTTP $code: ${answer.take(200)}")
             } catch (e: Failure) {
                 throw e
             } catch (e: IOException) {

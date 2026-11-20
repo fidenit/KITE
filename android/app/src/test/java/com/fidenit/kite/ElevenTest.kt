@@ -147,6 +147,22 @@ class ElevenTest {
         assertFalse(f.played)
     }
 
+    /** W3: the second model is refused: the cause is that answer's, not the first model's. */
+    @Test
+    fun whenTheSecondModelIsRefusedTheCauseIsThatAnswers() {
+        server.enqueue(MockResponse().setResponseCode(500).setBody("busy"))
+        server.enqueue(MockResponse().setResponseCode(429).setBody("slow down"))
+        val f = try {
+            Eleven.transcribe("test-key-not-real", pcm, false)
+            throw AssertionError("no failure")
+        } catch (e: Eleven.Failure) {
+            e
+        }
+        assertEquals(Eleven.Why.LIMIT, f.why)
+        assertTrue(f.message, f.message!!.startsWith("HTTP 429"))
+        assertEquals(2, server.requestCount)
+    }
+
     @Test
     fun theDefaultAddressIsHttps() {
         assertEquals("https://api.elevenlabs.io", real)
