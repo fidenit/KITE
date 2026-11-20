@@ -55,6 +55,23 @@ class LiveWireTest {
         assertNull(LiveWire.parse("""{"type":"stopped"}"""))
     }
 
+    /** v1.1: `ready.vad_s` and `partial.tp` (additive; missing or out of range -> null) */
+    @Test
+    fun readyVadAndPartialTpParse() {
+        assertEquals(In.Ready(1.5), LiveWire.parse("""{"type":"ready","vad_s":1.5}"""))
+        assertEquals(In.Ready(2.0), LiveWire.parse("""{"type":"ready","vad_s":2}"""))
+        assertEquals(In.Ready(null), LiveWire.parse("""{"type":"ready","vad_s":"x"}"""))
+        assertEquals(In.Ready(null), LiveWire.parse("""{"type":"ready","vad_s":0}"""))
+        assertEquals(In.Partial("응", 0.91), LiveWire.parse("""{"type":"partial","text":"응","tp":0.91}"""))
+        assertEquals(In.Partial("응", null), LiveWire.parse("""{"type":"partial","text":"응"}"""))
+        assertEquals(In.Partial("응", null), LiveWire.parse("""{"type":"partial","text":"응","tp":1.7}"""))
+        assertEquals(150L, LiveRules.earlyQuietMs(1.5, 0.9))
+        assertEquals(750L, LiveRules.earlyQuietMs(1.5, 0.5))
+        assertEquals(1470L, LiveRules.earlyQuietMs(1.5, 0.02))
+        assertEquals(0f, LiveRules.level(ShortArray(320), 320))
+        assertTrue(LiveRules.level(ShortArray(320) { 3000 }, 320) > 0.09f)
+    }
+
     @Test
     fun pcmIsSigned16BitLittleEndianBothWays() {
         val s = shortArrayOf(0, 1, -1, 32767, -32768, 0x1234)
