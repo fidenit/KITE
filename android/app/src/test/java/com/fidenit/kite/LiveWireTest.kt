@@ -65,7 +65,15 @@ class LiveWireTest {
         assertEquals(In.Partial("응", 0.91), LiveWire.parse("""{"type":"partial","text":"응","tp":0.91}"""))
         assertEquals(In.Partial("응", null), LiveWire.parse("""{"type":"partial","text":"응"}"""))
         assertEquals(In.Partial("응", null), LiveWire.parse("""{"type":"partial","text":"응","tp":1.7}"""))
-        assertEquals(150L, LiveRules.earlyQuietMs(1.5, 0.9))
+        assertEquals("v1.2 floor min_quiet_s 0.4", 400L, LiveRules.earlyQuietMs(1.5, 0.9))
+        assertEquals(150L, LiveRules.earlyQuietMs(1.5, 0.9, 0.0))
+        assertEquals(600L, LiveRules.earlyQuietMs(1.5, 0.9, 0.6))
+        assertEquals(In.Ready(1.5, 0.4), LiveWire.parse("""{"type":"ready","vad_s":1.5,"min_quiet_s":0.4}"""))
+        assertEquals(In.Ready(1.5, null), LiveWire.parse("""{"type":"ready","vad_s":1.5,"min_quiet_s":-1}"""))
+        assertTrue(LiveRules.realtime(pro = true, voiceLive = "1", testSocket = false))
+        assertFalse("pro without voice_live", LiveRules.realtime(pro = true, voiceLive = "", testSocket = false))
+        assertFalse("free never", LiveRules.realtime(pro = false, voiceLive = "1", testSocket = false))
+        assertTrue("a test socket", LiveRules.realtime(pro = false, voiceLive = "", testSocket = true))
         assertEquals(750L, LiveRules.earlyQuietMs(1.5, 0.5))
         assertEquals(1470L, LiveRules.earlyQuietMs(1.5, 0.02))
         assertEquals(0f, LiveRules.level(ShortArray(320), 320))
@@ -96,7 +104,7 @@ class LiveWireTest {
         val acts = mapOf(
             "unauthorized" to LiveRules.Act.DEVICE, "pending" to LiveRules.Act.DEVICE, "revoked" to LiveRules.Act.DEVICE, "voice_off" to LiveRules.Act.HTTP,
             "voice_key" to LiveRules.Act.HTTP, "upstream" to LiveRules.Act.RETRY, "limit" to LiveRules.Act.LIMIT, "busy" to LiveRules.Act.RETRY,
-            "bad_request" to LiveRules.Act.RETRY_ONCE, "idle" to LiveRules.Act.REOPEN, "session_max" to LiveRules.Act.REOPEN, "replaced" to LiveRules.Act.NOTHING,
+            "bad_request" to LiveRules.Act.RETRY_ONCE, "idle" to LiveRules.Act.RETRY, "session_max" to LiveRules.Act.REOPEN, "replaced" to LiveRules.Act.NOTHING,
         )
         for ((w, a) in acts) assertEquals(w, a, LiveRules.listenAct(LiveWire.Close(w, 4000, false)))
         assertEquals(LiveRules.Act.RETRY, LiveRules.listenAct(LiveWire.Close(null, -1, false)))

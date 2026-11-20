@@ -158,7 +158,7 @@ class Mic(private val onFrame: ((ShortArray, Int) -> Unit)? = null, private val 
 }
 
 /** 스피커. 받은 소리를 바로 튼다. [fastStart] (Pro 실시간 읽기, 안드로이드 12 이상): 0.5초 버퍼가 찰 때까지 기다리지 않고 약 100ms 가 쌓이면 틀기 시작한다. */
-class Player(fastStart: Boolean = false) : Eleven.Sink {
+class Player(fastStart: Boolean = false) : Eleven.Sink, LivePlay.Out {
     private val track: AudioTrack
 
     @Volatile
@@ -186,6 +186,15 @@ class Player(fastStart: Boolean = false) : Eleven.Sink {
         val w = track.write(pcm, 0, n)
         if (w > 0) written += w
     }
+
+    /** 실시간 읽기의 재생 스레드: 자리가 있는 만큼만 쓴다 (막히지 않는다). */
+    override fun writeSome(pcm: ShortArray, off: Int, n: Int): Int = track.write(pcm, off, n, AudioTrack.WRITE_NON_BLOCKING).coerceAtLeast(0)
+
+    /** 지금까지 튼 샘플 수 (비우면 0 부터) */
+    override fun played(): Long = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+
+    /** 틀지 않은 소리를 바로 버린다 (실시간 읽기) */
+    override fun flush() = stop()
 
     /** 아직 틀지 못하고 남은 소리의 길이 (초). */
     override fun pendingSecs(): Float = ((written - (track.playbackHeadPosition.toLong() and 0xFFFFFFFFL)).coerceAtLeast(0)) / TTS_RATE.toFloat()

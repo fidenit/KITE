@@ -217,9 +217,9 @@ class LiveTalkTest {
         assertEquals("a fragment", 0, host.barged)
         gw(In.Final("회의는 세", "kor"))
         loud()
-        gw(In.Partial("잠깐"))
+        gw(In.Partial("아니 그거"))
         assertEquals("first partial of the utterance: not yet", 0, host.barged)
-        gw(In.Partial("잠깐 멈춰"))
+        gw(In.Partial("아니 그거 말고"))
         assertEquals(1, host.barged)
         assertEquals("speaking: no hush", 0, host.hushed)
         assertEquals(0, s.commits)
@@ -236,11 +236,11 @@ class LiveTalkTest {
         gw(In.Final("", ""))
         loud()
         quiet(600)
-        gw(In.Partial("잠깐만"))
-        gw(In.Partial("잠깐만 기다려"))
+        gw(In.Partial("내 말 좀"))
+        gw(In.Partial("내 말 좀 들어"))
         assertEquals("two partials but the last sound was 0.6 s ago", 0, host.barged)
         loud()
-        gw(In.Partial("잠깐만 기다려 봐"))
+        gw(In.Partial("내 말 좀 들어 봐"))
         assertEquals(1, host.barged)
     }
 
@@ -249,8 +249,8 @@ class LiveTalkTest {
         started()
         host.speaking = true
         loud()
-        gw(In.Partial("잠깐만 기다려"))
-        gw(In.Partial("잠깐"))
+        gw(In.Partial("아니 그거 말고"))
+        gw(In.Partial("아니"))
         assertEquals(0, host.barged)
     }
 
@@ -287,8 +287,8 @@ class LiveTalkTest {
 
     @Test
     fun earlyCommitWaitsVadTimesOneMinusTp() {
-        assertEquals("tp 0.9 -> 0.15 s", 160, earlyAfter(0.9).second)
-        assertTrue(host.logs.contains("live commit early tp=0.90 quiet_ms=160"))
+        assertEquals("tp 0.9 -> 0.15 s, floor 0.4 s (v1.2)", 400, earlyAfter(0.9).second)
+        assertTrue(host.logs.contains("live commit early tp=0.90 quiet_ms=400"))
     }
 
     @Test
@@ -320,7 +320,7 @@ class LiveTalkTest {
     @Test
     fun oneEarlyCommitPerUtteranceAndAMaybeCutIsLogged() {
         val (s, at) = earlyAfter(0.9)
-        assertEquals(160, at)
+        assertEquals(400, at)
         gw(In.Partial("내일 일정 알려 줘", 0.95))
         quiet(1_000)
         assertEquals("one per utterance", 1, s.commits)
@@ -416,12 +416,146 @@ class LiveTalkTest {
     }
 
     @Test
-    fun idleAndSessionMaxReopenAtOnceWithoutCounting() {
+    fun sessionMaxReopensAtOnceAndIdleCountsLikeADrop() {
         started()
-        repeat(5) { drop("idle", 4408) }
         drop("session_max", 4408)
-        assertEquals(7, socks.size)
+        drop("session_max", 4408)
+        assertEquals("session_max: at once, not counted", 3, socks.size)
+        gw(In.Ready())
+        drop("idle", 4408)
+        assertEquals(3, socks.size)
+        after(500)
+        assertEquals("idle: after 0.5 s", 4, socks.size)
+        drop("idle", 4408)
+        after(1_000)
+        drop("idle", 4408)
+        after(2_000)
+        drop("idle", 4408)
+        assertEquals("3 idles in a row with nothing heard -> D9", listOf("listen_retry" to true), host.fallbacks)
+    }
+
+    @Test
+    fun anIdleAfterSomethingWasHeardStartsTheCountOver() {
+        started()
+        repeat(5) {
+            gw(In.Partial("말"))
+            drop("idle", 4408)
+            after(500)
+        }
         assertTrue(host.fallbacks.isEmpty())
+        assertEquals(6, socks.size)
+    }
+
+    @Test
+    fun badRequestIsAllowedOnceMoreAfterTheSocketHeardSomething() {
+        started()
+        drop("bad_request", 4400)
+        gw(In.Ready())
+        gw(In.Partial("말"))
+        drop("bad_request", 4400)
+        assertTrue("reset after a working socket", host.fallbacks.isEmpty())
+        drop("bad_request", 4400)
+        assertEquals(listOf("bad_request" to true), host.fallbacks)
+    }
+
+    @Test
+    fun minQuietFromReadyIsTheFloor() {
+        talk.start()
+        gw(In.Ready(1.5, 0.6))
+        val s = socks.last()
+        loud(200)
+        gw(In.Partial("내일 일정 알려 줘", 0.95))
+        var at = 0
+        for (k in 1..100) {
+            quiet(20)
+            if (s.commits > 0) {
+                at = k * 20
+                break
+            }
+        }
+        assertEquals(600, at)
+    }
+
+    @Test
+    fun aGhostPartialLeavesTheStatusLineAfterVadOfQuiet() {
+        started()
+        loud()
+        gw(In.Partial("네."))
+        assertEquals("네.", host.tails.last())
+        quiet(1_480)
+        assertEquals("네.", host.tails.last())
+        quiet(20)
+        assertEquals(null, host.tails.last())
+    }
+
+    /** D10 v1.2: while the AI speaks, its own echo at the level of a normal voice is not 'real sound' */
+    @Test
+    fun theAisEchoDoesNotCountAsRealSound() {
+        started()
+        host.speaking = true
+        val echo = ShortArray(320) { 800 } // level 0.024: over the threshold 0.02, under today's barge-in loudness 1.5 x threshold
+        repeat(50) { talk.frame(echo, 320) }
+        host.speaking = false
+        gw(In.Final("오늘 회의는", "kor"))
+        assertTrue(host.logs.contains("live final dropped quiet"))
+        assertTrue(host.sent.isEmpty())
+    }
+
+    /** D12: a backchannel said over the AI is dropped; a stop word over the AI acts at once; a real barge-in counts. */
+    @Test
+    fun aBackchannelOverTheAiIsDroppedAsEcho() {
+        started()
+        host.speaking = true
+        host.reading = "오늘 회의는 세 시에 시작합니다"
+        loud()
+        gw(In.Partial("응"))
+        loud()
+        gw(In.Final("응", "kor"))
+        assertTrue(host.logs.contains("live final dropped echo"))
+        assertTrue(host.sent.isEmpty())
+        assertEquals(0, host.barged)
+    }
+
+    @Test
+    fun aStopWordOverTheAiActsFromItsFirstPartial() {
+        started()
+        host.speaking = true
+        host.reading = "오늘 회의는 세 시에 시작합니다"
+        loud()
+        gw(In.Partial("그만"))
+        assertEquals(listOf(Words.Heard.STOP), host.routed)
+        loud()
+        gw(In.Final("그만", "kor"))
+        assertEquals("not acted twice", 1, host.routed.size)
+        assertTrue(host.logs.contains("live final acted"))
+    }
+
+    @Test
+    fun aStopWordThatTheAiIsSayingDoesNotAct() {
+        started()
+        host.speaking = true
+        host.reading = "이제 그만 정리하겠습니다"
+        loud()
+        gw(In.Partial("그만"))
+        loud()
+        gw(In.Final("그만", "kor"))
+        assertTrue(host.routed.isEmpty())
+    }
+
+    @Test
+    fun aRealBargeInIsSentAsTheOwnersWords() {
+        started()
+        host.speaking = true
+        host.reading = "오늘 회의는 세 시에 시작합니다"
+        loud()
+        gw(In.Partial("아니 그거"))
+        loud()
+        gw(In.Partial("아니 그거 말고 내일"))
+        assertEquals(1, host.barged)
+        host.speaking = false
+        loud()
+        gw(In.Final("아니 그거 말고 내일 거", "kor"))
+        assertEquals(listOf("아니 그거 말고 내일 거"), host.sent)
     }
 
     @Test

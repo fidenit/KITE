@@ -1,7 +1,7 @@
 package com.fidenit.kite
 
-import com.fidenit.kite.voice.Eleven
 import com.fidenit.kite.voice.LiveEvents
+import com.fidenit.kite.voice.LivePlay
 import com.fidenit.kite.voice.LiveRead
 import com.fidenit.kite.voice.LiveSpeak
 import com.fidenit.kite.voice.LiveWire
@@ -32,22 +32,35 @@ class LiveReadTest {
         Sock(ev).also { socks.add(it) }
     }
 
-    private class Sink : Eleven.Sink {
+    /** A fake speaker: `got` = everything ever written, `buffer` = what is in it now (flush empties it), `played` set by the test. */
+    class Out : LivePlay.Out {
         val got = mutableListOf<Short>()
-        override fun push(pcm: ShortArray, n: Int) {
-            for (i in 0 until n) got.add(pcm[i])
+        val buffer = mutableListOf<Short>()
+        var room = Int.MAX_VALUE
+        var played = 0L
+        var flushes = 0
+        override fun writeSome(pcm: ShortArray, off: Int, n: Int): Int {
+            val w = minOf(n, room)
+            for (i in off until off + w) {
+                got.add(pcm[i])
+                buffer.add(pcm[i])
+            }
+            return w
         }
 
-        override fun pendingSecs() = 0f
-        override fun stop() {}
+        override fun played() = played
+        override fun flush() {
+            flushes++
+            buffer.clear()
+            played = 0
+        }
     }
 
     private inner class Host : LiveRead.Host {
         val queue = ArrayDeque<() -> Unit>()
-        val sinkImpl = Sink()
         val started = mutableListOf<Int>()
         val done = mutableListOf<Int>()
-        val rest = mutableListOf<String>()
+        val rest = mutableListOf<Pair<String, Boolean>>()
         val fallbacks = mutableListOf<Pair<String, Boolean>>()
         val devices = mutableListOf<String>()
         val logs = mutableListOf<String>()
@@ -59,7 +72,6 @@ class LiveReadTest {
             while (queue.isNotEmpty()) queue.removeFirst()()
         }
 
-        override val sink: Eleven.Sink get() = sinkImpl
         override fun started(id: Int) {
             started.add(id)
         }
@@ -68,8 +80,8 @@ class LiveReadTest {
             done.add(id)
         }
 
-        override fun rest(why: String) {
-            rest.add(why)
+        override fun rest(why: String, brokeOff: Boolean) {
+            rest.add(why to brokeOff)
         }
 
         override fun fallback(why: String, notice: Boolean) {
@@ -86,16 +98,23 @@ class LiveReadTest {
     }
 
     private val host = Host()
-    private val read = LiveRead(opener, host) { clock }
+    private val out = Out()
+    private val read = LiveRead(opener, host, out, thread = false) { clock }
+
+    /** the player thread's work, then the view model's */
+    private fun pump() {
+        read.play.pump()
+        host.run()
+    }
 
     private fun gw(m: In, s: Sock = socks.last()) {
         s.events.message(m)
-        host.run()
+        pump()
     }
 
     private fun audio(vararg v: Short, s: Sock = socks.last()) {
         s.events.audio(shortArrayOf(*v))
-        host.run()
+        pump()
     }
 
     private fun opened(): Sock {
@@ -108,6 +127,7 @@ class LiveReadTest {
     private fun drop(word: String?, code: Int, s: Sock = socks.last()) {
         s.events.closed(LiveWire.Close(word, code, false))
         host.run()
+        pump()
     }
 
     @Test
@@ -130,7 +150,7 @@ class LiveReadTest {
         gw(In.Done(3, 0))
         assertEquals(listOf(1, 2, 3), host.started)
         assertEquals(listOf(1, 2, 3), host.done)
-        assertEquals(listOf<Short>(1, 2, 3), host.sinkImpl.got)
+        assertEquals(listOf<Short>(1, 2, 3), out.got)
         assertFalse(read.outstanding)
         assertTrue(host.logs.contains("live speak first_audio_ms=120 say_to_audio_ms=120"))
     }
@@ -150,12 +170,12 @@ class LiveReadTest {
         audio(3)
         gw(In.Stopped(2))
         assertEquals(listOf(1), host.started)
-        assertEquals(listOf<Short>(1), host.sinkImpl.got)
+        assertEquals(listOf<Short>(1), out.got)
         assertEquals(3, read.say("셋"))
         gw(In.Start(3))
         audio(4)
         assertEquals(listOf(1, 3), host.started)
-        assertEquals(listOf<Short>(1, 4), host.sinkImpl.got)
+        assertEquals(listOf<Short>(1, 4), out.got)
         read.stop()
         read.stop()
         assertEquals("one stop per batch", 2, s.sent.count { it == "stop" })
@@ -169,7 +189,7 @@ class LiveReadTest {
         gw(In.Start(1))
         gw(In.Done(1, 2))
         gw(In.Skipped(2, "limit"))
-        assertEquals(listOf("skipped_limit"), host.rest)
+        assertEquals(listOf("skipped_limit" to false), host.rest)
         assertTrue(read.usable)
     }
 
@@ -179,7 +199,7 @@ class LiveReadTest {
         read.say("하나")
         gw(In.Start(1))
         drop(null, -1)
-        assertEquals(listOf("closed_network"), host.rest)
+        assertEquals("the sentence being read broke off", listOf("closed_network" to true), host.rest)
         assertTrue("it had opened: not a failed open", read.usable)
         assertEquals(1, read.say("다음 답"))
         assertEquals(2, socks.size)
@@ -224,7 +244,7 @@ class LiveReadTest {
     fun errorWordsOnTheSpeakSocket() {
         fun case(word: String, code: Int): Host {
             val h = Host()
-            val r = LiveRead(opener, h) { clock }
+            val r = LiveRead(opener, h, Out(), thread = false) { clock }
             r.open()
             socks.last().events.opened(10)
             h.run()
@@ -242,7 +262,7 @@ class LiveReadTest {
             assertTrue(w, case(w, c).fallbacks.isEmpty())
         }
         val h = Host()
-        val r = LiveRead(opener, h) { clock }
+        val r = LiveRead(opener, h, Out(), thread = false) { clock }
         r.open()
         socks.last().events.closed(LiveWire.Close("bad_request", 4400, false))
         h.run()
@@ -263,7 +283,7 @@ class LiveReadTest {
         s.events.closed(LiveWire.Close(null, 1000, true))
         host.run()
         assertTrue(host.started.isEmpty())
-        assertTrue(host.sinkImpl.got.isEmpty())
+        assertTrue(out.got.isEmpty())
         assertTrue(host.rest.isEmpty())
     }
 
@@ -271,14 +291,82 @@ class LiveReadTest {
     fun gapsAreCountedWhileMoreIsExpected() {
         opened()
         read.prepare()
-        read.play(more = true, pendingSecs = 0.3f)
-        read.play(more = true, pendingSecs = 0f)
-        clock += 180
-        read.play(more = true, pendingSecs = 0f)
-        clock += 20
-        read.play(more = true, pendingSecs = 0.2f)
-        read.play(more = false, pendingSecs = 0f)
+        read.say("하나")
+        gw(In.Start(1))
+        audio(*ShortArray(2400) { 1 })
+        read.tick(more = true, active = true)
+        out.played = 2400
+        read.tick(more = true, active = true)
+        clock += 200
+        read.tick(more = true, active = true)
+        audio(*ShortArray(2400) { 1 })
+        read.tick(more = true, active = true)
+        read.tick(more = false, active = true)
         read.replyDone()
-        assertTrue(host.logs.contains("live speak gaps=1 gap_ms_max=200"))
+        assertTrue(host.logs.toString(), host.logs.contains("live speak gaps=1 gap_ms_max=200"))
+    }
+
+    /** v1.2 (a): `skipped` after `start` of the same sentence = it broke off mid-way: not re-read, D7, the rest goes on */
+    @Test
+    fun aSkippedAfterStartIsABrokenSentence() {
+        opened()
+        read.say("하나")
+        read.say("둘")
+        read.say("셋")
+        gw(In.Start(1))
+        gw(In.Done(1, 2))
+        gw(In.Start(2))
+        audio(5, 6)
+        gw(In.Skipped(2, "upstream"))
+        assertEquals(listOf("skipped_upstream" to true), host.rest)
+        assertEquals(listOf(1, 2), host.started)
+    }
+
+    /** The audio already received plays first; the 'broke' marker reaches the view model after it. */
+    @Test
+    fun aDropMidReplyWaitsForTheAudioAlreadyReceived() {
+        opened()
+        read.say("하나")
+        gw(In.Start(1))
+        out.room = 0
+        audio(1, 2, 3)
+        socks.last().events.closed(LiveWire.Close(null, -1, false))
+        host.run()
+        pump()
+        assertTrue("the speaker is full: the marker waits behind the audio", host.rest.isEmpty())
+        out.room = Int.MAX_VALUE
+        pump()
+        assertEquals(listOf<Short>(1, 2, 3), out.got)
+        assertEquals(listOf("closed_network" to true), host.rest)
+    }
+
+    @Test
+    fun theWatchdogEndsASentenceWhoseDoneNeverComes() {
+        opened()
+        read.say("하나")
+        read.say("둘")
+        gw(In.Start(1))
+        audio(1, 2)
+        out.played = 2
+        read.tick(more = true, active = true)
+        clock += 9_999
+        read.tick(more = true, active = true)
+        assertTrue(host.rest.isEmpty())
+        clock += 1
+        read.tick(more = true, active = true)
+        assertTrue(host.logs.contains("live speak watchdog"))
+        assertEquals(listOf("watchdog" to true), host.rest)
+        assertEquals("stop", socks.last().sent.last())
+        assertTrue("the speaker was emptied", out.flushes >= 1)
+    }
+
+    @Test
+    fun noWatchdogWhenNothingIsGoingOn() {
+        opened()
+        repeat(5) {
+            clock += 10_000
+            read.tick(more = false, active = false)
+        }
+        assertTrue(host.rest.isEmpty())
     }
 }

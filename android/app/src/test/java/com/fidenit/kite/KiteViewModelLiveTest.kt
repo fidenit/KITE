@@ -3,7 +3,6 @@ package com.fidenit.kite
 import android.app.Application
 import android.os.Looper
 import com.fidenit.kite.voice.LiveEvents
-import com.fidenit.kite.voice.Eleven
 import com.fidenit.kite.voice.LiveListen
 import com.fidenit.kite.voice.LiveSpeak
 import com.fidenit.kite.voice.LiveWire
@@ -56,23 +55,7 @@ class KiteViewModelLiveTest {
 
     private val speaks = mutableListOf<Speak>()
 
-    private class Sink : Eleven.Sink {
-        val got = mutableListOf<Short>()
-
-        @Volatile
-        var pending = 0f
-        var stops = 0
-        override fun push(pcm: ShortArray, n: Int) {
-            for (i in 0 until n) got.add(pcm[i])
-        }
-
-        override fun pendingSecs() = pending
-        override fun stop() {
-            stops++
-        }
-    }
-
-    private val sink = Sink()
+    private val sink = LiveReadTest.Out()
     private lateinit var vm: KiteViewModel
 
     @Before
@@ -85,6 +68,7 @@ class KiteViewModelLiveTest {
         vm.liveListenOverride = LiveListen.Opener { _, ev -> Sock(ev).also { socks.add(it) } }
         vm.liveSpeakOverride = LiveSpeak.Opener { ev -> Speak(ev).also { speaks.add(it) } }
         vm.sinkOverride = sink
+        vm.livePlayThread = false // the playback queue runs when the test pumps it
         vm.micFramesOn = false // Robolectric's microphone sends silence as fast as it can: the test feeds the frames itself
     }
 
@@ -104,10 +88,14 @@ class KiteViewModelLiveTest {
     private fun sp(m: In) {
         speaks.last().events.message(m)
         idle()
+        vm.livePump()
+        idle()
     }
 
     private fun spAudio(vararg v: Short) {
         speaks.last().events.audio(shortArrayOf(*v))
+        idle()
+        vm.livePump()
         idle()
     }
 
@@ -193,15 +181,15 @@ class KiteViewModelLiveTest {
         assertNotNull(vm.board.card("k1"))
         assertNull(vm.board.card("k2"))
         spAudio(1, 2)
-        assertEquals(listOf<Short>(1, 2), sink.got)
+        assertEquals(listOf<Short>(1, 2), sink.got.take(2))
         sp(In.Done(1, 8))
         sp(In.Start(2))
         assertNotNull(vm.board.card("k2"))
+        spAudio(*ShortArray(4800) { 3 }) // 0.2 s
         sp(In.Done(2, 8))
-        sink.pending = 0.3f
         vm.liveReadTick()
         assertTrue("still playing", vm.speaking)
-        sink.pending = 0f
+        sink.played = 4802
         vm.liveReadTick()
         assertFalse("played out, nothing more pending", vm.speaking)
         vm.converse(false)
@@ -238,13 +226,13 @@ class KiteViewModelLiveTest {
         sp(In.Start(1))
         spAudio(1)
         loud()
-        gw(In.Partial("잠깐"))
+        gw(In.Partial("아니 그거"))
         assertTrue("one partial is not enough", vm.speaking)
         loud()
-        gw(In.Partial("잠깐 멈춰"))
+        gw(In.Partial("아니 그거 말고"))
         assertFalse(vm.speaking)
         assertEquals("stop", speaks.last().sent.last())
-        assertTrue(sink.stops >= 1)
+        assertTrue("the speaker was emptied", sink.flushes >= 1)
         assertNotNull("queued cards are still shown", vm.board.card("k2"))
         spAudio(9)
         sp(In.Done(1, 8))
@@ -286,9 +274,11 @@ class KiteViewModelLiveTest {
         sp(In.Start(1))
         speaks.last().events.closed(LiveWire.Close(null, -1, false))
         idle()
+        vm.livePump() // the audio already received plays first, then the 'broke' marker
+        idle()
         assertNotNull(vm.board.card("k1"))
         assertNotNull("the second sentence was popped by speak()", vm.board.card("k2"))
-        assertNull("one drop of an open socket is not D9", vm.error)
+        assertEquals("the sentence being read broke off: D7, not D9", ProVoice.brokeOff(false), vm.error)
     }
 
     @Test
@@ -310,5 +300,34 @@ class KiteViewModelLiveTest {
         idle()
         assertEquals("no more speak sockets", 2, speaks.size)
         assertNull("D9 once", vm.error)
+    }
+
+    /** v1.2 (a): `skipped` after `start` = the sentence broke off: D7 once, not re-read, the rest goes the earlier way */
+    @Test
+    fun aSkippedAfterStartShowsD7OnceAndTheRestGoesOn() {
+        twoSentences()
+        vm.store.elevenKey = ""
+        sp(In.Start(1))
+        spAudio(1)
+        sp(In.Skipped(1, "upstream"))
+        assertEquals(ProVoice.brokeOff(false), vm.error)
+        assertNotNull("the second sentence was popped by speak()", vm.board.card("k2"))
+        assertEquals("stop", speaks.last().sent.last())
+    }
+
+    @Test
+    fun theWatchdogEndsSpeakingWhenDoneNeverComes() {
+        twoSentences()
+        vm.store.elevenKey = ""
+        sp(In.Start(1))
+        spAudio(1)
+        sink.played = 1
+        vm.liveReadTick()
+        assertTrue(vm.speaking)
+        Thread.sleep(10_100)
+        vm.liveReadTick()
+        idle()
+        assertNotNull("the rest went the earlier way", vm.board.card("k2"))
+        assertEquals(ProVoice.brokeOff(false), vm.error)
     }
 }

@@ -15,6 +15,9 @@ object LiveRules {
     /** 게이트웨이가 `ready` 에 vad_s 를 주지 않았을 때의 말 끝 기다림 (초, v1.1 §3.2) */
     const val VAD_S = 1.5
 
+    /** 게이트웨이가 `ready` 에 min_quiet_s 를 주지 않았을 때: 일찍 끝내기 전에 적어도 이만큼 조용해야 한다 (초, v1.2 D11) */
+    const val MIN_QUIET_S = 0.4
+
     /** 일찍 끝낸 뒤 이만큼 안에 새 말이 시작되면 잘랐을 수 있다고 적는다 (v1.1 §3.2) */
     const val MAYBE_CUT_MS = 1000L
 
@@ -32,8 +35,12 @@ object LiveRules {
         return kotlin.math.sqrt(sum / n).toFloat()
     }
 
-    /** D11: 이만큼(ms) 조용하면 말이 끝난 것으로 본다 = vad_s × (1 − tp) */
-    fun earlyQuietMs(vadS: Double, tp: Double): Long = Math.round(vadS * (1 - tp.coerceIn(0.0, 1.0)) * 1000)
+    /** D11 (v1.2): 이만큼(ms) 조용하면 말이 끝난 것으로 본다 = max(min_quiet_s, vad_s × (1 − tp)) */
+    fun earlyQuietMs(vadS: Double, tp: Double, minQuietS: Double = MIN_QUIET_S): Long =
+        maxOf(Math.round(minQuietS * 1000), Math.round(vadS * (1 - tp.coerceIn(0.0, 1.0)) * 1000))
+
+    /** 실시간 음성을 쓰는가: Pro 이고 서버가 `voice_live` 라고 했을 때 (시험은 가짜 소켓을 주면) */
+    fun realtime(pro: Boolean, voiceLive: String, testSocket: Boolean): Boolean = (pro && voiceLive == "1") || testSocket
 
     /** 상태 줄에 보일 들은 말의 끝 부분 길이 (가장 새 낱말이 보이게) */
     const val TAIL = 24
@@ -151,7 +158,8 @@ object LiveRules {
         if (c.byUs) return Act.NOTHING
         return when (c.fault) {
             LiveWire.Fault.REPLACED -> Act.NOTHING
-            LiveWire.Fault.IDLE -> Act.REOPEN
+            // idle: 다시 열기 규칙과 같은 간격·횟수 (그사이 partial/final 이 있었으면 처음부터, v1.2), session_max: 조용히 바로
+            LiveWire.Fault.IDLE -> if (c.word == "session_max") Act.REOPEN else Act.RETRY
             LiveWire.Fault.BAD -> Act.RETRY_ONCE
             LiveWire.Fault.DEVICE -> Act.DEVICE
             LiveWire.Fault.OFF, LiveWire.Fault.KEY -> Act.HTTP
