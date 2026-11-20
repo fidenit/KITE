@@ -224,11 +224,11 @@ class GatewayLinkTest {
         val l = link(en = true).also { it.onRefused = { k, c -> seen.add("$k:$c") } }
         val e1 = runCatching { l.clean("r-1") }.exceptionOrNull()
         assertTrue(e1 is SshFatal)
-        assertTrue(e1!!.message!!, e1.message!!.contains("does not know this phone"))
+        assertTrue(e1!!.message!!, e1.message!!.contains("the stop request did not arrive"))
         val e2 = runCatching { l.upload("r-1", "t") }.exceptionOrNull()
         assertTrue(e2 is SshFatal)
         assertTrue(e2!!.message!!.contains("4821"))
-        assertTrue(runCatching { l.follow("r-1", 0) {} }.exceptionOrNull()!!.message!!.contains("blocked"))
+        assertTrue(runCatching { l.follow("r-1", 0) {} }.exceptionOrNull()!!.message!!.contains("its result was not received"))
         assertTrue(runCatching { l.start("r-1") {} }.exceptionOrNull() is SshFatal)
         assertEquals(listOf("unknown:", "pending:4821", "revoked:", "role_not_supported:"), seen)
         assertTrue(runCatching { l.stop("r-1") {} }.exceptionOrNull() is RemoteFail) // 500: refused, not a drop
@@ -238,9 +238,9 @@ class GatewayLinkTest {
         assertEquals(2, l.follow("r-1", 0) {}.first) // follow broken
         // Korean texts
         server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"pending","code":"1234"}"""))
-        assertEquals("이 폰은 아직 허용되지 않았습니다 (허용 대기 1234) → 서버에 멈춤·치우기를 전하지 못했습니다 → 허용된 뒤 다시 보내 주세요.", runCatching { link().clean("r-1") }.exceptionOrNull()!!.message)
+        assertEquals("서버가 이 폰을 허용하지 않습니다 → 멈추라는 요청을 전하지 못했습니다 (서버에서는 계속 돌 수 있습니다) → 서버에서 이 기기를 허용해 주세요", runCatching { link().clean("r-1") }.exceptionOrNull()!!.message)
         server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"pending","code":"1234"}"""))
-        assertEquals("이 폰은 아직 허용되지 않았습니다 (허용 대기 1234) → 이 말은 보내지 않았습니다 → 허용된 뒤 다시 보내 주세요.", runCatching { link().upload("r-1", "t") }.exceptionOrNull()!!.message)
+        assertEquals("허용 대기 1234 → 이 말은 보내지 않았습니다 → 서버에서 이 번호를 허용한 뒤 다시 보내 주세요", runCatching { link().upload("r-1", "t") }.exceptionOrNull()!!.message)
     }
 
     // ------------------------------------------------------------ ClaudeCode 의 고리 그대로
@@ -356,7 +356,7 @@ class GatewayLinkTest {
 
     @Test
     fun startFailKindsGiveTheirTexts() {
-        for ((kind, text) in listOf("busy" to "서버가 지금 바쁩니다", "noin" to "제대로 올라가지", "cd" to "작업 폴더", "start" to "시작하지 못했습니다")) {
+        for ((kind, text) in listOf("busy" to "서버가 지금 바쁩니다", "noin" to "서버가 이 말을 받지 않았습니다", "cd" to "서버가 이 말을 받지 않았습니다", "start" to "서버가 이 말을 받지 않았습니다")) {
             val f = Fake()
             f.startAnswer = { MockResponse().setBody("APERITFAIL $kind\n") }
             val e = runCatching { cc(f).run("t", { false }) {} }.exceptionOrNull()
@@ -481,7 +481,7 @@ class GatewayLinkTest {
         f.followAnswer = { _, _ -> MockResponse().setResponseCode(401).setBody("""{"error":"unknown"}""") }
         val e = runCatching { cc(f).run("t", { false }) {} }.exceptionOrNull()
         assertTrue(e is SshFatal)
-        assertTrue(e!!.message!!, e.message!!.contains("보냈지만 결과를 받지 못해"))
+        assertTrue(e!!.message!!, e.message!!.contains("서버로 갔지만 결과를 받지 못했습니다"))
     }
 
     @Test
@@ -546,7 +546,7 @@ class GatewayLinkTest {
         val g = Fake()
         g.inputPlan = { MockResponse().setResponseCode(413).setBody("""{"error":"too_large"}""") }
         val u = runCatching { cc(g).run("t", { false }) {} }.exceptionOrNull()
-        assertTrue(u!!.message!!, u.message!!.contains("서버가 이 말을 받지 않았습니다 (HTTP 413 too_large)"))
+        assertTrue(u!!.message!!, u.message!!.contains("보내는 내용이 너무 큽니다") && !u.message!!.contains("413"))
     }
 
     @Test
@@ -617,7 +617,7 @@ class GatewayLinkTest {
     fun textsFitTheirSituation() {
         val h = GatewayLink(base(), { "apd_bad\nvalue" })
         val stop = runCatching { h.stop("r-1") {} }.exceptionOrNull()!!.message!!
-        assertTrue(stop, stop.contains("멈춤·치우기를 전하지 못했습니다") && !stop.contains("보내지 않았습니다"))
+        assertTrue(stop, stop.contains("멈추라는 요청을 전하지 못했습니다") && !stop.contains("보내지 않았습니다"))
         val up = runCatching { h.upload("r-1", "t") }.exceptionOrNull()!!.message!!
         assertTrue(up, up.contains("보내지 않았습니다"))
         val long = com.fidenit.kite.engine.GatewayText.lineTooLong(false)

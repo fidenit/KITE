@@ -39,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -166,12 +167,15 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
         val ordered = waiting + cards.filter { it !in waiting }.sortedBy { -Decide.level(importance[it.id]) }
         if (ordered.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text(
-                    if (english) "Tap the microphone and talk,\nor type below." else "마이크를 누르고 말하거나\n아래에 적어 보세요.",
-                    color = C.faint,
-                    fontSize = 16.sp,
-                    lineHeight = 24.sp,
-                )
+                // Pro 에는 말로 대화하기가 없고 화면에 안내 문장을 두지 않는다 (A2)
+                if (!com.fidenit.kite.BuildConfig.PRO) {
+                    Text(
+                        if (english) "Tap the microphone and talk,\nor type below." else "마이크를 누르고 말하거나\n아래에 적어 보세요.",
+                        color = C.faint,
+                        fontSize = 16.sp,
+                        lineHeight = 24.sp,
+                    )
+                }
             }
         } else {
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -187,6 +191,15 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
 private fun BottomBar(vm: KiteViewModel, english: Boolean) {
     val context = LocalContext.current
     var input by remember { mutableStateOf("") }
+    // Pro: 보내기 전에 막힌 말은 입력칸으로 돌아온다 (A4)
+    if (com.fidenit.kite.BuildConfig.PRO) {
+        LaunchedEffect(vm.refill) {
+            vm.refill?.let {
+                if (input.isBlank()) input = it
+                vm.refill = null
+            }
+        }
+    }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) vm.converse(true) else vm.error = if (english) "Microphone permission is needed to talk." else "말로 대화하려면 마이크 권한이 필요합니다."
     }
@@ -236,7 +249,8 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
                     Pill(if (english) "Stop" else "멈춤", color = C.red) { vm.stop() }
                     Spacer(Modifier.width(8.dp))
                 }
-                // 마이크: 켜져 있으면 들리는 소리 크기만큼 테두리가 밝아진다
+                // 마이크: 켜져 있으면 들리는 소리 크기만큼 테두리가 밝아진다. Pro 1단계에는 없다 (A1)
+                if (!com.fidenit.kite.BuildConfig.PRO) {
                 val on = vm.converse
                 val glow = if (on) (vm.micLevel * 12f).coerceIn(0f, 1f) else 0f
                 Box(
@@ -259,6 +273,7 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(if (on) (if (english) "On" else "켜짐") else (if (english) "Talk" else "대화"), color = if (on) C.bg else C.text, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
                 }
             }
         }

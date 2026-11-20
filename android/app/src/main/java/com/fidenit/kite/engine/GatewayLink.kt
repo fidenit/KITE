@@ -23,45 +23,92 @@ enum class LinkPhase { BEFORE, FOLLOW, AFTER }
 
 /** 게이트웨이가 거절했을 때 보여 줄 글 (한국어/영어). `kind` = unknown / pending / revoked / role_not_supported … */
 object GatewayText {
-    fun refused(kind: String, code: String, en: Boolean, phase: LinkPhase = LinkPhase.BEFORE): String {
-        val problem = when (kind) {
-            "pending" -> if (en) "This phone is not approved yet (waiting $code)" else "이 폰은 아직 허용되지 않았습니다 (허용 대기 $code)"
-            "revoked" -> if (en) "This phone was blocked on the server" else "이 폰은 서버에서 막혔습니다"
-            "unknown" -> if (en) "The server does not know this phone" else "서버가 이 폰을 알지 못합니다"
-            else -> if (en) "This phone's access level cannot be used yet ($kind)" else "이 폰에 허용된 범위로는 아직 쓸 수 없습니다 ($kind)"
+    /**
+     * 게이트웨이가 이 폰을 거절했다 (401·403). 보내기 전이면 이유별 한 줄 (허용 대기·막힘·잊힘·그 밖), 따라 읽는 중이나 멈춤·치우기면 이유와 상관없이 그 상황의 한 줄.
+     * `id8` = 기기 번호 앞 8글자.
+     */
+    fun refused(kind: String, code: String, en: Boolean, phase: LinkPhase = LinkPhase.BEFORE, id8: String = ""): String = when (phase) {
+        LinkPhase.FOLLOW -> if (en) "The server does not allow this phone → the message reached the server but its result was not received → have this device approved, then ask again if you need the result"
+        else "서버가 이 폰을 허용하지 않습니다 → 이 말은 서버로 갔지만 결과를 받지 못했습니다 → 서버에서 이 기기를 허용한 뒤, 결과가 필요하면 다시 물어 주세요"
+        LinkPhase.AFTER -> if (en) "The server does not allow this phone → the stop request did not arrive (it may keep running on the server) → have this device approved on the server"
+        else "서버가 이 폰을 허용하지 않습니다 → 멈추라는 요청을 전하지 못했습니다 (서버에서는 계속 돌 수 있습니다) → 서버에서 이 기기를 허용해 주세요"
+        LinkPhase.BEFORE -> when (kind) {
+            "pending" -> waiting(code, en)
+            "revoked" -> if (en) "This phone (device $id8) is blocked on the server → this message was not sent → have this device approved again on the server"
+            else "이 폰(기기 $id8)은 서버에서 막혔습니다 → 이 말은 보내지 않았습니다 → 서버에서 이 기기를 다시 허용해 주세요"
+            "unknown" -> forgotten(en)
+            else -> if (en) "The server did not allow this phone to do this → this message was not sent → check device $id8 on the server"
+            else "서버가 이 폰의 사용을 허용하지 않았습니다 → 이 말은 보내지 않았습니다 → 서버에서 이 기기($id8)를 확인해 주세요"
         }
-        val done = when (phase) {
-            LinkPhase.BEFORE -> if (en) "this message was not sent" else "이 말은 보내지 않았습니다"
-            LinkPhase.FOLLOW -> if (en) "this message was sent, but its result could not be received and the app ended it here" else "이 말은 보냈지만 결과를 받지 못해 화면에서는 여기서 끝냈습니다"
-            LinkPhase.AFTER -> if (en) "the stop or clean-up could not be delivered to the server" else "서버에 멈춤·치우기를 전하지 못했습니다"
-        }
-        val todo = when (kind) {
-            "pending" -> if (en) "send it again once it is approved" else "허용된 뒤 다시 보내 주세요"
-            "revoked" -> if (en) "it has to be approved on the server again" else "서버에서 이 폰을 다시 허용해야 합니다"
-            "unknown" -> if (en) "open the app again to register it again" else "앱을 다시 열면 다시 등록합니다"
-            else -> if (en) "its level has to be changed on the server" else "서버에서 이 폰의 범위를 바꿔야 합니다"
-        }
-        return "$problem → $done → $todo."
     }
 
-    /** 앱에 넣은 게이트웨이 주소나 이 폰의 정보로 요청을 만들 수 없다 (잘못 만든 빌드). */
+    /** B6: 보내기를 눌렀는데 이 폰은 허용을 기다린다. */
+    fun waiting(code: String, en: Boolean): String = if (en) "Waiting $code → this message was not sent → send it again once this number is approved on the server"
+    else "허용 대기 $code → 이 말은 보내지 않았습니다 → 서버에서 이 번호를 허용한 뒤 다시 보내 주세요"
+
+    /** B9: 서버가 이 폰을 잊었고 지금 다시 등록하지 못했다. */
+    fun forgotten(en: Boolean): String = if (en) "The server no longer knows this phone → this message was not sent → send again to get a new waiting number"
+    else "서버가 이 폰을 잊었습니다 → 이 말은 보내지 않았습니다 → 다시 보내면 새 허용 대기 번호가 나옵니다"
+
+    /** B1: 켤 때·앞으로 돌아올 때, 이 폰은 막혔다 (보내던 말은 없다). */
+    fun blockedAtStart(id8: String, en: Boolean): String = if (en) "This phone (device $id8) is blocked on the server → nothing was sent → have this device approved again on the server"
+    else "이 폰(기기 $id8)은 서버에서 막혔습니다 → 보낸 말은 없습니다 → 서버에서 이 기기를 다시 허용해 주세요"
+
+    /** B2: 서버가 이 폰을 받아 주지 않았다 (400·413·두 번의 409). `send` 면 보내기를 누른 뒤. */
+    fun notAccepted(id8: String, en: Boolean, send: Boolean): String = if (en) "The server did not accept this phone → ${if (send) "this message was not sent" else "nothing was sent"} → tell whoever gave you this app (device $id8)"
+    else "서버가 이 폰을 받아 주지 않았습니다 → ${if (send) "이 말은 보내지 않았습니다" else "보낸 말은 없습니다"} → 이 앱을 준 사람에게 알려 주세요 (기기 $id8)"
+
+    /** B5: 서버의 더 새 화면으로 바꿨다. */
+    fun newerOnServer(en: Boolean): String = if (en) "The server had a newer screen and it replaced this one → your last change on this phone is not shown → say it again if something is missing"
+    else "서버에 더 새 화면이 있어 그것으로 바꿨습니다 → 이 폰에서 마지막에 한 변경은 화면에서 빠졌습니다 → 빠진 것이 있으면 다시 말해 주세요"
+
+    /** B7: 앱에 들어 있는 1회용 허용권을 서버가 받지 않았다. `kind` = used / expired / revoked / invalid. */
+    fun ticketRejected(kind: String, code: String, en: Boolean): String {
+        val why = when (kind) {
+            "used" -> if (en) "already used" else "이미 씀"
+            "expired" -> if (en) "expired" else "기한 지남"
+            "revoked" -> if (en) "cancelled" else "취소됨"
+            else -> if (en) "not valid" else "맞지 않음"
+        }
+        return if (en) "The server did not accept this app's one-time pass ($why) → this phone is waiting, number $code → have this number approved on the server"
+        else "앱에 들어 있는 1회용 허용권을 서버가 받지 않았습니다 ($why) → 이 폰은 허용 대기 $code 입니다 → 서버에서 이 번호를 허용해 주세요"
+    }
+
+    /** B12: 앱에 들어 있는 서버 주소가 잘못됐다. 멈춤·치우기 호출이면 가운데가 다르다. */
     fun badConfig(en: Boolean, phase: LinkPhase = LinkPhase.BEFORE): String {
-        val done = when (phase) {
-            LinkPhase.BEFORE -> if (en) "this message was not sent" else "이 말은 보내지 않았습니다"
-            LinkPhase.FOLLOW -> if (en) "its result could not be received" else "결과를 받지 못했습니다"
-            LinkPhase.AFTER -> if (en) "the stop or clean-up could not be delivered to the server" else "서버에 멈춤·치우기를 전하지 못했습니다"
-        }
-        return if (en) "The gateway address built into this app is not valid → $done → install a correctly built app."
-        else "앱에 넣은 게이트웨이 주소가 올바르지 않습니다 → $done → 제대로 만든 앱을 다시 설치해 주세요."
+        val done = if (phase == LinkPhase.AFTER) (if (en) "the stop request did not arrive" else "멈추라는 요청을 전하지 못했습니다")
+        else (if (en) "this message was not sent" else "이 말은 보내지 않았습니다")
+        return if (en) "The server address inside this app is wrong → $done → get the app again from whoever gave it to you"
+        else "이 앱에 들어 있는 서버 주소가 잘못되었습니다 → $done → 이 앱을 준 사람에게 다시 받아 설치해 주세요"
     }
 
-    /** 서버의 답 한 줄이 [SSE_MAX_LINE] 보다 길어 받을 수 없었다 (서버의 실행은 게이트웨이가 멈춘다). */
-    fun lineTooLong(en: Boolean): String = if (en) "One line of the server's answer was too long for the phone to receive → what arrived before it is on the board and the rest was not received → ask again in smaller steps."
-    else "서버의 답 한 줄이 너무 길어 폰이 받을 수 없었습니다 → 그 앞까지 받은 것만 화면에 반영했고 나머지는 받지 않았습니다 → 더 작게 나눠 다시 말해 주세요."
+    /** B14: 서버가 보낸 것을 받지 않았다. `tooLarge` = 413. 자세한 이유는 화면이 아니라 pro.log 로. */
+    fun messageRefused(tooLarge: Boolean, en: Boolean): String = when {
+        tooLarge -> if (en) "What you are sending is too large → this message was not sent → shorten it and send again"
+        else "보내는 내용이 너무 큽니다 → 이번 말은 보내지 않았습니다 → 말을 줄여서 다시 보내 주세요"
+        else -> if (en) "The server did not accept this message → it was not sent → send it again shortly"
+        else "서버가 이 말을 받지 않았습니다 → 이번 말은 보내지 않았습니다 → 잠시 뒤 다시 보내 주세요"
+    }
 
-    /** 빌드에 넣은 등록 표가 이미 쓰였거나 기한이 지났다 (`ticket` = used / expired / revoked / invalid): 이 폰은 번호로 허용을 기다린다. */
-    fun ticketRejected(kind: String, code: String, en: Boolean): String = if (en) "The built-in enrollment ticket was already used or has expired ($kind) → this phone now waits for approval → approve it on the server with the code $code."
-    else "앱에 넣은 등록 표가 이미 쓰였거나 기한이 지났습니다 ($kind) → 이 폰은 허용을 기다립니다 → 서버에서 번호 $code 로 허용해 주세요."
+    /** B16a: 턴 전 호출에서 서버가 답하지 않는다 (408·429·502-504·520-530). */
+    fun notAnswering(en: Boolean): String = if (en) "The server is not answering right now → this message was not sent → send it again shortly"
+    else "서버가 지금 답하지 않습니다 → 이 말은 보내지 않았습니다 → 잠시 뒤 다시 보내 주세요"
+
+    /** B16b: 턴 전 호출을 서버가 처리하지 못했다 (404·500 …). */
+    fun couldNotHandle(en: Boolean): String = if (en) "The server could not handle this message → it was not sent → send it again shortly"
+    else "서버가 이 말을 처리하지 못했습니다 → 이 말은 보내지 않았습니다 → 잠시 뒤 다시 보내 주세요"
+
+    /** B16c: 서버의 답을 읽을 수 없다. */
+    fun unreadableAnswer(en: Boolean): String = if (en) "The server's answer could not be read → this message was not sent → send it again shortly"
+    else "서버의 답을 읽을 수 없습니다 → 이 말은 보내지 않았습니다 → 잠시 뒤 다시 보내 주세요"
+
+    /** B17: 서버가 지금 요청을 받지 못한다 (429·5xx 로 상태 확인이 막힘). */
+    fun limited(en: Boolean): String = if (en) "The server cannot take requests right now → this message was not sent → send it again shortly"
+    else "서버가 지금 요청을 받지 못합니다 → 이 말은 보내지 않았습니다 → 잠시 뒤 다시 보내 주세요"
+
+    /** B19: 답의 한 줄이 [SSE_MAX_LINE] 보다 길어 받지 못했다. */
+    fun lineTooLong(en: Boolean): String = if (en) "One line of the answer was too long to receive → the screen shows what arrived before it → send the same message again"
+    else "답의 한 줄이 너무 길어 받지 못했습니다 → 받은 데까지만 화면에 반영했습니다 → 같은 말을 다시 보내 주세요"
 
     /** 시작에서 `APERITFAIL busy`: 서버에서 이미 여러 말이 돌거나 메모리가 모자라다. */
     fun busy(en: Boolean): String = if (en) "The server is busy (other messages are running or memory is short) → this message was not started → send it again shortly."
@@ -230,6 +277,19 @@ class GatewayLink(
     @Volatile
     var onRefused: ((String, String) -> Unit)? = null
 
+    /** 화면 글에 넣는 기기 번호 앞 8글자. */
+    @Volatile
+    var id8: () -> String = { "" }
+
+    /** 화면에는 내지 않는 자세한 이유 (HTTP 코드 따위) 를 남길 곳 (앱에서는 pro.log). 실패해도 아무 일도 없다. */
+    @Volatile
+    var log: (String) -> Unit = {}
+
+    private fun note(line: String) = try {
+        log(line)
+    } catch (_: Exception) {
+    }
+
     private val calls = ConcurrentHashMap.newKeySet<Call>()
     private val followHttp = http.newBuilder().readTimeout(FOLLOW_READ_MS, TimeUnit.MILLISECONDS).callTimeout(0, TimeUnit.MILLISECONDS).build()
 
@@ -266,7 +326,8 @@ class GatewayLink(
             onRefused?.invoke(kind, code)
         } catch (_: Exception) {
         }
-        throw SshFatal(GatewayText.refused(kind, code, english(), phase))
+        note("refused ${r.code} $kind phase=$phase")
+        throw SshFatal(GatewayText.refused(kind, code, english(), phase, id8()))
     }
 
     /** 연결 쪽 문제(게이트웨이가 아직 안 떴거나 터널이 잠깐 끊김)라 다시 해 볼 만한 HTTP 코드. */
@@ -305,8 +366,14 @@ class GatewayLink(
         refusedCheck(resp, phase)
         when {
             resp.isSuccessful -> resp.body?.string().orEmpty()
-            retryable(resp.code) -> throw IOException("서버와의 연결이 끊겼습니다")
-            else -> throw RemoteFail(short(resp))
+            retryable(resp.code) -> {
+                note("short call ${r.url.encodedPath} ${resp.code}")
+                throw IOException(GatewayText.notAnswering(english()))
+            }
+            else -> {
+                note("short call ${r.url.encodedPath} ${short(resp)}")
+                throw RemoteFail(GatewayText.couldNotHandle(english()))
+            }
         }
     }
 
@@ -391,7 +458,8 @@ class GatewayLink(
     private fun info(): JSONObject = try {
         JSONObject(text(req("v1/info").get().build()))
     } catch (e: org.json.JSONException) {
-        throw IOException("bad answer")
+        note("info: not json")
+        throw IOException(GatewayText.unreadableAnswer(english()))
     }
 
     override fun version(): String = info().optString("claude").trim().lineSequence().lastOrNull().orEmpty()
@@ -408,8 +476,17 @@ class GatewayLink(
 
     override fun core(): String = text(req("v1/core").get().build())
 
-    override fun uploadRefusedText(detail: String): String = if (english()) "The server did not accept this message ($detail) → it was not sent → shorten it if it is very long, otherwise send it again shortly."
-    else "서버가 이 말을 받지 않았습니다 ($detail) → 이번 말은 보내지 않았습니다 → 아주 길면 줄여서, 아니면 잠시 뒤 다시 보내 주세요."
+    /** B14: 413 이면 "너무 큽니다", 그 밖은 이유 없이 한 줄 (이유는 [log] 로). */
+    override fun uploadRefusedText(detail: String): String {
+        note("upload refused $detail")
+        return GatewayText.messageRefused(detail.contains("413"), english())
+    }
+
+    /** 시작을 서버가 거절했다 (busy 는 따로): 이유는 [log] 로, 화면에는 B14 의 한 줄. */
+    override fun startRefusedText(kind: String, detail: String): String {
+        note("start refused $kind $detail")
+        return GatewayText.messageRefused(false, english())
+    }
 
     override fun followBrokenText(): String = if (english()) "The server's answer could not be read three times in a row → the work on the server is stopped at the next connection → send the same message again shortly."
     else "서버의 답을 세 번 이어서 읽지 못했습니다 → 서버의 작업은 다음에 연결할 때 멈춥니다 → 잠시 뒤 같은 말을 다시 보내 주세요."

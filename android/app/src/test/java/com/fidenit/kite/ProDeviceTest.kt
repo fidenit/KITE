@@ -307,4 +307,38 @@ class ProDeviceTest {
         }
         assertTrue("${server.requestCount}", server.requestCount <= 2 + 2)
     }
+
+    @Test
+    fun whileWaitingASendChecksAgainAtMostEveryThreeSeconds() {
+        val m = Mem().apply { deviceId = "x"; deviceSecret = "apd_s"; proStatus = "pending"; proCode = "111111" }
+        val d = dev(m, gap = 10_000)
+        server.enqueue(MockResponse().setBody("""{"status":"pending","code":"111111"}"""))
+        assertEquals("pending", d.check().status)
+        clock += 1_000
+        assertEquals("pending", d.check(force = true).status) // 1 s: cached
+        assertEquals(1, server.requestCount)
+        clock += 2_100
+        server.enqueue(MockResponse().setBody("""{"status":"approved","code":""}"""))
+        assertEquals("approved", d.check(force = true).status) // 3.1 s: fresh, the approval is seen at once
+        assertEquals(2, server.requestCount)
+        assertEquals("approved", d.check(force = true).status) // approved: back to the 15 s rule
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun aForgottenPhoneRegistersAgainAtOnceOrSaysItWasForgotten() {
+        val m = Mem().apply { deviceId = "11111111-1111-4111-8111-111111111111"; deviceSecret = "apd_s"; proStatus = "pending"; proCode = "111111" }
+        val d = dev(m)
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"error":"unknown"}"""))
+        server.enqueue(MockResponse().setBody("""{"status":"pending","code":"222222"}"""))
+        val st = d.check(force = true)
+        assertEquals("pending" to "222222", st.status to st.code) // new number in the same check
+        assertEquals("/v1/me", server.takeRequest().path)
+        assertEquals("11111111-1111-4111-8111-111111111111", JSONObject(server.takeRequest().body.readUtf8()).getString("device_id"))
+        clock += 20_000
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"error":"unknown"}"""))
+        server.enqueue(MockResponse().setResponseCode(429).setBody("""{"error":"rate_limited"}"""))
+        assertEquals("forgotten", d.check(force = true).status)
+        assertEquals("pending", m.proStatus) // kept: the next check asks /v1/me again
+    }
 }

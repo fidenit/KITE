@@ -27,7 +27,8 @@ interface DeviceStore {
  * 상태 확인의 주인. [check] 는 몇 번 불려도 서버에 묻는 일은 한 번에 하나이고, 성공한 뒤 [minGapMs] 안에는 다시 묻지 않으며,
  * 실패(연결 안 됨·429·5xx) 뒤에는 15·30·60·120·240·300초 간격을 지킨다. 그 사이에는 마지막 상태를 돌려준다.
  * 400·413(보낸 것이 잘못됨)과 두 번 이어진 409 는 이번 실행에서는 다시 묻지 않는다.
- * 상태 값: approved / pending / revoked, 그 밖에 offline(닿지 않음) / limited(429) / error(5xx) / refused(400·413) / conflict(409 두 번) / nostore(저장소 없음).
+ * 상태 값: approved / pending / revoked, 그 밖에 offline(닿지 않음) / limited(429) / error(5xx) / refused(400·413) / conflict(409 두 번) / nostore(저장소 없음)
+ * / forgotten(서버가 잊었는데 다시 등록하지 못함).
  */
 class ProDevice(
     private val store: DeviceStore,
@@ -80,8 +81,10 @@ class ProDevice(
     fun check(force: Boolean = false): DeviceStatus = synchronized(lock) {
         if (store.memoryOnly) return DeviceStatus("nostore")
         val t = now()
-        // 사용자가 보내기를 눌렀으면 실패 간격을 기다리지 않고 한 번 더 묻는다: 마지막 시도가 [FORCE_GAP_MS] 넘게 지났을 때만 (분당 등록 5번 한도 안)
-        val forced = force && nextAt != Long.MAX_VALUE && t - lastAttempt >= FORCE_GAP_MS
+        // 사용자가 보내기를 눌렀으면 간격을 기다리지 않고 한 번 더 묻는다: 마지막 시도가 [FORCE_GAP_MS] 넘게 지났을 때만 (분당 등록 5번 한도 안).
+        // 허용을 기다리는 중이면 (`/v1/me` 만 묻는다) [PENDING_GAP_MS] 마다 한 번: 방금 허용된 것을 바로 본다.
+        val gap = if (last?.status == "pending") PENDING_GAP_MS else FORCE_GAP_MS
+        val forced = force && nextAt != Long.MAX_VALUE && t - lastAttempt >= gap
         last?.let { if (t < nextAt && !forced) return it }
         lastAttempt = t
         ticketRejected = ""
@@ -104,6 +107,7 @@ class ProDevice(
 
     companion object {
         const val FORCE_GAP_MS = 15_000L
+        const val PENDING_GAP_MS = 3_000L
     }
 
     private fun backoff(n: Int): Long = longArrayOf(15, 30, 60, 120, 240, 300)[n.coerceIn(0, 5)] * 1000
@@ -116,7 +120,15 @@ class ProDevice(
     private fun ask(): DeviceStatus {
         if (store.deviceId.isBlank() || store.deviceSecret.isBlank()) renew()
         var st = if (store.proStatus.isEmpty()) enroll() else enroller.me(store.deviceSecret)
-        if (st.status == "unknown") st = enroll()
+        if (st.status == "unknown") {
+            // 서버가 이 폰을 잊었다 (허용 대기가 30분 지남 등): 같은 이름표로 바로 다시 등록한다. 못 했으면 forgotten.
+            st = try {
+                enroll()
+            } catch (_: Exception) {
+                DeviceStatus("forgotten")
+            }
+            if (st.status in setOf("limited", "error", "unknown")) st = DeviceStatus("forgotten")
+        }
         if (st.status == "conflict") {
             if (renewed) return st // 새 이름표도 409: 더 만들지 않는다
             renewed = true
@@ -161,5 +173,18 @@ class ProDevice(
         }
         last = DeviceStatus(store.proStatus.ifEmpty { "offline" }, store.proCode)
         if (fails == 0) nextAt = 0
+    }
+}
+
+/** 저절로 뜨는 상태 줄을 앱이 켜진 동안 한 번, 상태 낱말이 바뀔 때만 다시 띄우게 한다 (A3). */
+class OnceNotice {
+    private var last = ""
+
+    /** 이 낱말이 지난번과 다르면 참 (그리고 기억한다). */
+    @Synchronized
+    fun changed(word: String): Boolean {
+        if (word == last) return false
+        last = word
+        return true
     }
 }

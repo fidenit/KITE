@@ -145,20 +145,21 @@ fun SettingsScreen(vm: KiteViewModel, onBack: () -> Unit) {
             ServerSettings(vm)
         }
 
-        Section("음성")
-        Hint("말로 대화하려면 ElevenLabs 키가 필요합니다.")
+        // Pro 1단계에는 말로 대화하기가 없다: 음성 칸을 통째로 뺀다 (A1)
         if (!BuildConfig.PRO) {
+            Section("음성")
+            Hint("말로 대화하려면 ElevenLabs 키가 필요합니다.")
             Field("ElevenLabs 키", s.elevenKey, secret = true) { s.elevenKey = it.trim() }
             Field("목소리 ID (비우면 기본 목소리)", s.voiceId) { s.voiceId = it.trim() }
+            Text("대화 언어", color = C.text, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+            Choice(listOf("ko" to "한국어", "en" to "English"), s.lang) { s.lang = it }
+            Text("마이크 민감도  ${"%.3f".format(threshold)}" + if (vm.converse) "   지금 들리는 크기 ${"%.3f".format(vm.micLevel)}" else "", color = C.text, fontSize = 15.sp, modifier = Modifier.padding(top = 10.dp))
+            Hint("이 값보다 큰 소리를 말소리로 봅니다. 조용한데도 듣는 중으로 나오면 올리고, 말을 못 알아채면 내리세요.")
+            Slider(value = threshold, onValueChange = {
+                threshold = it
+                s.micThreshold = "%.3f".format(it)
+            }, valueRange = 0.005f..0.1f)
         }
-        Text("대화 언어", color = C.text, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
-        Choice(listOf("ko" to "한국어", "en" to "English"), s.lang) { s.lang = it }
-        Text("마이크 민감도  ${"%.3f".format(threshold)}" + if (vm.converse) "   지금 들리는 크기 ${"%.3f".format(vm.micLevel)}" else "", color = C.text, fontSize = 15.sp, modifier = Modifier.padding(top = 10.dp))
-        Hint("이 값보다 큰 소리를 말소리로 봅니다. 조용한데도 듣는 중으로 나오면 올리고, 말을 못 알아채면 내리세요.")
-        Slider(value = threshold, onValueChange = {
-            threshold = it
-            s.micThreshold = "%.3f".format(it)
-        }, valueRange = 0.005f..0.1f)
 
         if (!BuildConfig.PRO) {
             Section("판단 모델 (선택)")

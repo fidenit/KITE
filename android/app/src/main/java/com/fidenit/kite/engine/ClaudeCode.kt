@@ -693,7 +693,7 @@ class ClaudeCode(private val ssh: Link, private val cfg: EngineConfig) : Runner 
             return parser.stats
         }
 
-        private fun startFailure(kind: String, detail: String): String = when (kind) {
+        private fun startFailure(kind: String, detail: String): String = ssh.startRefusedText(kind, detail) ?: when (kind) {
             "cd" -> "서버에서 작업 폴더(${cfg.dir.trim().ifEmpty { "~" }})로 갈 수 없습니다 → 이번 말은 실행되지 않았습니다 → 설정에서 작업 폴더를 확인해 주세요."
             "noin" -> "서버에 말이 제대로 올라가지 않았습니다 → 이번 말은 실행되지 않았습니다 → 다시 보내 주세요."
             else -> "서버에서 Claude Code 를 시작하지 못했습니다 → 이번 말은 실행되지 않았습니다 → 서버를 확인한 뒤 다시 보내 주세요.${if (detail.isNotEmpty()) " ($detail)" else ""}"

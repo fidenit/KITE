@@ -613,6 +613,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     /** Pro 의 엔진: 게이트웨이로 닿는 ClaudeCode. 서버의 설정(claude, 폴더, 권한, 모델)은 서버가 정한다. 생각의 깊이는 보내지 않는다. */
     private fun proEngine(): ClaudeCode {
         val link = GatewayLink(BuildConfig.GATEWAY_URL, { store.deviceSecret }, "", { english }, proHttp)
+        link.id8 = { store.deviceId.take(8) }
+        link.log = { line -> proLog("link $line") }
         link.onRefused = { kind, code ->
             device.refused(kind, code)
             viewModelScope.launch { proShow(DeviceStatus(store.proStatus, store.proCode), "") }
@@ -620,11 +622,20 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         return ClaudeCode(link, EngineConfig("claude", "", "default", "", ""))
     }
 
-    /** 받은 상태를 화면에 낸다 (메인 스레드). `st` 가 null 이면 서버에 닿지 않았다. */
-    private fun proShow(st: DeviceStatus?, ticketRejected: String) {
+    /** 켤 때·앞으로 돌아올 때 저절로 뜨는 상태 줄은 앱이 켜진 동안 한 번, 상태가 바뀔 때만 다시 (A3). */
+    private val proNotice = OnceNotice()
+
+    /** 보내기가 보내기 전에 막혔을 때 입력칸에 되돌려 놓을 글 (화면이 가져가고 비운다). */
+    var refill by mutableStateOf<String?>(null)
+
+    /**
+     * 받은 상태를 화면에 낸다 (메인 스레드). `st` 가 null 이면 서버에 닿지 않았다.
+     * `auto` = 켤 때·앞으로 돌아올 때 (오류 줄은 [proNotice] 가 정한 때만), 아니면 보내기·거절 (오류 줄은 던진 예외가 낸다). `seed` = 저장된 상태로 처음 채우기.
+     */
+    private fun proShow(st: DeviceStatus?, ticketRejected: String, auto: Boolean = false, seed: Boolean = false) {
         val en = english
         val now = st?.status ?: "offline"
-        if (now != lastProLogged) {
+        if (!seed && now != lastProLogged) {
             lastProLogged = now
             Thread { proLog("device status=$now id=${store.deviceId.take(8)}" + if (ticketRejected.isNotEmpty()) " ticket=$ticketRejected" else "") }.start()
         }
@@ -632,7 +643,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             "approved" -> {
                 proState = if (en) "Connected" else "연결됨"
                 proLine = ""
-                if (!stateStarted) {
+                if (!seed && !stateStarted) {
                     stateStarted = true
                     stateSync.start(if (File(files, "board.txt").exists()) stateDoc() else null)
                 }
@@ -646,19 +657,30 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 proLine = ""
             }
         }
-        if (st?.status == "revoked") error = GatewayText.refused("revoked", "", en)
-        if (st?.status in setOf("refused", "conflict", "nostore")) error = proBroken(st!!.status, en)
-        if (ticketRejected.isNotEmpty() && st?.status == "pending") error = GatewayText.ticketRejected(ticketRejected, st.code, en)
+        if (seed) return
+        val id8 = store.deviceId.take(8)
+        val word = now + if (ticketRejected.isNotEmpty() && now == "pending") ":$ticketRejected" else ""
+        if (!proNotice.changed(word) || !auto) return
+        when {
+            now == "revoked" -> error = GatewayText.blockedAtStart(id8, en)
+            now == "refused" || now == "conflict" -> error = GatewayText.notAccepted(id8, en, send = false)
+            now == "nostore" -> error = proStoreLine(en)
+            now == "pending" && ticketRejected.isNotEmpty() -> error = GatewayText.ticketRejected(ticketRejected, st!!.code, en)
+        }
     }
 
     /** 이 폰의 상태를 서버에 묻는다 (처음 켤 때는 등록한다). 앱이 켜질 때와 앞으로 돌아올 때 부른다. 실패해도 아무 일도 막지 않는다. */
     private fun proRefresh() {
         viewModelScope.launch {
             yield() // init 이 끝난 뒤에 돈다 (아래에 선언된 속성을 읽는다)
+            if (proState.isEmpty()) proShow(DeviceStatus(store.proStatus.ifEmpty { "offline" }, store.proCode), "", seed = true) // 첫 답 전에도 비어 있지 않게 (A7)
             val r = withContext(Dispatchers.IO) { runCatching { device.check() to device.ticketRejected } }
-            proShow(r.getOrNull()?.first, r.getOrNull()?.second.orEmpty())
+            proShow(r.getOrNull()?.first, r.getOrNull()?.second.orEmpty(), auto = true)
         }
     }
+
+    /** 보내기가 보내기 전에 막혔나 (그 글을 입력칸에 되돌린다). */
+    private fun notSent(msg: String?): Boolean = msg != null && listOf("이 말은 보내지 않았습니다", "이번 말은 보내지 않았습니다", "이번 말은 시작하지 않았습니다", "보내지도 않았습니다", "this message was not sent", "it was not sent", "this message was not started", "nothing was sent").any { msg.contains(it) }
 
     // ---------------------------------------------------------------- APERIT Pro: 상태를 서버에도 (spec §4)
 
@@ -669,10 +691,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     private val stateSync: StateSync by lazy {
         StateSync(StateClient(BuildConfig.GATEWAY_URL, { store.deviceSecret }, proHttp), store, ::applyRemoteState, {
-            viewModelScope.launch {
-                error = if (english) "The server had a newer board → it replaced this phone's last change (the phone's copy was kept aside) → say it again if something is missing"
-                else "서버에 더 새로운 화면이 있었습니다 → 이 폰의 마지막 변경 대신 서버의 것을 띄웠습니다 (폰의 것은 따로 남겼습니다) → 빠진 것이 있으면 다시 말해 주세요"
-            }
+            viewModelScope.launch { error = GatewayText.newerOnServer(english) }
         }, log = ::proLog)
     }
 
@@ -741,33 +760,30 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 보내기 전 (입출력 스레드): 허용된 폰이 아니면 이 말을 보내지 않는다. 서버에 묻는 간격은 [ProDevice] 가 지킨다. */
     private fun proReady(resume: Boolean = false) {
-        // 사용자가 보낸 말이면 실패 간격을 건너뛰고 한 번 더 묻는다 (ProDevice 가 15초 간격을 지킨다). 다시 붙는 턴은 이미 보낸 말이다.
+        // 사용자가 보낸 말이면 간격을 건너뛰고 한 번 더 묻는다 (ProDevice 가 간격을 지킨다: 허용 대기 중 3초, 그 밖 15초). 다시 붙는 턴은 이미 보낸 말이다.
         val st = device.check(force = !resume)
         val rejected = device.ticketRejected
         viewModelScope.launch { proShow(st, rejected) }
         val en = english
+        val id8 = store.deviceId.take(8)
+        val phase = if (resume) com.fidenit.kite.engine.LinkPhase.FOLLOW else com.fidenit.kite.engine.LinkPhase.BEFORE
         when (st.status) {
             "approved" -> return
             "offline" -> throw Exception(
                 if (en) "The server cannot be reached → this message was not sent → check the connection and send it again"
                 else "서버에 닿지 않습니다 → 이 말은 보내지 않았습니다 → 연결을 확인한 뒤 다시 보내 주세요",
             )
-            "limited", "error" -> throw Exception(
-                if (en) "The server cannot take requests right now → this message was not sent → send it again in a minute"
-                else "서버가 지금 요청을 받지 못합니다 → 이 말은 보내지 않았습니다 → 1분쯤 뒤 다시 보내 주세요",
-            )
-            "refused", "conflict", "nostore" -> throw SshFatal(proBroken(st.status, en))
-            else -> throw SshFatal(GatewayText.refused(st.status, st.code, en, if (resume) com.fidenit.kite.engine.LinkPhase.FOLLOW else com.fidenit.kite.engine.LinkPhase.BEFORE))
+            "limited", "error" -> throw Exception(GatewayText.limited(en))
+            "forgotten" -> throw Exception(if (resume) GatewayText.refused("unknown", "", en, phase, id8) else GatewayText.forgotten(en))
+            "refused", "conflict" -> throw SshFatal(GatewayText.notAccepted(id8, en, send = true))
+            "nostore" -> throw SshFatal(proStoreLine(en))
+            else -> throw SshFatal(GatewayText.refused(st.status, st.code, en, phase, id8))
         }
     }
 
-    /** 다시 해도 소용없는 등록 문제의 한 줄. */
-    private fun proBroken(kind: String, en: Boolean): String = when (kind) {
-        "nostore" -> if (en) "This phone's encrypted storage cannot be opened → the phone was not registered and nothing was sent → restart the phone and open the app again"
-        else "이 폰의 암호화 저장소를 열 수 없습니다 → 등록하지 않았고 보내지도 않았습니다 → 폰을 다시 켠 뒤 앱을 다시 열어 주세요"
-        else -> if (en) "The server refused to register this phone ($kind) → nothing was sent → reinstall the app"
-        else "서버가 이 폰의 등록을 받지 않았습니다 ($kind) → 아무것도 보내지 않았습니다 → 앱을 다시 설치해 주세요"
-    }
+    /** 암호화 저장소를 열 수 없다 (B18). */
+    private fun proStoreLine(en: Boolean): String = if (en) "This phone's encrypted storage cannot be opened → the phone was not registered and nothing was sent → restart the phone and open the app again"
+    else "이 폰의 암호화 저장소를 열 수 없습니다 → 등록하지 않았고 보내지도 않았습니다 → 폰을 다시 켠 뒤 앱을 다시 열어 주세요"
 
     /** 처음 켰을 때 설정부터 보여 줘야 하는가 (무료 앱에서 키나 서버가 비어 있을 때). Pro 는 넣을 것이 없다. */
     fun needsSetup(): Boolean = when {
@@ -1075,6 +1091,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 statsLine = "${s.model} · ${"%.1f".format(s.totalMs / 1000.0)}초 · 첫 반응 ${"%.1f".format(s.firstMs / 1000.0)}초$cost" + if (s.limit.isNotEmpty()) " · ${s.limit}" else ""
             }.onFailure { e ->
                 if (e.message != STOPPED && !stopFlag) error = e.message ?: e.toString()
+                if (BuildConfig.PRO && !resume && input.isNotEmpty() && notSent(e.message)) refill = input // A4: 보내지 않은 말은 입력칸으로 되돌린다
             }
             if (unreached) error = stopNotDelivered()
             val wasStopped = stopFlag
@@ -1402,6 +1419,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 말로 대화하기를 켜거나 끈다. 켤 때는 마이크 권한이 이미 있어야 한다. */
     fun converse(on: Boolean) {
+        if (BuildConfig.PRO) return // Pro 1단계에는 말로 대화하기가 없다 (A1)
         if (on && store.elevenKey.isBlank()) {
             error = if (english) "Talking needs an ElevenLabs key. Add it in Settings." else "말로 대화하려면 ElevenLabs 키가 필요합니다. 설정에서 넣어 주세요."
             return

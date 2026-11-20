@@ -49,6 +49,9 @@ interface Link {
     fun uploadRefusedText(detail: String): String =
         "서버에 이 말을 저장하지 못했습니다 → 이번 말은 보내지 않았습니다 → 서버의 저장 공간과 폴더 권한을 확인한 뒤 다시 보내 주세요. ($detail)"
 
+    /** 시작을 서버가 거절했을 때의 한 줄. null 이면 엔진이 지금까지의 글을 쓴다 (SSH). */
+    fun startRefusedText(kind: String, detail: String): String? = null
+
     /** 따라 읽기가 세 번 이어서 고장 났을 때의 한 줄. */
     fun followBrokenText(): String =
         "서버에서 결과를 읽어 오지 못합니다 → 서버의 작업은 다음에 연결할 때 멈춥니다 → 서버의 bash 설정을 확인한 뒤 같은 말을 다시 보내 주세요."

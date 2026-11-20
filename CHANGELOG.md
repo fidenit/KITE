@@ -6,8 +6,8 @@ The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://gith
 
 ## Android 0.2.0 (not released yet)
 
-- **APERIT Pro works with nothing to enter.** On first launch the phone makes its own device id and secret (kept only in the encrypted store, excluded from backup and transfer) and enrolls with our gateway; it is ready once approved, and shows `허용 대기 482913` / `Waiting 482913` while it waits. Turns run detached on the server's Claude Code through the gateway with the same reconnect and restart rules as the SSH engine; the board is kept on the server too and comes back after a reinstall. Settings in Pro show only the connection status and the short device id. Voice and Jev are off in Pro for now.
-- A turn that ended on the server (lost, failed, stopped elsewhere, already cleaned) now shows its end instead of reconnecting again and again.
+- **APERIT Pro works with nothing to enter.** On first launch the phone makes its own device id and secret (kept only in the encrypted store, excluded from backup and transfer) and enrolls with our gateway; it is ready once approved, and shows `허용 대기 482913` / `Waiting 482913` while it waits. Turns run detached on the server's Claude Code through the gateway with the same reconnect and restart rules as the SSH engine. The board is kept on the server too: an approved phone with no saved board loads the board stored on the server. Settings in Pro show only the connection status and the short device id. Pro has no voice yet: the Talk button and the voice settings are not shown.
+- A turn that ended on the server (lost, failed, stopped elsewhere, already cleaned) now shows its end instead of reconnecting again and again (fix of the base branch's engine loop).
 - `android/scripts/check-apk-secrets.sh` checks a built apk for secret-shaped strings and lists the URL hosts in it.
 
 ## Android 0.1.1 (not released yet)
