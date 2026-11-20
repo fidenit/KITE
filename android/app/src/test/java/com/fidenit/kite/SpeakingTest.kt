@@ -141,4 +141,38 @@ class SpeakingTest {
         assertFalse(Speaking.heardNotice(Eleven.Why.NETWORK, false).contains("키"))
         assertFalse(Speaking.heardNotice(Eleven.Why.NETWORK, true).contains("key"))
     }
+
+    /** Reads one sentence with a fake phone voice: what the engine was asked to do, and the error if the sentence was not read. */
+    private fun phone(ready: Boolean = true, accepted: Boolean = true, ok: Boolean = true): Pair<List<String>, Throwable?> {
+        val calls = ArrayList<String>()
+        val error = runBlocking {
+            runCatching {
+                Speaking.phone(ready = {
+                    calls.add("ready")
+                    ready
+                }) { done ->
+                    calls.add("start")
+                    if (accepted) done(ok)
+                    accepted
+                }
+            }.exceptionOrNull()
+        }
+        return calls to error
+    }
+
+    /** T2: an error of the phone's voice counts as "not read", and the caller always gets an answer, so the sentence queue moves on. */
+    @Test
+    fun aPhoneVoiceThatFailsIsNotCountedAsReadAndNeverWaitsForever() {
+        assertNull(phone().second)
+        assertEquals(listOf("ready", "start"), phone().first)
+        assertTrue("an error while reading", phone(ok = false).second != null)
+        assertTrue("the engine did not take the sentence: no end will ever be reported", phone(accepted = false).second != null)
+        val notReady = phone(ready = false)
+        assertEquals(listOf("ready"), notReady.first)
+        assertTrue(notReady.second != null)
+        // through read(): the line on screen is the "not read aloud" one, not "read with the phone's own voice"
+        val out = runBlocking { Speaking.read(null, stop = {}, current = { true }, phone = { Speaking.phone(ready = { true }) { done -> done(false); true } }) }
+        assertTrue(out.phoneFailed)
+        assertTrue(Speaking.notice(out, false)!!.contains("소리 내어 읽지 못했습니다"))
+    }
 }

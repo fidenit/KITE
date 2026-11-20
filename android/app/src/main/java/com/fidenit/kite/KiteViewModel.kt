@@ -1136,26 +1136,26 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     /** ElevenLabs 키가 없거나 ElevenLabs 가 소리를 내기 전에 실패했을 때: 폰에 들어 있는 음성으로 읽는다. */
     private suspend fun speakWithDevice(text: String, epoch: Int) {
         val tts = deviceTts ?: TextToSpeech(getApplication()) { status -> deviceTtsReady.complete(status == TextToSpeech.SUCCESS) }.also { deviceTts = it }
-        if (!deviceTtsReady.await()) throw Exception("the phone's speech engine did not start") // 화면에는 Speaking.notice 의 글이 나간다
-        tts.language = if (english) Locale.ENGLISH else Locale.KOREAN
-        val done = CompletableDeferred<Unit>()
-        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(id: String?) {}
-            override fun onDone(id: String?) {
-                done.complete(Unit)
-            }
+        // 엔진이 안 켜졌거나 읽기를 받아들이지 않았거나 읽다가 오류가 나면 예외: 읽지 못한 것으로 알리고 다음 문장으로 넘어간다 (Speaking.phone)
+        Speaking.phone(ready = { deviceTtsReady.await() }) { done ->
+            tts.language = if (english) Locale.ENGLISH else Locale.KOREAN
+            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(id: String?) {}
+                override fun onDone(id: String?) {
+                    done(true)
+                }
 
-            @Deprecated("Deprecated in Java")
-            override fun onError(id: String?) {
-                done.complete(Unit)
-            }
+                @Deprecated("Deprecated in Java")
+                override fun onError(id: String?) {
+                    done(false)
+                }
 
-            override fun onStop(id: String?, interrupted: Boolean) {
-                done.complete(Unit)
-            }
-        })
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "kite-$epoch")
-        done.await()
+                override fun onStop(id: String?, interrupted: Boolean) {
+                    done(true)
+                }
+            })
+            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "kite-$epoch") == TextToSpeech.SUCCESS
+        }
     }
 
     /** 하던 말을 멈춘다. 아직 읽지 않은 문장은 버리되, 딸린 카드는 화면에 낸다. */

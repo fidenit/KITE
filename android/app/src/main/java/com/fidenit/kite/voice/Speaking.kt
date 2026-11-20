@@ -3,6 +3,7 @@
 package com.fidenit.kite.voice
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 
 object Speaking {
     /** 문장 하나를 읽은 결과. `eleven`: ElevenLabs 가 실패했으면 그 까닭. `phoneFailed`: 폰의 기본 음성으로 읽으려 했는데 못 읽었다. */
@@ -90,5 +91,18 @@ object Speaking {
             else -> if (english) "say it again; if it goes on, check the ElevenLabs key in Settings" else "다시 말해 주세요. 계속되면 '설정'에서 'ElevenLabs 키'를 확인해 주세요"
         }
         return "$what → $did → $todo"
+    }
+
+    /**
+     * 폰의 기본 음성으로 문장 하나를 읽고, 다 읽을 때까지 기다린다. `ready`: 폰의 음성 엔진이 켜졌는가 (처음에는 켜질 때까지 기다린다).
+     * `start`: 읽기를 시작시킨다. 엔진이 받아들였으면 참을 돌려주고, 읽기가 끝나면 넘겨받은 `done` 을 부른다 (오류로 끝났으면 거짓으로).
+     * 엔진이 안 켜졌거나, 읽기를 받아들이지 않았거나, 읽다가 오류가 났으면 예외를 낸다: 그 문장은 읽지 못한 것이다.
+     * 어느 경우에도 끝없이 기다리지 않는다 (받아들이지 않은 읽기에는 끝났다는 알림이 오지 않는다).
+     */
+    suspend fun phone(ready: suspend () -> Boolean, start: (done: (Boolean) -> Unit) -> Boolean) {
+        if (!ready()) throw Exception("the phone's speech engine did not start")
+        val done = CompletableDeferred<Boolean>()
+        if (!start { done.complete(it) }) throw Exception("the phone's speech engine did not take the sentence")
+        if (!done.await()) throw Exception("the phone's speech engine failed while reading")
     }
 }
