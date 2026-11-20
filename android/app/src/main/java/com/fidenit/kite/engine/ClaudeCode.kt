@@ -183,6 +183,9 @@ class EngineConfig(
 
 const val STOPPED = "__stopped"
 
+/** 멈춤을 누르지 않았는데 서버의 실행이 멈춤 요청으로 끝났을 때 보이는 줄 (전에 닿지 못한 멈춤이나 치우기가 뒤늦게 닿았다). */
+const val STOPPED_ELSEWHERE = "이 말은 서버에서 멈춤 요청을 받아 중간에 끝났습니다 (이 화면에서 누른 멈춤이 아닙니다. 전에 닿지 못한 멈춤이 뒤늦게 닿았을 수 있습니다) → 받은 데까지는 화면에 반영했습니다 → 계속하려면 같은 말을 다시 보내 주세요."
+
 /** 이 실행은 이미 끝나 서버에서 치워졌다 (끝난 코드만 남았다): 새로 시작하지 않는다. 앱은 저장해 둔 보드를 그대로 쓴다. */
 const val GONE = "__gone"
 
@@ -669,9 +672,14 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
         private fun finish(code: String): Stats {
             ended.add(id) // 끝났다는 줄을 받았다
             parser.finish()
-            if (stopped() || code == "stopped") {
+            if (stopped()) {
                 cleanQuiet()
                 throw Exception(STOPPED)
+            }
+            if (code == "stopped") {
+                // 이 화면에서 멈춤을 누르지 않았는데 서버의 실행이 멈춤 요청으로 끝났다: 말없이 끝내지 않고 한 줄로 알린다
+                cleanQuiet()
+                throw Exception(STOPPED_ELSEWHERE)
             }
             if (code == "lost") {
                 cleanQuiet()

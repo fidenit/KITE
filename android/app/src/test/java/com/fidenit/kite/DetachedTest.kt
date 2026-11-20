@@ -559,6 +559,14 @@ class DetachedTest {
         }
     }
 
+    /** 멈춤을 누르지 않았는데 서버에서 멈춤으로 끝난 실행은 말없이 끝나지 않는다: 앱이 가려내는 낱말(STOPPED 등)이 아닌, 세 토막으로 된 한 줄이다. */
+    @Test
+    fun aStopTheOwnerDidNotPressHasALineOfItsOwn() {
+        val line = com.fidenit.kite.engine.STOPPED_ELSEWHERE
+        assertTrue(line !in listOf(com.fidenit.kite.engine.STOPPED, com.fidenit.kite.engine.GONE, com.fidenit.kite.engine.ABANDONED))
+        assertEquals(3, line.split(" → ").size)
+    }
+
     /** 따라 읽기에서 `tr` 가 한 번 실패해도 (명령 글을 못 읽었다) 멀쩡한 실행을 lost 라 하지 않는다. */
     @Test
     fun followDoesNotSayLostWhenTrFailsOnce() {
