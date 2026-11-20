@@ -186,7 +186,9 @@ class GatewayLinkTest {
         server.enqueue(MockResponse().setBody("""{"claude":"x","dir":"/root","gateway":"1","time":"t"}"""))
         val l = link()
         assertEquals(0 to "", l.upload("r-1", "turn 글"))
-        l.stop("r-1")
+        val sent = mutableListOf<String>()
+        assertEquals(0, l.stop("r-1") { sent.add(it) }.first)
+        assertEquals(listOf(com.fidenit.kite.engine.Detached.STOP_SENT), sent)
         l.clean("r-1")
         l.prepare("system 글")
         assertEquals("tail of err", l.errTail("r-1"))
@@ -200,7 +202,7 @@ class GatewayLinkTest {
             assertEquals("Bearer $tok", r.getHeader("Authorization"))
         }
         for (bad in listOf("a b", "../x", "a/b", "x".repeat(65), "한글", "")) {
-            for (f in listOf<() -> Any>({ l.upload(bad, "t") }, { l.start(bad) {} }, { l.follow(bad, 0) {} }, { l.stop(bad) }, { l.clean(bad) }, { l.errTail(bad) })) {
+            for (f in listOf<() -> Any>({ l.upload(bad, "t") }, { l.start(bad) {} }, { l.follow(bad, 0) {} }, { l.stop(bad) {} }, { l.clean(bad) }, { l.errTail(bad) })) {
                 assertTrue(runCatching { f() }.exceptionOrNull() is IllegalArgumentException)
             }
         }
@@ -229,8 +231,8 @@ class GatewayLinkTest {
         assertTrue(runCatching { l.follow("r-1", 0) {} }.exceptionOrNull()!!.message!!.contains("blocked"))
         assertTrue(runCatching { l.start("r-1") {} }.exceptionOrNull() is SshFatal)
         assertEquals(listOf("unknown:", "pending:4821", "revoked:", "role_not_supported:"), seen)
-        assertTrue(runCatching { l.stop("r-1") }.exceptionOrNull() is RemoteFail) // 500: refused, not a drop
-        assertTrue(runCatching { l.stop("r-1") }.exceptionOrNull() is java.io.IOException) // 503: a drop
+        assertTrue(runCatching { l.stop("r-1") {} }.exceptionOrNull() is RemoteFail) // 500: refused, not a drop
+        assertTrue(runCatching { l.stop("r-1") {} }.exceptionOrNull() is java.io.IOException) // 503: a drop
         assertEquals(400, l.upload("r-1", "t").first) // a clear refusal: positive
         assertEquals(-1, l.upload("r-1", "t").first) // gateway down behind the tunnel: retry
         assertEquals(2, l.follow("r-1", 0) {}.first) // follow broken
@@ -614,7 +616,7 @@ class GatewayLinkTest {
     @Test
     fun textsFitTheirSituation() {
         val h = GatewayLink(base(), { "apd_bad\nvalue" })
-        val stop = runCatching { h.stop("r-1") }.exceptionOrNull()!!.message!!
+        val stop = runCatching { h.stop("r-1") {} }.exceptionOrNull()!!.message!!
         assertTrue(stop, stop.contains("멈춤·치우기를 전하지 못했습니다") && !stop.contains("보내지 않았습니다"))
         val up = runCatching { h.upload("r-1", "t") }.exceptionOrNull()!!.message!!
         assertTrue(up, up.contains("보내지 않았습니다"))
