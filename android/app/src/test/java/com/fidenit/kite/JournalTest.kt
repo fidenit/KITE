@@ -232,4 +232,69 @@ class JournalTest {
         assertEquals(listOf("b-2"), Journal(d).readToClean())
         d.deleteRecursively()
     }
+
+    /**
+     * A write that failed is tried again by flush: once the disk works, flush is true again without the caller writing the file again,
+     * and it stays false while the write keeps failing.
+     */
+    @Test
+    fun flushTriesAFailedWriteAgainAndIsTrueOnceTheDiskWorks() {
+        for (async in listOf(true, false)) {
+            val d = dir()
+            val j = Journal(d, async = async)
+            File(d, "toclean.json/x").mkdirs() // a folder in the file's place: the write cannot replace it
+            j.addToClean(listOf("a-1"))
+            assertFalse("async=$async", j.flush())
+            j.writeFile("board.txt", "보드") // another file is written fine; the clean list is not written again by anyone
+            assertFalse("async=$async: still failing, still false", j.flush())
+            assertFalse("async=$async", j.flush())
+            File(d, "toclean.json").deleteRecursively() // the disk works again
+            assertTrue("async=$async: true again with no new write of that file", j.flush())
+            assertEquals(listOf("a-1"), Journal(d).readToClean())
+            assertEquals("보드", File(d, "board.txt").readText())
+            assertTrue(j.flush())
+            d.deleteRecursively()
+        }
+    }
+
+    /** The retry never puts an older content over a newer one, and never brings back a file that was deleted after the failed write. */
+    @Test
+    fun aRetryNeverWritesOverANewerContentOrBringsBackADeletedFile() {
+        val d = dir()
+        val j = Journal(d, async = true)
+        val applied = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val broken = java.util.concurrent.atomic.AtomicBoolean(true)
+        j.beforeApply = { name, text ->
+            applied.add(if (text == null) "delete $name" else "write $name $text")
+            if (broken.get() && name != "ok.txt") throw java.io.IOException("no space left")
+        }
+        j.writeFile("board.txt", "옛 보드")
+        j.writeInflight(Inflight("ssh", "a-1", "t", "s", "b", 1L))
+        assertFalse(j.flush())
+        // while the disk is still broken: a newer board and the delete of the record fail too
+        j.writeFile("board.txt", "새 보드")
+        j.clearInflight()
+        j.writeFile("ok.txt", "x")
+        assertFalse(j.flush())
+        broken.set(false)
+        applied.clear()
+        assertTrue(j.flush())
+        assertEquals("only the newest of each file is tried again", listOf("write board.txt 새 보드", "delete inflight.json"), applied.toList())
+        assertEquals("새 보드", File(d, "board.txt").readText())
+        assertFalse(File(d, "inflight.json").exists())
+        // a failed write followed by a newer one that worked: nothing is left to try again
+        broken.set(true)
+        j.writeFile("board.txt", "실패한 보드")
+        assertFalse(j.flush())
+        broken.set(false)
+        j.writeFile("board.txt", "마지막 보드")
+        j.writeCurrent("t1")
+        j.clearQueue()
+        assertTrue(j.flush())
+        applied.clear()
+        assertTrue(j.flush())
+        assertEquals(emptyList<String>(), applied.toList())
+        assertEquals("마지막 보드", File(d, "board.txt").readText())
+        d.deleteRecursively()
+    }
 }

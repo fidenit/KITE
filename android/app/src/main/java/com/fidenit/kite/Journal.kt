@@ -44,7 +44,10 @@ class Journal(private val dir: File, private val async: Boolean = false) {
     private val lock = Object()
     private val queued = ArrayDeque<Entry>()
     private var running = false // 일꾼이 맡은 일이 남아 있다 (줄에 있거나 지금 쓰는 중)
-    private val failed = HashSet<String>() // 마지막 쓰기(지우기)가 실패한 파일
+    // 마지막 쓰기(지우기)가 실패한 파일과 그때 쓰려던 내용 (null 이면 지우기). 그 파일을 그 뒤에 다시 쓰거나 지우면 (되든 안 되든)
+    // 이 칸은 그 새 내용으로 바뀌거나 없어진다: 그래서 여기 남은 내용은 늘 그 파일에 쓰려던 가장 새 내용이다.
+    private val failed = LinkedHashMap<String, String?>()
+    private var retry = false // flush 가 불렸다: 줄이 비면 실패한 파일을 한 번 더 써 본다
     private val worker by lazy { java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "journal").apply { isDaemon = true } } }
 
     /** 시험용: 일꾼이 파일 하나를 쓰기(지우기) 바로 전에 일꾼 스레드에서 불린다. */
@@ -62,8 +65,7 @@ class Journal(private val dir: File, private val async: Boolean = false) {
     /** 파일 하나를 쓴다 (`null` 이면 지운다). */
     private fun put(file: File, text: String?) {
         if (!async) {
-            val ok = apply(file, text)
-            synchronized(lock) { if (ok) failed.remove(file.name) else failed.add(file.name) }
+            synchronized(lock) { settle(file.name, text, apply(file, text)) }
             return
         }
         synchronized(lock) {
@@ -88,9 +90,21 @@ class Journal(private val dir: File, private val async: Boolean = false) {
             writeAtomic(file, text)
         }
 
+    /** 쓰기(지우기) 하나의 결과를 적는다 (`lock` 안에서 부른다). */
+    private fun settle(name: String, text: String?, ok: Boolean) {
+        failed.remove(name)
+        if (!ok) failed[name] = text
+    }
+
     private fun drain() {
         while (true) {
             val e = synchronized(lock) {
+                // 다시 써 보기는 줄이 비었을 때만 줄에 세운다: 실패한 내용은 그 파일의 가장 새 내용이고, 그 뒤에 들어오는 쓰기·지우기는
+                // 모두 이 칸 뒤에 선다. 그래서 다시 쓴 옛 내용이 새 내용을 덮거나, 뒤에 지우기로 한 파일을 되살린 채로 끝나지 않는다.
+                if (queued.isEmpty() && retry) {
+                    retry = false
+                    failed.forEach { (name, text) -> queued.addLast(Entry(name, text)) }
+                }
                 val head = queued.removeFirstOrNull()
                 if (head == null) {
                     running = false
@@ -105,17 +119,30 @@ class Journal(private val dir: File, private val async: Boolean = false) {
             } catch (_: Throwable) {
                 false
             }
-            synchronized(lock) { if (ok) failed.remove(e.name) else failed.add(e.name) }
+            synchronized(lock) { settle(e.name, e.text, ok) }
         }
     }
 
     /**
      * 밀린 쓰기가 모두 디스크에 닿을 때까지 (최대 `timeoutMs`) 기다린다.
      * 다 닿았고 마지막 쓰기가 실패한 채인 파일이 없을 때만 참: 거짓이면 그 뒤에 하려던 일(기록 지우기, 서버 파일 치우기)을 하면 안 된다.
+     * 실패한 채인 파일이 있으면 부를 때마다 그 파일을 한 번 더 써 본다 (일꾼이, 밀린 쓰기 다음에): 디스크가 다시 되면
+     * 그 파일을 누가 다시 쓰지 않아도 참으로 돌아오고, 계속 안 되면 계속 거짓이다.
      */
     fun flush(timeoutMs: Long = 5000): Boolean {
         val end = System.currentTimeMillis() + timeoutMs
         synchronized(lock) {
+            if (!async) {
+                failed.toList().forEach { (name, text) -> settle(name, text, apply(File(dir, name), text)) }
+                return failed.isEmpty()
+            }
+            if (running || failed.isNotEmpty()) {
+                retry = true
+                if (!running) {
+                    running = true
+                    worker.execute { drain() }
+                }
+            }
             while (running) {
                 val left = end - System.currentTimeMillis()
                 if (left <= 0) return false
