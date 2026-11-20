@@ -190,9 +190,10 @@ class DetachedCommands(private val cfg: EngineConfig) {
     /**
      * 서버에서 `bash -c` 로 도는 감싼 글. `claude` 를 자기 자식으로 띄우고 그 번호를 셸 변수(`$!`)로만 갖고 있다가, 0.2초마다 `.stop` 이 생겼는지 본다.
      * 자식이 살아 있는지는 bash 가 스스로 아는 것으로 본다 (`mine`: 자기 자식 `$!` 에 `kill -0`, 신호는 가지 않는다; bash 는 끝난 자식을 바로 거둔다).
-     * `ps` 가 답하면 (안 되면 `/proc/<번호>/stat` 을 셸 내장 `read` 로) 부모가 자기이고 좀비가 아닌지도 본다. `ps` 가 실패하거나 그 옵션을 모르면
-     * 그 검사만 건너뛴다: 지켜보기를 그만두지 않는다. 세 번 잇달아 없다고 나와야 지켜보기를 끝낸다.
-     * 생겼으면 자식과 그 자손(`pgrep -P`, 자손부터)에 TERM, 1초쯤 뒤 아직 자기 자식으로 살아 있으면 KILL. 그 뒤 자기 세션에 남은 것
+     * `ps` 가 답하면 (안 되면 `/proc/<번호>/stat` 을 셸 내장 `read` 로) 부모가 자기이고 좀비가 아닌지도 본다. `mine` 의 답은 셋이다:
+     * 0 = 자기 자식으로 살아 있는 것이 확인됐다, 1 = 없다(세 번 잇달아 나오면 지켜보기를 끝낸다), 2 = 있기는 한데 확인하지 못했다
+     * (`ps` 도 `/proc` 도 답하지 않았다: 지켜보기는 계속하되 신호는 보내지 않는다). 신호는 바로 앞의 `mine` 이 0 일 때만 나간다.
+     * 생겼으면 자식과 그 자손(`pgrep -P`, 자손부터)에 TERM, 그 뒤 확인된 것이 다섯 번(1초쯤) 지나도 살아 있으면 없어질 때까지 KILL. 그 뒤 자기 세션에 남은 것
      * (`pgrep -s $$`: setsid 로 띄웠을 때만 있다)도 끝내고, 자식의 끝난 코드를 `.exit` 에 적는다.
      * 신호를 받는 번호는 `$!` 이거나 `pgrep` 이 방금 준 것뿐이고, 쓰기 전에 `ok` 로 숫자이고 1보다 크고 자기 번호가 아닌지 본다. 파일에서 읽은 번호는 쓰지 않는다.
      * 자기가 TERM 을 받아도(서버가 꺼질 때) 죽지 않고 `.exit` 를 적는다.
@@ -210,20 +211,21 @@ class DetachedCommands(private val cfg: EngineConfig) {
         mine() {
           ok "${'$'}c" && kill -0 "${'$'}c" 2>/dev/null || return 1
           set -- ${'$'}(ps -o ppid= -o stat= -p "${'$'}c" 2>/dev/null)
-          if [ ${'$'}# != 2 ] && [ -r "/proc/${'$'}c/stat" ]; then l=; { read -r l < "/proc/${'$'}c/stat"; } 2>/dev/null; set -- ${'$'}{l##*) }; set -- "${'$'}2" "${'$'}1"; fi
-          case "${'$'}1" in ''|*[!0-9]*) return 0;; esac
+          if [ ${'$'}# != 2 ]; then l=; { read -r l < "/proc/${'$'}c/stat"; } 2>/dev/null; set -- ${'$'}{l##*) }; set -- "${'$'}2" "${'$'}1"; fi
+          case "${'$'}1" in ''|*[!0-9]*) return 2;; esac
           [ "${'$'}1" = "${'$'}${'$'}" ] || return 1
           case "${'$'}2" in Z*) return 1;; esac
           return 0
         }
-        s=0; m=0
+        s=0; m=0; t=0
         while [ ${'$'}m -lt 3 ]; do
-          if mine; then m=0; else m=${'$'}((m+1)); sleep 0.05; continue; fi
-          if [ -e ${path(id, "stop")} ]; then
-            s=1; kt "${'$'}c" TERM
-            i=0; while [ ${'$'}i -lt 5 ] && mine; do sleep 0.2; i=${'$'}((i+1)); done
-            mine && kt "${'$'}c" KILL
-            break
+          mine; r=${'$'}?
+          if [ ${'$'}r = 1 ]; then m=${'$'}((m+1)); sleep 0.05; continue; fi
+          m=0
+          if [ ${'$'}r = 0 ] && [ -e ${path(id, "stop")} ]; then
+            s=1
+            if [ ${'$'}t = 0 ]; then kt "${'$'}c" TERM; elif [ ${'$'}t -ge 5 ]; then kt "${'$'}c" KILL; fi
+            t=${'$'}((t+1))
           fi
           sleep 0.2
         done

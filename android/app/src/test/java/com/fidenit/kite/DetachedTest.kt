@@ -389,7 +389,7 @@ class DetachedTest {
         assertEquals(2, count(r, "pgrep"))
         // kt 의 뿌리는 `$!` 을 담은 변수뿐이고, 그 변수는 한 번만 정해진다
         val roots = Regex("kt \"\\$([a-z0-9]+)\" (\\S+)").findAll(r).map { it.groupValues[1] to it.groupValues[2] }.toList()
-        assertEquals(listOf("k" to "\"\$2\";", "c" to "TERM", "c" to "KILL"), roots)
+        assertEquals(listOf("k" to "\"\$2\";", "c" to "TERM;", "c" to "KILL;"), roots)
         assertEquals(1, Regex("(^|[\\s;])c=").findAll(r).count())
         assertTrue(r.contains("\nc=\$!\n"))
         assertEquals(listOf("TERM;", "KILL;"), Regex("\\bsw (\\S+)").findAll(r).map { it.groupValues[1] }.toList())
@@ -415,6 +415,19 @@ class DetachedTest {
         assertEquals(1, count(r, c.claudeLine()))
         assertFalse(Regex("\\b(cat|head|tail|sed|awk|cut|grep|xargs|tr|read|source|eval|pkill|killall|killpg|skill|fuser)\\b").containsMatchIn(own))
         assertEquals(3, count(r, "set --"))
+        // 살아 있는지 확인하지 못한 것(ps 도 /proc 도 답이 없다, 읽는 사이 없어졌다)은 2 로 답하고, 0 으로 답하는 길은 부모·좀비 검사를 지난 뒤 하나뿐이다
+        assertTrue(r.contains("case \"\$1\" in ''|*[!0-9]*) return 2;; esac\n"))
+        assertFalse(r.contains("*[!0-9]*) return 0"))
+        assertEquals(1, count(r, "return 0\n"))
+        // 신호 둘은 바로 앞의 mine 이 0 일 때만 나간다: 같은 if 안, 그 사이에 다른 명령이 없다
+        assertTrue(
+            r.contains(
+                "  mine; r=\$?\n  if [ \$r = 1 ]; then m=\$((m+1)); sleep 0.05; continue; fi\n  m=0\n" +
+                    "  if [ \$r = 0 ] && [ -e \"\$HOME/.kite/runs/$id.stop\" ]; then\n    s=1\n" +
+                    "    if [ \$t = 0 ]; then kt \"\$c\" TERM; elif [ \$t -ge 5 ]; then kt \"\$c\" KILL; fi\n",
+            ),
+        )
+        assertEquals(1, count(r, "mine;"))
         // 시작 글은 감싼 글을 그대로 싣고, 그 밖에는 신호를 보내는 명령이 없다
         assertEquals(2, count(c.start(id).replace("kt \"\$c\" KILL", "").replace("sw KILL;", "").lowercase(), "kill"))
         assertEquals(2, count(c.start(id), "pgrep"))
