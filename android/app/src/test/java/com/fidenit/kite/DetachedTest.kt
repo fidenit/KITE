@@ -2,6 +2,7 @@ package com.fidenit.kite
 
 import com.fidenit.kite.engine.Detached
 import com.fidenit.kite.engine.DetachedCommands
+import com.fidenit.kite.engine.End
 import com.fidenit.kite.engine.EngineConfig
 import com.fidenit.kite.engine.FollowLine
 import com.fidenit.kite.engine.Step
@@ -130,6 +131,21 @@ class DetachedTest {
     fun brokenFollowIsDecidedByExitStatus() {
         for (c in listOf(2, 126, 127)) assertTrue(c.toString(), Detached.followBroken(c))
         for (c in listOf(-1, 0, 1, 255, 143)) assertFalse(c.toString(), Detached.followBroken(c))
+    }
+
+    /** 서버가 끝났다고 답한 것(끝난 줄이 있다)은 다시 붙지 않는다: 끝난 줄 없이 읽기가 끝났을 때만 끊김이다. */
+    @Test
+    fun onlyAFollowWithoutAnEndLineIsADroppedConnection() {
+        assertEquals(End.Dropped, Detached.judgeEnd(null, true))
+        assertEquals(End.Dropped, Detached.judgeEnd(null, false))
+        assertEquals(End.Gone, Detached.judgeEnd("gone", true))
+        assertEquals(End.Gone, Detached.judgeEnd("gone", false))
+        assertEquals(End.Restart, Detached.judgeEnd("none", true))
+        assertEquals(End.NoRecord, Detached.judgeEnd("none", false))
+        for (c in listOf("0", "1", "143", "137", "stopped", "lost")) {
+            assertEquals(End.Over(c), Detached.judgeEnd(c, true))
+            assertEquals(End.Over(c), Detached.judgeEnd(c, false))
+        }
     }
 
     @Test

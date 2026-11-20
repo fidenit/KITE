@@ -482,7 +482,9 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
             while (true) {
                 if (abandoned) throw Exception(ABANDONED)
                 if (stopped()) return stoppedEnd()
-                try {
+                // 이 try 안에서 난 예외만 끊긴 연결로 보고 다시 붙는다. 서버가 끝났다고 답한 뒤의 처리(아래)는 try 밖이다:
+                // 그 결과(GONE·STOPPED·사라짐·실패 글·Stats)는 한 번만 나가고, 다시 붙거나 다시 시작하지 않는다.
+                val code: String? = try {
                     ssh.connect()
                     if (!settled) {
                         settled = true
@@ -515,39 +517,42 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
                         }
                     }
                     if (stopped()) continue
-                    val code = follow()
-                    if (code == null) {
-                        // 끝났다는 줄 없이 읽기가 끝났다 = 연결이 끊겼다
-                        throw java.io.IOException(if (idleCut) "idle" else "closed")
-                    }
-                    if (code == "gone") throw Exception(GONE)
-                    if (code == "none") {
-                        if (!restarted && turnText != null && received == 0 && !stopped()) {
-                            restarted = true
-                            phase = Phase.UPLOAD
-                            uploadTried = false
-                            continue
-                        }
-                        throw Fatal("서버에 이 작업의 기록이 없습니다 (이미 끝나 치워졌거나 7일이 지났습니다) → 화면에는 반영하지 않았습니다 → 같은 말을 다시 보내 주세요.")
-                    }
-                    return finish(code)
+                    follow()
                 } catch (e: Fatal) {
                     throw e
                 } catch (e: SshFatal) {
                     throw e
                 } catch (e: Exception) {
-                    ssh.close() // 끊긴 연결은 버리고 다시 붙는다
-                    if (abandoned) throw Exception(ABANDONED)
-                    if (stopped()) continue
-                    val wait = Detached.delayMs(attempt)
-                    attempt++
-                    dropShown = true
-                    val what = if (idleCut) "서버에서 한동안 소식이 없습니다 → 연결을 끊고 다시 붙는 중입니다 → 할 일은 없습니다" else "연결이 끊겼습니다 → 서버에서는 계속 일하는 중입니다 → 다시 연결되면 이어서 받습니다"
-                    idleCut = false
-                    send(Ev.Activity(what))
-                    waker.sleep(wait) { stopped() || abandoned }
+                    dropped()
+                    continue
+                }
+                when (val end = Detached.judgeEnd(code, !restarted && turnText != null && received == 0 && !stopped())) {
+                    // 끝났다는 줄 없이 읽기가 끝났다 = 연결이 끊겼다
+                    is End.Dropped -> dropped()
+                    is End.Gone -> throw Exception(GONE)
+                    is End.Restart -> {
+                        restarted = true
+                        phase = Phase.UPLOAD
+                        uploadTried = false
+                    }
+                    is End.NoRecord -> throw Fatal("서버에 이 작업의 기록이 없습니다 (이미 끝나 치워졌거나 7일이 지났습니다) → 화면에는 반영하지 않았습니다 → 같은 말을 다시 보내 주세요.")
+                    is End.Over -> return finish(end.code)
                 }
             }
+        }
+
+        /** 끊긴 연결은 버리고, 다시 붙기 전에 쉰다 (멈춤이 눌렸으면 쉬지 않는다). 엔진이 버려졌으면 [ABANDONED] 를 던진다. */
+        private fun dropped() {
+            ssh.close()
+            if (abandoned) throw Exception(ABANDONED)
+            if (stopped()) return
+            val wait = Detached.delayMs(attempt)
+            attempt++
+            dropShown = true
+            val what = if (idleCut) "서버에서 한동안 소식이 없습니다 → 연결을 끊고 다시 붙는 중입니다 → 할 일은 없습니다" else "연결이 끊겼습니다 → 서버에서는 계속 일하는 중입니다 → 다시 연결되면 이어서 받습니다"
+            idleCut = false
+            send(Ev.Activity(what))
+            waker.sleep(wait) { stopped() || abandoned }
         }
 
         /** 따라 읽는다. 서버가 끝났다고 알리면 그 값(숫자·stopped·lost·none), 끝났다는 줄 없이 끝나면 null. */

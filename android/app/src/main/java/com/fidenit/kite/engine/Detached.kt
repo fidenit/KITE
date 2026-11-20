@@ -40,6 +40,24 @@ sealed class Step {
 fun serverShell(script: String): String =
     "bash -lc " + shq("export PATH=\"\$HOME/.local/bin:\$HOME/.claude/local:\$HOME/.npm-global/bin:/usr/local/bin:\$PATH\"; $script")
 
+/** 따라 읽기 한 번이 끝난 뒤 할 일. [Dropped] 만 다시 붙는다: 나머지는 서버가 끝났다고 답한 것이라 다시 붙지 않는다. */
+sealed class End {
+    /** 끝났다는 줄 없이 읽기가 끝났다 = 연결이 끊겼다: 다시 붙어 이어 읽는다. */
+    object Dropped : End()
+
+    /** 이미 끝나 치워진 실행이다. */
+    object Gone : End()
+
+    /** 서버가 이 실행을 모르고 받은 줄도 없다: 같은 번호로 한 번만 올리고 시작한다. */
+    object Restart : End()
+
+    /** 서버가 이 실행을 모르는데 새로 시작할 수도 없다. */
+    object NoRecord : End()
+
+    /** 실행이 끝났다: 숫자 코드 / stopped / lost. */
+    data class Over(val code: String) : End()
+}
+
 object Detached {
     private val ID = Regex("[A-Za-z0-9-]+")
 
@@ -90,6 +108,17 @@ object Detached {
         if (lines.contains(FollowLine.Run(id))) return Step.Ok
         lines.filterIsInstance<FollowLine.Fail>().firstOrNull()?.let { return Step.Fail(it.reason.ifEmpty { "start" }, "") }
         return if (code > 0) Step.Fail("remote", err.trim().takeLast(200)) else Step.Retry
+    }
+
+    /**
+     * 따라 읽기가 돌려준 값(`APERITEXIT` 뒤의 글, 그 줄이 없었으면 null)으로 할 일을 정한다.
+     * `mayRestart`: 아직 한 번도 다시 시작하지 않았고, 턴 글이 있고, 받은 줄이 없고, 멈춤이 눌리지 않았다.
+     */
+    fun judgeEnd(code: String?, mayRestart: Boolean): End = when (code) {
+        null -> End.Dropped
+        "gone" -> End.Gone
+        "none" -> if (mayRestart) End.Restart else End.NoRecord
+        else -> End.Over(code)
     }
 
     /** 이어 읽는 명령이 고장 난 끝난 코드(문법 오류 2, 실행 못 함 126, 명령 없음 127)인가. 그 밖에는 끊김으로 본다. */

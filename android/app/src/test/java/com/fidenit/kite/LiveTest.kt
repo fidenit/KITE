@@ -14,6 +14,7 @@ import com.fidenit.kite.engine.STOPPED
 import com.fidenit.kite.engine.Server
 import com.fidenit.kite.engine.Ssh
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -32,6 +33,16 @@ class LiveTest {
 
     /** 이 서버를 쓰는 사람의 말로 기록되지 않게 시험 입력 앞에 붙인다. */
     private val tag = "[f045 시험 — 대표 말 아님] "
+
+    /**
+     * 끝없이 돌 수 있는 호출마다 주는 기한: `sec` 초가 지나면 멈춤이 눌린 것처럼 된다 (그러면 엔진이 STOPPED 로 돌아온다).
+     * 호출 뒤에 [reached] 가 거짓인지 확인한다: 되돌아오지 않는 고장이 시험 전체를 붙잡지 않고 실패로 드러난다.
+     */
+    private class Deadline(sec: Int) {
+        private val end = System.currentTimeMillis() + sec * 1000L
+        val reached: Boolean get() = System.currentTimeMillis() > end
+        val stop: () -> Boolean = { reached }
+    }
 
     private fun server(fingerprint: String = ""): Server {
         var key = env("APERIT_SSH_KEY").takeIf { it.isNotEmpty() }?.let { File(it).readText() }.orEmpty()
@@ -112,7 +123,9 @@ class LiveTest {
         // 한 턴: 화면 수정 언어가 줄 단위로 와서 보드에 반영되어야 한다
         val a = Applier()
         val text = "<board>\n</board>\n<voice>on</voice>\n<env>\n지금: 2026-11-15 (일) 10:00\n운영체제: $os (Claude Code 가 도는 서버. 사용자의 화면은 안드로이드 폰)\n사용자 홈 폴더: $home\n기억 보관함 폴더: $home/.kite/vault\n</env>\n<input>${tag}다음 주 제주 2박 3일 여행 준비물을 체크리스트로 만들어 줘. 다섯 개만.</input>"
-        val stats = cc.run(text, { false }, a::send)
+        val d1 = Deadline(300)
+        val stats = cc.run(text, d1.stop, a::send)
+        assertFalse("첫 턴이 300초 안에 끝나야 한다", d1.reached)
         a.finish()
         println("${stats.model}  첫 반응 ${stats.firstMs}ms  전체 ${stats.totalMs}ms  입력 ${stats.inputTokens} 출력 ${stats.outputTokens}  ${stats.limit}")
         println("도구: ${a.activity}")
@@ -131,11 +144,13 @@ class LiveTest {
             Thread.sleep(2500)
             stop = true
         }.start()
+        val stopT0 = System.currentTimeMillis()
         val err = runCatching {
             cc.run("<board>\n</board>\n<input>${tag}1부터 400까지의 숫자를 한 줄에 하나씩, 각각 note 카드로 만들어 줘.</input>", { stop }) {}
         }.exceptionOrNull()
         println("멈춤까지 ${System.currentTimeMillis() - started}ms: ${err?.message}")
         assertEquals(STOPPED, err?.message)
+        assertTrue("멈춤은 눌린 뒤 15초 안에 돌아와야 한다", System.currentTimeMillis() - stopT0 < 2500 + 15_000)
         Thread.sleep(500)
         // 패턴의 `[a]` 는 이 검사 명령 자신이 걸리지 않게 하는 것
         val left = ssh.run("pgrep -f '[a]ppend-system-prompt-file.*[.]kite/system.txt' || true").trim()
@@ -157,7 +172,8 @@ class LiveTest {
         val t0 = System.currentTimeMillis()
         val input = "먼저 say 한 줄을 내고, Bash 로 \"for i in 1 2 3 4 5 6 7 8; do date; sleep 3; done\" 를 한 번 실행한 다음, 카드 한 장에 '끝'이라고 써 줘."
         r.cc.onDataLine = { fed.add(it) }
-        val stats = r.cc.run(turn(r, input), { false }) { ev ->
+        val dA = Deadline(400)
+        val stats = r.cc.run(turn(r, input), dA.stop) { ev ->
             if (ev is Ev.Activity && ev.text.startsWith("명령 실행") && !gotTool) {
                 gotTool = true
                 dropped = System.currentTimeMillis()
@@ -167,6 +183,7 @@ class LiveTest {
             a.send(ev)
         }
         a.finish()
+        assertFalse("(a) 400초 안에 끝나야 한다", dA.reached)
         val id = r.cc.runId!!
         println("(a) 실행 $id 도구 보임 ${dropped - t0}ms 뒤 연결 끊음, 끝남 ${System.currentTimeMillis() - t0}ms")
         println("(a) 상태 줄: ${a.activity.filter { it.contains("연결이 끊겼습니다") }}")
@@ -188,7 +205,9 @@ class LiveTest {
         val b = Applier()
         val fed2 = mutableListOf<String>()
         r.cc.onDataLine = { fed2.add(it) }
-        r.cc.resume(id, null, 0, { false }, b::send)
+        val dB = Deadline(60)
+        r.cc.resume(id, null, 0, dB.stop, b::send)
+        assertFalse("(b) 끝난 실행을 다시 받는 것은 60초 안에 끝나야 한다", dB.reached)
         b.finish()
         println("(b) 다시 받은 줄 ${r.cc.linesReceived}")
         assertEquals("(b) 다시 받은 줄 수", serverOut.size, r.cc.linesReceived)
@@ -198,11 +217,15 @@ class LiveTest {
 
         // 치우면 그 번호는 서버에 없다 → (d) 분명한 오류
         r.cc.clean(id)
-        val gone = runCatching { r.cc.resume(id, null, 0, { false }) {} }.exceptionOrNull()
+        val dD = Deadline(20)
+        val gone = runCatching { r.cc.resume(id, null, 0, dD.stop) {} }.exceptionOrNull()
         println("(d) 치운 번호: ${gone?.message}")
+        assertFalse("(d) 치운 실행에 다시 붙으면 20초 안에 답이 와야 한다 (다시 붙기를 되풀이하면 안 된다)", dD.reached)
         assertEquals("치운 실행은 다시 돌지 않고 gone 으로 알린다", com.fidenit.kite.engine.GONE, gone?.message)
-        val made = runCatching { r.cc.resume("20260101-000000-dead", null, 0, { false }) {} }.exceptionOrNull()
+        val dE = Deadline(20)
+        val made = runCatching { r.cc.resume("20260101-000000-dead", null, 0, dE.stop) {} }.exceptionOrNull()
         println("(d) 없는 번호: ${made?.message}")
+        assertFalse("(d) 없는 번호에 20초 안에 답이 와야 한다", dE.reached)
         assertTrue(made?.message.orEmpty(), made?.message.orEmpty().contains("기록이 없습니다"))
         // 이상한 번호는 서버에 닿기 전에 거부
         assertTrue(runCatching { r.cc.resume("a;b", null, 0, { false }) {} }.exceptionOrNull() is IllegalArgumentException)
@@ -218,8 +241,9 @@ class LiveTest {
         var tool = 0L
         val t0 = System.currentTimeMillis()
         val input = "Bash 로 \"for i in \$(seq 1 40); do date; sleep 2; done # F045STOPMARK\" 를 한 번 실행하고 끝나면 카드 한 장에 '끝'이라고 써 줘."
+        val dC = Deadline(300)
         val err = runCatching {
-            r.cc.run(turn(r, input), { stop }) { ev ->
+            r.cc.run(turn(r, input), { stop || dC.reached }) { ev ->
                 if (ev is Ev.Activity && ev.text.startsWith("명령 실행") && tool == 0L) {
                     tool = System.currentTimeMillis()
                     Thread {
@@ -233,6 +257,7 @@ class LiveTest {
         val took = System.currentTimeMillis() - (tool + 4000)
         println("(c) 실행 $id 도구 보임 ${tool - t0}ms, 멈춤 눌린 뒤 ${took}ms 에 돌아옴: ${err?.message}")
         assertTrue("도구가 보여야 한다", tool > 0)
+        assertFalse("(c) 300초 안에 멈춤까지 가야 한다", dC.reached)
         assertEquals(STOPPED, err?.message)
         Thread.sleep(500)
         val exit = r.ssh.run("cat ~/.kite/runs/$id.exit").trim()
@@ -242,6 +267,31 @@ class LiveTest {
         assertEquals("도구가 띄운 프로세스가 없어야 한다", "", r.ssh.run("pgrep -af '[F]045STOPMARK' || true").trim())
         println("(c) 남은 프로세스: 없음")
         r.cc.clean(id)
+        r.ssh.close()
+    }
+
+    /**
+     * (e) 서버에서 바로 실패로 끝나는 실행 (claude 가 모르는 옵션이라 0 이 아닌 코드로 끝난다):
+     * 실패 글이 한 번, 20초 안에 돌아온다. 다시 붙기를 되풀이하지 않고, GONE 이나 STOPPED 로 바뀌지도 않는다.
+     */
+    @Test
+    fun failureOnServerComesBackOnce() {
+        val r = rig()
+        val bad = ClaudeCode(r.ssh, EngineConfig("claude", "~", "default", "low", "--aperit-no-such-option"))
+        val d = Deadline(20)
+        val t0 = System.currentTimeMillis()
+        val err = runCatching { bad.run(turn(r, "안녕"), d.stop) {} }.exceptionOrNull()
+        val took = System.currentTimeMillis() - t0
+        println("(e) ${took}ms 뒤: ${err?.message}")
+        assertFalse("(e) 20초 안에 돌아와야 한다 (${took}ms)", d.reached)
+        assertTrue("(e) 실패로 돌아와야 한다", err != null)
+        val msg = err?.message.orEmpty()
+        assertTrue("(e) 실패 글이 있어야 한다", msg.isNotBlank())
+        assertTrue("(e) 실패 글이어야 한다: $msg", msg != com.fidenit.kite.engine.GONE && msg != STOPPED && msg != com.fidenit.kite.engine.ABANDONED)
+        assertTrue("(e) 끊긴 연결로 보면 안 된다: $msg", !msg.contains("연결이 끊겼습니다"))
+        val id = bad.runId!!
+        assertTrue("(e) 서버에서 끝난 것으로 알아야 한다", bad.endedOnServer(id))
+        assertEquals("(e) 그 실행의 프로세스가 없어야 한다", "", leftOf(r, id))
         r.ssh.close()
     }
 }
