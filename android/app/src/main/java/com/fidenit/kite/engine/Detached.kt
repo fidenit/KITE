@@ -250,13 +250,17 @@ class DetachedCommands(private val cfg: EngineConfig) {
         )
     }
 
-    /** 따라 읽기: `n` 줄까지 받은 뒤부터. 출력은 이 루프 하나만 쓴다. 돌고 있는지는 `.pid` 의 번호가 이 실행의 감싼 bash 인지로만 본다 (신호를 보내지 않는다). */
+    /**
+     * 따라 읽기: `n` 줄까지 받은 뒤부터. 출력은 이 루프 하나만 쓴다. 돌고 있는지는 `.pid` 의 번호가 이 실행의 감싼 bash 인지로만 본다 (신호를 보내지 않는다).
+     * 명령 글을 한 번 확인한 번호는 그 뒤로 있는지만 본다 (`/proc` 이 있으면 프로세스를 띄우지 않고, 없으면 `ps -p`), 10초쯤마다 명령 글을 다시 확인한다.
+     * 검사 한 번이 실패했다고 `lost` 라 하지 않는다: 0.3초 간격으로 세 번 잇달아 없고 그 사이 `.exit` 도 생기지 않았을 때만이다.
+     */
     fun follow(id: String, n: Int): String {
         require(n >= 0)
         Detached.check(id)
         return serverShell(
             """
-            f="${'$'}HOME/.kite/runs/$id"; n=$n; last=-1; beat=0
+            f="${'$'}HOME/.kite/runs/$id"; n=$n; last=-1; beat=0; v=; m=0; q=0
             ${ours(id)}
             [ -f "${'$'}f.in" ] || { if [ -s "${'$'}f.exit" ]; then echo "APERITEXIT gone"; else echo "APERITEXIT none"; fi; exit 0; }
             if [ ! -s "${'$'}f.pid" ] && [ ! -s "${'$'}f.exit" ]; then echo "APERITEXIT none"; exit 0; fi
@@ -269,10 +273,18 @@ class DetachedCommands(private val cfg: EngineConfig) {
               fi
               if [ "${'$'}fin" = 1 ]; then echo "APERITEXIT ${'$'}(cat "${'$'}f.exit")"; exit 0; fi
               p=; { read -r p < "${'$'}f.pid"; } 2>/dev/null
-              if ! ours "${'$'}p"; then
-                sleep 0.3; [ -s "${'$'}f.exit" ] && continue
-                echo "APERITEXIT lost"; exit 0
+              q=${'$'}((q+1))
+              if [ -n "${'$'}p" ] && [ "${'$'}p" = "${'$'}v" ] && [ ${'$'}((q % 40)) != 0 ]; then
+                if [ -d "/proc/${'$'}${'$'}" ]; then [ -e "/proc/${'$'}p" ] || v=; else ps -p "${'$'}p" > /dev/null 2>&1 || v=; fi
+              elif ours "${'$'}p"; then v=${'$'}p
+              else v=
               fi
+              if [ -z "${'$'}v" ]; then
+                m=${'$'}((m+1)); sleep 0.3
+                if [ ${'$'}m -ge 3 ] && [ ! -s "${'$'}f.exit" ]; then echo "APERITEXIT lost"; exit 0; fi
+                continue
+              fi
+              m=0
               beat=${'$'}((beat+1)); [ ${'$'}((beat % 40)) = 0 ] && echo "APERITBEAT"
               sleep 0.25
             done
