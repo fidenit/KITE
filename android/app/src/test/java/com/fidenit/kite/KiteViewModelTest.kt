@@ -107,7 +107,7 @@ class KiteViewModelTest {
 
     private fun same(a: String, b: String) = assertEquals(Lang.serialize(Lang.load(a)), b)
 
-    private fun inflight(engine: String, id: String, boardText: String = board) = Journal(files).writeInflight(Inflight(engine, id, "<input>x</input>", "여행 짐 정리해 줘", boardText, 1L))
+    private fun inflight(engine: String, id: String, boardText: String = board) = Journal(files).writeInflight(Inflight(engine, id, "<input>x</input>", "여행 짐 정리해 줘", boardText, 1L, -1, if (engine == "ssh") "u@h:22" else ""))
 
     // (1)
     @Test
@@ -300,7 +300,7 @@ class KiteViewModelTest {
     fun aTapOnACardTheInterruptedTurnCreatedSurvivesTheReplay() {
         serverSettings()
         write("board.txt", board)
-        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@h:22"))
         Journal(files).writeQueue(emptyList(), listOf("upd k3 i1 done | 가"))
         val vm = vm()
         vm.runnerOverride = Fake(lines = "card k3 checklist t2 3x2 새 목록\nadd k3 i1 todo | 가\n")
@@ -316,7 +316,7 @@ class KiteViewModelTest {
         serverSettings()
         write("board.txt", board)
         write("recent.json", "[[\"안녕\",\"반가워요\"],[\"둘째 말\",\"마지막 한마디\"],[\"여행 짐 정리해 줘\",\"끝\"]]")
-        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 2))
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 2, "u@h:22"))
         val vm = vm()
         vm.runnerOverride = Fake(lines = "say 끝\n")
         until("replay ends") { !vm.busy }
@@ -331,7 +331,7 @@ class KiteViewModelTest {
     fun aRunThatIsGoneShowsTheSavedBoardAndRunsNothing() {
         serverSettings()
         write("board.txt", board + "card k3 note t2 끝난 턴이 만든 카드\n") // saved after the turn
-        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@h:22"))
         val vm = vm()
         vm.runnerOverride = Fake(failWith = GONE)
         until("replay ends") { !vm.busy }
@@ -370,7 +370,7 @@ class KiteViewModelTest {
         com.fidenit.kite.engine.Jev.baseUrl = jevServer.url("/v1/systemone").toString()
         Store(app).jevKey = "test-key-not-real"
         write("board.txt", board)
-        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@h:22"))
         Journal(files).writeQueue(listOf("둘째 말"), emptyList())
         val vm = vm()
         val e = vm.error!!
@@ -498,7 +498,7 @@ class KiteViewModelTest {
     fun atTurnEndTheBoardIsOnDiskBeforeTheRecordGoesAndTheRecordBeforeTheServerIsCleaned() {
         serverSettings()
         write("board.txt", board)
-        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@h:22"))
         val vm = vm()
         val log = java.util.concurrent.CopyOnWriteArrayList<String>()
         vm.journal.beforeApply = { name, text ->
@@ -526,7 +526,7 @@ class KiteViewModelTest {
     fun aBoardThatCannotBeSavedKeepsTheRecordAndTheServerFiles() {
         serverSettings()
         write("board.txt", board)
-        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@h:22"))
         val vm = vm()
         val cleaned = java.util.concurrent.CopyOnWriteArrayList<String>()
         vm.cleanOverride = { cleaned.add(it) }
@@ -544,7 +544,7 @@ class KiteViewModelTest {
     fun stopDoesNotWaitForTheWriterAndBackgroundWaitsAboutASecondAtMost() {
         serverSettings()
         write("board.txt", board)
-        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@h:22"))
         val vm = vm()
         val gate = java.util.concurrent.CountDownLatch(1)
         val fake = Fake(gate = gate)
@@ -586,7 +586,7 @@ class KiteViewModelTest {
     fun aStopThatCannotReachTheServerSaysSoAndIsDeliveredWhenTheServerIsBack() {
         serverSettings()
         write("board.txt", board)
-        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@h:22"))
         val vm = vm()
         val engine = Unreachable()
         vm.runnerOverride = engine
@@ -646,5 +646,63 @@ class KiteViewModelTest {
         vm.send("다음 말")
         until("the next message runs") { runs.get() == 2 }
         until("turn ends") { !vm.busy }
+    }
+
+    // R5: a record of a turn that ran on another server: nothing is started on the server set now, and the saved board is shown as it is
+    @Test
+    fun aTurnThatRanOnAnotherServerIsNotStartedOnThisOne() {
+        serverSettings()
+        write("board.txt", board + "card k3 note t2 저장된 카드\n")
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@other:22"))
+        val vm = vm()
+        val fake = Fake(lines = "card k9 note t2 다시 돈 카드\n")
+        vm.runnerOverride = fake
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(vm.busy)
+        assertEquals("the engine is never asked", 1L, fake.started.count)
+        assertTrue(vm.error, vm.error!!.contains("다른 서버"))
+        assertNotNull(vm.board.card("k3"))
+        assertNull(vm.board.card("k9"))
+        vm.flushWrites()
+        assertFalse(exists("inflight.json"))
+        assertTrue(Journal(files).readToClean().isEmpty())
+    }
+
+    // R5: the server is changed in Settings while the app waits to pick the turn up: it is not picked up or started on the new server
+    @Test
+    fun aServerChangedWhileWaitingToPickTheTurnUpStartsNothingOnTheNewServer() {
+        serverSettings()
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@h:22"))
+        val vm = vm()
+        val fake = Fake(lines = "card k9 note t2 다시 돈 카드\n")
+        vm.runnerOverride = fake
+        assertTrue(vm.busy)
+        vm.store.host = "other"
+        until("the turn is given up") { !vm.busy }
+        assertEquals("the engine is never asked", 1L, fake.started.count)
+        assertTrue(vm.error, vm.error!!.contains("다른 서버"))
+        assertNull(vm.board.card("k9"))
+        vm.flushWrites()
+        assertFalse(exists("inflight.json"))
+    }
+
+    // R5/R4: a turn that was stopped before the app was killed is not picked up again
+    @Test
+    fun aTurnStoppedBeforeTheAppWasKilledIsNotPickedUpAgain() {
+        Store(app).apply { engineKind = "ssh"; host = "127.0.0.1"; port = "1"; user = "u" } // nothing listens there: the later stop cannot be delivered in this test
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@127.0.0.1:1"))
+        Journal(files).writeToClean(listOf("a-1"))
+        val vm = vm()
+        val fake = Fake(lines = "card k9 note t2 다시 돈 카드\n")
+        vm.runnerOverride = fake
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(vm.busy)
+        assertEquals("the engine is never asked", 1L, fake.started.count)
+        assertTrue(vm.error, vm.error!!.contains("멈춘 말"))
+        vm.flushWrites()
+        assertFalse(exists("inflight.json"))
+        assertEquals(listOf("a-1"), Journal(files).readToClean()) // still to be stopped and cleaned on the server
     }
 }

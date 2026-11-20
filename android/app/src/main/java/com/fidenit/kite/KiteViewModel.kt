@@ -68,6 +68,9 @@ import java.util.Locale
 /** 최근 대화 가운데 모델에게 함께 보내는 턴 수 */
 private const val RECENT = 6
 
+/** 다시 붙으려는 사이 서버 설정이 바뀌었다: 그 턴은 다른 서버에 있다 */
+private const val OTHER_SERVER = "__other_server"
+
 /** `recordOwner` 의 값: 켤 때 이어 받지 못해 되돌린 기록 (어느 턴의 것도 아니다) */
 private const val RESTORED = -1
 
@@ -279,6 +282,18 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             startPendingWords()
             return
         }
+        val serverTurn = i.engine == "ssh" && i.id.isNotEmpty()
+        if (serverTurn && useSsh && !needsSetup() && i.server != serverSig()) {
+            // 다른 서버에서 돌던 턴이다 (어느 서버인지 적히지 않은 옛 기록도): 지금 서버에서는 받을 수 없고, 다시 시작하면 같은 말이 두 번 돈다.
+            // 저장된 화면을 그대로 두고, 기록만 지우고, 한 줄로 알린다. (그 실행 번호는 이 서버의 치울 목록에 넣지 않는다.)
+            synchronized(recordLock) { recordOwner = RESTORED }
+            settleTurn(RESTORED, null, null)
+            startPendingWords()
+            error = otherServerLine(i)
+            return
+        }
+        // 멈춤을 누른 뒤 앱이 꺼졌던 턴 (번호가 치울 목록에 있다): 이어 받지 않는다. 서버의 실행은 닿는 대로 멈추고 치운다.
+        val stoppedBefore = serverTurn && i.id in journal.readToClean()
         try {
             board = Lang.load(i.board)
         } catch (_: Exception) {
@@ -286,7 +301,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         // 저장은 했는데 기록을 지우기 전에 꺼졌다면 주고받은 말에 이 턴이 이미 들어 있다: 턴 시작 전 길이로 되돌린다
         if (i.recentLen >= 0) while (recent.size > i.recentLen) recent.removeAt(recent.size - 1)
         restoreView()
-        if (i.engine == "ssh" && i.id.isNotEmpty() && useSsh && !needsSetup()) {
+        if (serverTurn && useSsh && !needsSetup() && !stoppedBefore) {
             // 그 사이 만진 카드는 따라잡은 뒤에 반영한다 (그 턴이 만든 카드를 만졌을 수 있다)
             replayTaps = events.toList()
             busy = true
@@ -310,6 +325,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         save()
         settleTurn(RESTORED, null, null)
         val why = when {
+            stoppedBefore -> if (english) "The last message was stopped before the app closed" else "앱이 꺼지기 전에 멈춘 말입니다"
             i.engine == "ssh" && i.id.isNotEmpty() && !useSsh ->
                 if (english) "The engine is now \"directly from the phone\", so the message that was running on the server cannot be picked up again" else "엔진이 '폰에서 바로'로 바뀌어 서버에서 돌던 말을 이어 받을 수 없습니다"
             i.engine == "ssh" && i.id.isNotEmpty() ->
@@ -319,6 +335,15 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val line = if (english) "$why → the board is back to before it → send it again: \"${i.shown}\"" else "$why → 화면은 그 말 이전으로 되돌렸습니다 → 다시 보내 주세요: \"${i.shown}\""
         startPendingWords() // 줄 세워 둔 말은 저절로 보낸다 (턴이 시작하면 오류 줄이 지워지므로 그다음에 적는다)
         error = line
+    }
+
+    /** 서버를 가리는 이름: 계정@주소:포트. 돌던 턴의 기록에 적어 두고, 다시 붙을 때 같은 서버인지 본다. */
+    private fun serverSig(): String = "${store.user.trim()}@${store.host.trim()}:${store.port.toIntOrNull() ?: 22}"
+
+    private fun otherServerLine(i: Inflight): String {
+        val where = if (i.server.isEmpty()) "" else " (${i.server})"
+        return if (english) "The last message ran on another server$where → its result cannot be collected from the server set now, and it was not started again → send it again if needed: \"${i.shown}\""
+        else "마지막 말은 다른 서버$where 에서 돌았습니다 → 지금 설정된 서버에서는 결과를 받을 수 없고, 다시 시작하지도 않았습니다 → 필요하면 다시 보내 주세요: \"${i.shown}\""
     }
 
     /** 줄 세워 둔 말이 남아 있으면 지금 보낸다 (돌고 있는 턴이 없을 때). */
@@ -640,7 +665,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val text = turnText(input)
         val shown = input.ifEmpty { if (english) "(screen action)" else "(화면 조작)" }
         // 네트워크를 쓰기 전에 남긴다: 앱이 이 턴 도중 꺼져도 다음에 켤 때 이어 받거나, 끊겼다고 알릴 수 있다.
-        val record = Inflight(if (useSsh) "ssh" else "api", "", text, shown, before, System.currentTimeMillis(), minOf(recent.size, 39))
+        val record = Inflight(if (useSsh) "ssh" else "api", "", text, shown, before, System.currentTimeMillis(), minOf(recent.size, 39), if (useSsh) serverSig() else "")
         synchronized(recordLock) {
             recordOwner = turnSeq + 1 // runTurn 이 매길 이 턴의 번호
             journal.writeInflight(record)
@@ -675,7 +700,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching {
                     // 이 턴의 기록이 디스크에 닿기를 기다린 뒤에 네트워크를 쓴다 (입출력 스레드에서 기다린다)
                     if (!resume) journal.flush()
-                    val e = if (resume) engineWhenReachable(record.id, evs) else engine()
+                    val e = if (resume) engineWhenReachable(record, evs) else engine()
                     used = e
                     if (e is ClaudeCode) {
                         // 서버에서 떼어 돌린다: 실행 번호가 정해지면 (서버에 닿기 전에) 기록에 적는다.
@@ -699,7 +724,14 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                                 )
                             }
                         }
-                        if (resume) e.resume(record.id, turn.turnText, 0, { stopFlag }) { evs.trySend(it) }
+                        e.onStarted = { id ->
+                            // 서버에서 시작된 것을 기록에 적는다: 그 뒤로는 서버에 실행이 없다고 해도 같은 말을 다시 시작하지 않는다
+                            synchronized(recordLock) {
+                                if (gen == generation && recordOwner == seq) journal.writeInflight(turn.copy(engine = "ssh", id = id, started = true))
+                            }
+                        }
+                        // 서버에 실행이 없을 때 새로 시작하는 것은, 시작된 적이 없다고 기록에 적혀 있을 때뿐이다 (턴 글을 넘기지 않으면 엔진은 시작하지 않는다)
+                        if (resume) e.resume(record.id, if (record.started) null else turn.turnText, 0, { stopFlag }) { evs.trySend(it) }
                         else e.run(turn.turnText, { stopFlag }) { evs.trySend(it) }
                     } else {
                         e.run(turn.turnText, { stopFlag }) { evs.trySend(it) }
@@ -726,6 +758,19 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 settleTurn(seq, cc, cleanId)
                 if (unreached) settleWhenReachable()
                 startPendingWords()
+                return@launch
+            }
+            if (msg == OTHER_SERVER) {
+                // 다시 붙기를 기다리는 사이 서버 설정이 바뀌었다: 새 서버에서는 이 턴을 받지도 다시 시작하지도 않는다. 기록을 지우고 알린다.
+                replayTaps.forEach { applyLine(it, Author.User) }
+                replayTaps = emptyList()
+                activity = ""
+                busy = false
+                rev++
+                save()
+                settleTurn(seq, null, null)
+                startPendingWords()
+                error = otherServerLine(record)
                 return@launch
             }
             if (msg == ABANDONED) {
@@ -858,10 +903,13 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 다시 붙는 턴의 엔진: 서버에 닿지 않으면 닿을 때까지 간격을 두고 다시 해 본다 (멈춤과 앞으로 돌아옴에 바로 깬다). */
-    private fun engineWhenReachable(runId: String, evs: Channel<Ev>): Runner {
+    private fun engineWhenReachable(record: Inflight, evs: Channel<Ev>): Runner {
+        val runId = record.id
         var attempt = 0
         while (true) {
             if (cleared) throw Exception(ABANDONED)
+            // 설정이 그사이 다른 서버로 바뀌었으면 그 서버에는 붙지 않는다 (거기서 이 턴이 새로 시작되면 같은 말이 두 번 돈다)
+            if (!useSsh || needsSetup() || record.server != serverSig()) throw Exception(OTHER_SERVER)
             try {
                 return engine()
             } catch (e: SshFatal) {

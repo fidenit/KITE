@@ -23,6 +23,10 @@ data class Inflight(
     val startedAt: Long,
     /** 턴 시작 전 `recent`(주고받은 말)의 길이 (최대 39). 다시 붙을 때 이 길이로 되돌려 같은 말이 두 번 들어가지 않게 한다. 모르면 -1. */
     val recentLen: Int = -1,
+    /** 이 턴을 돌린 서버 ("계정@주소:포트"). 다른 서버에서는 이어 받지도 다시 시작하지도 않는다. API 엔진이나 옛 기록이면 빈 글. */
+    val server: String = "",
+    /** 서버에서 실행이 시작된 것을 확인했는가. 참이면 서버에 그 실행이 없다고 해도 다시 시작하지 않는다 (옛 기록은 참으로 읽는다). */
+    val started: Boolean = false,
 )
 
 class Queue(val pending: List<String>, val events: List<String>)
@@ -122,7 +126,7 @@ class Journal(private val dir: File, private val async: Boolean = false) {
     fun writeFile(name: String, text: String) = put(File(dir, name), text)
 
     fun writeInflight(i: Inflight) {
-        val j = JSONObject().put("engine", i.engine).put("id", i.id).put("turnText", i.turnText).put("shown", i.shown).put("board", i.board).put("startedAt", i.startedAt).put("recentLen", i.recentLen)
+        val j = JSONObject().put("engine", i.engine).put("id", i.id).put("turnText", i.turnText).put("shown", i.shown).put("board", i.board).put("startedAt", i.startedAt).put("recentLen", i.recentLen).put("server", i.server).put("started", i.started)
         put(inflightFile, j.toString())
     }
 
@@ -133,7 +137,7 @@ class Journal(private val dir: File, private val async: Boolean = false) {
         val engine = j.getString("engine")
         val id = j.getString("id")
         if ((engine != "ssh" && engine != "api") || (id.isNotEmpty() && !Detached.valid(id))) null
-        else Inflight(engine, id, j.getString("turnText"), j.getString("shown"), j.getString("board"), j.getLong("startedAt"), j.optInt("recentLen", -1))
+        else Inflight(engine, id, j.getString("turnText"), j.getString("shown"), j.getString("board"), j.getLong("startedAt"), j.optInt("recentLen", -1), j.optString("server", ""), j.optBoolean("started", true))
     } catch (_: Exception) {
         null
     }

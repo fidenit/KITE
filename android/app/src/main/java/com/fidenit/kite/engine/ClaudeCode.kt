@@ -203,6 +203,10 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
     @Volatile
     var onRunId: ((String) -> Unit)? = null
 
+    /** 서버에서 실행이 시작된 것을 확인하면 불린다. 앱은 기록에 적어 두어, 그 뒤로는 서버에 실행이 없다고 해도 다시 시작하지 않는다. */
+    @Volatile
+    var onStarted: ((String) -> Unit)? = null
+
     /** 지금(또는 마지막으로) 돌린 실행의 번호 */
     @Volatile
     var runId: String? = null
@@ -498,7 +502,13 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
                         val out = mutableListOf<String>()
                         val (code, err) = ssh.exec(cmds.start(id), null) { out.add(it) }
                         when (val st = Detached.judgeStart(code, out, err, id)) {
-                            is Step.Ok -> phase = Phase.FOLLOW
+                            is Step.Ok -> {
+                                phase = Phase.FOLLOW
+                                try {
+                                    onStarted?.invoke(id)
+                                } catch (_: Exception) {
+                                }
+                            }
                             // 서버에서 이미 시작됐을 수 있다: 같은 번호로 다시 시작해도 두 번 돌지 않는다
                             is Step.Retry -> throw java.io.IOException("start cut")
                             is Step.Fail -> throw Fatal(startFailure(st.kind, st.detail))
