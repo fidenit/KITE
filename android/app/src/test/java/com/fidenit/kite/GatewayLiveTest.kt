@@ -16,6 +16,7 @@ import com.fidenit.kite.engine.StateClient
 import com.fidenit.kite.engine.Link
 import com.fidenit.kite.engine.STOPPED
 import com.fidenit.kite.engine.gatewayClient
+import com.fidenit.kite.voice.Eleven
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -212,5 +213,44 @@ class GatewayLiveTest {
         println("그 뒤 따라 읽기의 끝: $end")
         assertTrue("end value: $end", end in listOf("APERITEXIT 143", "APERITEXIT stopped", "APERITEXIT gone"))
         cc.clean(id)
+    }
+
+    /**
+     * Part D (voice, spec 10.3): only when the two variables above are set AND `APERIT_LIVE_VOICE=1` (each run costs ElevenLabs credit on the server's key).
+     * A Korean sentence through the server's voice as `pcm_16000` -> PCM bytes arrive (prints bytes, first-byte ms, total ms); that PCM -> speech-to-text (`kor`) contains "안녕".
+     * Never prints the token.
+     */
+    @Test
+    fun aKoreanSentenceIsSpokenAndHeardBackThroughTheServerVoice() {
+        assumeTrue(
+            "APERIT_LIVE_GATEWAY_URL / APERIT_LIVE_GATEWAY_TOKEN not set or APERIT_LIVE_VOICE != 1",
+            env("APERIT_LIVE_GATEWAY_URL").isNotEmpty() && env("APERIT_LIVE_GATEWAY_TOKEN").isNotEmpty() && env("APERIT_LIVE_VOICE") == "1",
+        )
+        val t = Eleven.Target.pro(env("APERIT_LIVE_GATEWAY_URL"), env("APERIT_LIVE_GATEWAY_TOKEN"), "0.3.0-pro")
+        val got = java.io.ByteArrayOutputStream()
+        val t0 = System.nanoTime()
+        var first = -1L
+        Eleven.speak(t, "", "안녕하세요, 아페리트입니다.", object : Eleven.Sink {
+            override fun push(pcm: ShortArray, n: Int) {
+                if (first < 0) first = (System.nanoTime() - t0) / 1_000_000
+                for (i in 0 until n) {
+                    got.write(pcm[i].toInt() and 0xFF)
+                    got.write((pcm[i].toInt() shr 8) and 0xFF)
+                }
+            }
+
+            override fun pendingSecs(): Float = 0f
+
+            override fun stop() {}
+        }, { false }, format = "pcm_16000")
+        val total = (System.nanoTime() - t0) / 1_000_000
+        val bytes = got.toByteArray()
+        println("voice tts bytes=${bytes.size} first_ms=$first total_ms=$total")
+        assertTrue("PCM bytes arrived", bytes.size > 16000) // more than half a second at 16 kHz, 16 bit
+        val pcm = ShortArray(bytes.size / 2) { ((bytes[2 * it + 1].toInt() shl 8) or (bytes[2 * it].toInt() and 0xFF)).toShort() }
+        val s0 = System.nanoTime()
+        val heard = Eleven.transcribe(t, pcm, false)
+        println("voice stt chars=${heard.length} ms=${(System.nanoTime() - s0) / 1_000_000} text=$heard")
+        assertTrue("heard: $heard", heard.contains("안녕"))
     }
 }

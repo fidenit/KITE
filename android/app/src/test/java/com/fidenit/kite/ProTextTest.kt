@@ -3,6 +3,9 @@ package com.fidenit.kite
 import com.fidenit.kite.engine.GatewayLink
 import com.fidenit.kite.engine.GatewayText
 import com.fidenit.kite.engine.LinkPhase
+import com.fidenit.kite.voice.Eleven
+import com.fidenit.kite.voice.ProVoice
+import com.fidenit.kite.voice.Speaking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -101,5 +104,46 @@ class ProTextTest {
         assertTrue(n.changed("revoked")) // the status word changed again
         assertTrue(n.changed("pending:used"))
         assertFalse(n.changed("pending:used"))
+    }
+
+    /** texts-pro-v1 D1-D5 (voice in Pro), word for word, KO and EN. */
+    @Test
+    fun voiceTextsAreTheDecidedWording() {
+        val rows = listOf(
+            "D1" to both { ProVoice.cannotSpeak(it) } to ("서버의 목소리를 지금 쓸 수 없습니다 → 이 답은 폰의 목소리로 읽습니다 → 계속되면 이 앱을 준 사람에게 알려 주세요" to
+                "The server's voice cannot be used right now → this answer is read with the phone's own voice → if it keeps happening, tell whoever gave you this app"),
+            "D2" to both { ProVoice.speakLimit(it) } to ("서버의 목소리 사용 한도에 닿았습니다 → 이 답은 폰의 목소리로 읽습니다 → 할 일은 없습니다" to
+                "The server's voice limit was reached → this answer is read with the phone's own voice → nothing to do"),
+            "D3" to both { ProVoice.cannotHear(it) } to ("서버가 말을 글로 바꾸지 못했습니다 → 방금 한 말은 보내지 않았습니다 → 글로 적어 보내 주세요. 계속되면 이 앱을 준 사람에게 알려 주세요" to
+                "The server could not turn your speech into text → what you just said was not sent → type it instead; if it keeps happening, tell whoever gave you this app"),
+            "D4" to both { ProVoice.hearLimit(it) } to ("서버의 받아쓰기 사용 한도에 닿았습니다 → 방금 한 말은 보내지 않았습니다 → 글로 적어 보내 주세요" to
+                "The server's speech-to-text limit was reached → what you just said was not sent → type it instead"),
+        )
+        for ((pair, want) in rows) {
+            val (name, got) = pair
+            assertEquals("$name KO", want.first, got.first)
+            assertEquals("$name EN", want.second, got.second)
+        }
+        // which failure shows which line
+        fun f(g: Eleven.Gate, why: Eleven.Why = Eleven.Why.OTHER) = Eleven.Failure(why, false, "HTTP", gate = g)
+        for (en in listOf(false, true)) {
+            for (g in listOf(Eleven.Gate.OFF, Eleven.Gate.KEY, Eleven.Gate.REFUSED, Eleven.Gate.DEVICE, Eleven.Gate.TOO_LARGE, Eleven.Gate.BAD_REQUEST, Eleven.Gate.OTHER)) {
+                assertEquals("D1 $g", ProVoice.cannotSpeak(en), ProVoice.speakNotice(Speaking.Outcome(f(g), false), en))
+                assertEquals("D3 $g", ProVoice.cannotHear(en), ProVoice.heardNotice(f(g), false, en))
+            }
+            for (g in listOf(Eleven.Gate.LIMIT, Eleven.Gate.RATE)) {
+                assertEquals("D2 $g", ProVoice.speakLimit(en), ProVoice.speakNotice(Speaking.Outcome(f(g, Eleven.Why.LIMIT), false), en))
+                assertEquals("D4 $g", ProVoice.hearLimit(en), ProVoice.heardNotice(f(g, Eleven.Why.LIMIT), false, en))
+            }
+            // D5: not reachable (the server's voice_unreachable, or the phone's own network) -> the free flavor's network lines (no key, no Settings in them)
+            for (net in listOf(f(Eleven.Gate.UNREACHABLE, Eleven.Why.NETWORK), Eleven.Failure(Eleven.Why.NETWORK, false, "x"))) {
+                val speak = ProVoice.speakNotice(Speaking.Outcome(net, false), en)!!
+                assertEquals(Speaking.notice(Speaking.Outcome(net, false), en), speak)
+                for (listening in listOf(false, true)) assertEquals(Speaking.heardNotice(Eleven.Why.NETWORK, listening, en), ProVoice.heardNotice(net, listening, en))
+                for (l in listOf(speak, ProVoice.heardNotice(net, true, en))) {
+                    assertFalse(l, l.contains("키") || l.contains("설정") || l.contains("key") || l.contains("Settings"))
+                }
+            }
+        }
     }
 }
