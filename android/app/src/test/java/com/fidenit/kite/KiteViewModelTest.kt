@@ -538,4 +538,33 @@ class KiteViewModelTest {
         assertTrue(exists("inflight.json"))
         assertTrue(cleaned.toString(), cleaned.isEmpty())
     }
+
+    // R3: the main thread does not wait for a writer that is stuck: Stop not at all, going to the background about a second at most
+    @Test
+    fun stopDoesNotWaitForTheWriterAndBackgroundWaitsAboutASecondAtMost() {
+        serverSettings()
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        val vm = vm()
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val fake = Fake(gate = gate)
+        vm.runnerOverride = fake
+        until("the engine has the turn") { fake.started.count == 0L }
+        val hold = java.util.concurrent.CountDownLatch(1)
+        vm.journal.beforeApply = { _, _ -> hold.await(8, java.util.concurrent.TimeUnit.SECONDS) }
+        vm.send("줄 세운 말") // something the writer is stuck on
+        var t0 = System.nanoTime()
+        vm.stop()
+        val stopMs = (System.nanoTime() - t0) / 1_000_000
+        t0 = System.nanoTime()
+        vm.background()
+        val backMs = (System.nanoTime() - t0) / 1_000_000
+        hold.countDown()
+        gate.countDown()
+        assertTrue("Stop took $stopMs ms", stopMs < 500)
+        assertTrue("going to the background took $backMs ms", backMs < 2500)
+        until("turn ends") { !vm.busy }
+        vm.flushWrites()
+        assertEquals(listOf("a-1"), Journal(files).readToClean()) // Stop put the run on the clean list, and it reached the disk
+    }
 }

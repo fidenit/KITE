@@ -1226,7 +1226,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     /** 앱이 뒤로 갔다: 보드를 저장하고, 말로 대화하기는 끈다 (마이크가 뒤에서 계속 돌지 않게). */
     fun background() {
         save()
-        journal.flush() // 앱이 멈추기 전에 디스크에 닿게 한다
+        journal.flush(1000) // 앱이 멈추기 전에 디스크에 닿게 한다. 메인 스레드가 일꾼을 기다리는 곳은 여기와 onCleared 뿐이고, 1초까지만 기다린다
         if (converse) converse(false)
     }
 
@@ -1246,6 +1246,6 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         deviceTts?.shutdown()
         val s = ssh
         Thread { s?.close() }.start()
-        journal.flush()
+        journal.flush(1000)
     }
 }
