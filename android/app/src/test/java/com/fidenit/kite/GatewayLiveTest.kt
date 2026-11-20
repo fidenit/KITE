@@ -356,21 +356,23 @@ class GatewayLiveTest {
                 rwork.add(block)
             }
 
-            override val sink: Eleven.Sink = object : Eleven.Sink {
-                override fun push(pcm: ShortArray, n: Int) {
-                    audioAt.add(System.nanoTime() / 1_000_000)
-                }
-
-                override fun pendingSecs(): Float = 0f
-                override fun stop() {}
-            }
-
             override fun started(id: Int) = started.add(id).let {}
             override fun done(id: Int) {}
-            override fun rest(why: String) = rlogs.add("rest $why").let {}
+            override fun rest(why: String, brokeOff: Boolean) = rlogs.add("rest $why broke=$brokeOff").let {}
             override fun fallback(why: String, notice: Boolean) = rlogs.add("fallback $why").let {}
             override fun device(word: String) = rlogs.add("device $word").let {}
             override fun log(line: String) = rlogs.add(line).let {}
+        }, object : com.fidenit.kite.voice.LivePlay.Out {
+            // a speaker that plays at once: the time each slice reaches it
+            private var total = 0L
+            override fun writeSome(pcm: ShortArray, off: Int, n: Int): Int {
+                audioAt.add(System.nanoTime() / 1_000_000)
+                total += n
+                return n
+            }
+
+            override fun played(): Long = total
+            override fun flush() {}
         })
         fun rdrain(ms: Long) {
             val e = System.nanoTime() / 1_000_000 + ms
