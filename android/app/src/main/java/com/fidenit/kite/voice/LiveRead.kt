@@ -80,7 +80,7 @@ class LiveRead(
     private var lastProgress = -1L
     private var stillSince = 0L
 
-    private val playEvents = object : LivePlay.Events {
+    private val playEvents: LivePlay.Events = object : LivePlay.Events {
         override fun start(gen: Int, id: Int) = host.post { if (gen == play.gen) playStarted(id) }
         override fun done(gen: Int, id: Int) = host.post { if (gen == play.gen) playDone(id) }
         override fun skipped(gen: Int, id: Int, error: String) = host.post { if (gen == play.gen) playSkipped(id, error) }
@@ -89,7 +89,7 @@ class LiveRead(
     }
 
     /** 재생 줄 (시험이 [LivePlay.pump] 를 부른다) */
-    val play = LivePlay(out, playEvents, thread = thread)
+    val play: LivePlay = LivePlay(out, playEvents, thread = thread)
 
     /** 대화를 켤 때: 소켓을 미리 연다 */
     fun open() {
