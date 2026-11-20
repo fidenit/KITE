@@ -493,6 +493,39 @@ class KiteViewModelTest {
         accepting.join(2000)
     }
 
+    // R1: the record with the run id could not be saved, the owner is told to send the words again: no record of that turn is left
+    // that could reach the disk later and start the turn by itself after a restart
+    @Test
+    fun aTurnWhoseRunRecordCouldNotBeSavedLeavesNoRecordBehind() {
+        val server = java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress())
+        val accepting = kotlin.concurrent.thread {
+            try {
+                while (true) server.accept().close()
+            } catch (_: Exception) {
+            }
+        }
+        val vm = vm()
+        val broken = java.util.concurrent.atomic.AtomicBoolean(true)
+        vm.journal.beforeApply = { name, text ->
+            if (broken.get() && name == "inflight.json" && text != null && org.json.JSONObject(text).getString("id").isNotEmpty()) throw java.io.IOException("no space left")
+        }
+        vm.runnerOverride = com.fidenit.kite.engine.ClaudeCode(
+            com.fidenit.kite.engine.Ssh(com.fidenit.kite.engine.Server("127.0.0.1", server.localPort, "u", "", "", "", "")) {},
+            com.fidenit.kite.engine.EngineConfig("", "", "default", "", ""),
+        )
+        vm.cleanOverride = { } // nothing was started on the server: no clean-up call over the network in this test
+        vm.send("뭔가 해 줘")
+        until("the turn ends with the line") { vm.error != null && !vm.busy }
+        val told = vm.error.orEmpty()
+        assertTrue("the owner is told it was not saved and not sent: '$told'", told.contains("저장하지 못했습니다") || told.contains("could not be saved"))
+        broken.set(false) // the disk works again
+        until("everything is on disk") { vm.journal.flush(200) }
+        assertFalse("no record of that turn on disk: " + (try { File(files, "inflight.json").readText() } catch (_: Exception) { "" }), exists("inflight.json"))
+        assertNull(Journal(files).readInflight())
+        server.close()
+        accepting.join(2000)
+    }
+
     // R2(b): at turn end the board and the conversation reach the disk before the record is deleted, and the delete before the server files are cleaned
     @Test
     fun atTurnEndTheBoardIsOnDiskBeforeTheRecordGoesAndTheRecordBeforeTheServerIsCleaned() {

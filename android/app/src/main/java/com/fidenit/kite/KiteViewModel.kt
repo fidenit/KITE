@@ -748,6 +748,14 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                             if (!mine) throw Exception(STOPPED)
                             // 번호가 적힌 기록이 디스크에 닿은 뒤에야 서버에 올리고 시작한다: 그 전에 앱이 꺼지면 서버의 실행을 다시 찾을 길이 없다
                             if (!journal.flush()) {
+                                // 이 말은 서버에 보내지 않고 다시 보내 달라고 알린다: 이 턴의 기록도 버린다 (실패한 쓰기 뒤에 지우기를 세운다).
+                                // 남겨 두면 나중에 디스크에 닿아, 다음에 켤 때 앱이 이 말을 혼자 시작한다.
+                                synchronized(recordLock) {
+                                    if (recordOwner == seq) {
+                                        recordOwner = 0
+                                        journal.clearInflight()
+                                    }
+                                }
                                 throw Exception(
                                     if (english) "This message could not be saved on the phone → it was not sent to the server → check the phone's free storage and send it again"
                                     else "폰에 이 말을 저장하지 못했습니다 → 서버에는 보내지 않았습니다 → 폰의 저장 공간을 확인한 뒤 다시 보내 주세요",
