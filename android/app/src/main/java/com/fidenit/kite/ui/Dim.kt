@@ -34,7 +34,7 @@ object Dim {
     val logReplyLine = 20.sp
     val emptyHint = 14.sp
     val emptyHintLine = 20.sp
-    val drawS = 10.sp
+    val drawS = 12.sp // TEXT_FLOOR 아래로 내리지 않는다 (grid-dock §A2)
     val drawM = 12.sp
     val drawL = 15.sp
 
@@ -42,6 +42,17 @@ object Dim {
     val cardPad = 12.dp
     val cardCorner = 16.dp
     val cardGap = 8.dp
+
+    // 여러 칸 보드 (memory/specs/aperit-pro-grid-dock-v1.md §A1·A5). 종류별 최소 폭 표는 core/BoardLayout.kt 의 Fit.
+    val GRID_V_PHONE = 6 // 600 dp 아래: 한 줄의 PATET 폭 합 한도
+    val GRID_V_MID = 9 // 600~839 dp
+    val GRID_V_WIDE = 12 // 840 dp 부터
+    val GRID_MID_DP = 600
+    val GRID_WIDE_DP = 840
+    val TEXT_FLOOR = 12.sp // 보드의 어떤 글자도 이보다 작지 않다
+    val FLASH_MS = 1200 // 가리킨 카드 테두리가 사라지는 시간
+    val metricSteps = listOf(metric, 26.sp, 22.sp, 20.sp) // 숫자가 한 줄에 안 들어가면 차례로 줄이고, 20 에서도 넘치면 줄을 바꾼다
+    val flashStroke = 2.dp
     val listPadH = 10.dp
     val listPadV = 4.dp
     val titleGap = 6.dp
