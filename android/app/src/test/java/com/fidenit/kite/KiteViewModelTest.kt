@@ -567,4 +567,84 @@ class KiteViewModelTest {
         vm.flushWrites()
         assertEquals(listOf("a-1"), Journal(files).readToClean()) // Stop put the run on the clean list, and it reached the disk
     }
+
+    /** An engine that cannot reach the server: it stays in the turn until Stop and then gives up, as the real one does. */
+    private class Unreachable : Runner {
+        override val label = "unreachable"
+        val started = java.util.concurrent.CountDownLatch(1)
+
+        override fun run(turnText: String, stopped: () -> Boolean, send: (Ev) -> Unit): Stats {
+            started.countDown()
+            val end = System.currentTimeMillis() + 10_000
+            while (!stopped() && System.currentTimeMillis() < end) Thread.sleep(10)
+            throw Exception(com.fidenit.kite.engine.STOPPED)
+        }
+    }
+
+    // R4: a Stop that cannot reach the server says so, keeps the run on the clean list, and is delivered when the server is back
+    @Test
+    fun aStopThatCannotReachTheServerSaysSoAndIsDeliveredWhenTheServerIsBack() {
+        serverSettings()
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0))
+        val vm = vm()
+        val engine = Unreachable()
+        vm.runnerOverride = engine
+        val reachable = java.util.concurrent.atomic.AtomicBoolean(false)
+        val asked = java.util.concurrent.atomic.AtomicInteger(0)
+        val cleaned = java.util.concurrent.CopyOnWriteArrayList<String>()
+        vm.cleanOverride = { cleaned.add(it) }
+        vm.settleOverride = { ids ->
+            asked.incrementAndGet()
+            if (reachable.get()) ids else emptyList()
+        }
+        until("the engine has the turn") { engine.started.count == 0L }
+        val t0 = System.nanoTime()
+        vm.stop()
+        until("turn ends") { !vm.busy }
+        val ms = (System.nanoTime() - t0) / 1_000_000
+        assertTrue("Stop ended the turn in $ms ms", ms < 10_000)
+        assertTrue(vm.error, vm.error!!.contains("멈춤을 전하지 못했습니다"))
+        until("the app tries to deliver the stop") { asked.get() >= 1 }
+        vm.flushWrites()
+        assertEquals(listOf("a-1"), Journal(files).readToClean())
+        assertTrue("the files of a run that may still be running are not removed: $cleaned", cleaned.isEmpty())
+        reachable.set(true)
+        vm.foreground() // back in front: tried at once
+        until("the run is stopped and cleaned") { vm.flushWrites() && Journal(files).readToClean().isEmpty() }
+        until("the line goes away") { vm.error == null }
+    }
+
+    // R4: after Stop nothing starts by itself: a card tap made during the stopped turn waits for the next message
+    @Test
+    fun stopWithCardTapsWaitingStartsNoTurnByItself() {
+        write("board.txt", board)
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val runs = java.util.concurrent.atomic.AtomicInteger(0)
+        val engine = object : Runner {
+            override val label = "counting"
+
+            override fun run(turnText: String, stopped: () -> Boolean, send: (Ev) -> Unit): Stats {
+                runs.incrementAndGet()
+                gate.await(10, java.util.concurrent.TimeUnit.SECONDS)
+                return Stats()
+            }
+        }
+        val vm = vm()
+        vm.runnerOverride = engine
+        vm.send("뭔가 해 줘")
+        until("the engine has the turn") { runs.get() == 1 }
+        vm.archive("t2") // a tap on the board while the turn runs
+        vm.stop()
+        gate.countDown()
+        until("turn ends") { !vm.busy }
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(vm.busy)
+        assertEquals(1, runs.get())
+        vm.flushWrites()
+        assertEquals(listOf("archive t2"), Journal(files).readQueue().events) // still queued for the next message
+        vm.send("다음 말")
+        until("the next message runs") { runs.get() == 2 }
+        until("turn ends") { !vm.busy }
+    }
 }

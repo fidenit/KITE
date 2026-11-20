@@ -346,4 +346,77 @@ class DetachedTest {
         assertEquals(FollowLine.Exit("gone"), Detached.classify("APERITEXIT gone"))
         assertEquals(FollowLine.Exit("none"), Detached.classify("APERITEXIT none"))
     }
+
+    /** A server that takes the connection and never says a word: the engine stays inside its connect. */
+    private class Silent : AutoCloseable {
+        val socket = java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress())
+        val taken = java.util.concurrent.CountDownLatch(1)
+        private val held = java.util.concurrent.CopyOnWriteArrayList<java.net.Socket>()
+        private val accepting = kotlin.concurrent.thread {
+            try {
+                while (true) {
+                    held.add(socket.accept())
+                    taken.countDown()
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        fun ssh() = com.fidenit.kite.engine.Ssh(com.fidenit.kite.engine.Server("127.0.0.1", socket.localPort, "u", "", "", "", "")) {}
+
+        override fun close() {
+            socket.close()
+            accepting.join(2000)
+            held.forEach { it.close() }
+        }
+    }
+
+    /** R4: close() does not wait for a connect in progress, and that connect ends at once. */
+    @Test
+    fun closeDoesNotWaitForAConnectInProgress() {
+        Silent().use { server ->
+            val ssh = server.ssh()
+            val ended = java.util.concurrent.CountDownLatch(1)
+            kotlin.concurrent.thread {
+                try {
+                    ssh.connect()
+                } catch (_: Exception) {
+                }
+                ended.countDown()
+            }
+            assertTrue(server.taken.await(5, TimeUnit.SECONDS)) // the engine is inside its connect now
+            val t0 = System.nanoTime()
+            ssh.close()
+            val ms = (System.nanoTime() - t0) / 1_000_000
+            assertTrue("close() took $ms ms", ms < 1000)
+            assertTrue("the connect ends when the connection is closed", ended.await(3, TimeUnit.SECONDS))
+            assertFalse(ssh.connected)
+        }
+    }
+
+    /** R4: Stop while the engine is reconnecting to a server that does not answer ends in about 10 s, and the run stays on the clean list as not stopped. */
+    @Test
+    fun stopWhileReconnectingEndsInTimeAndLeavesTheRunOnTheCleanList() {
+        Silent().use { server ->
+            val cc = com.fidenit.kite.engine.ClaudeCode(server.ssh(), cfg)
+            val id = "20261120-013000-a1b2"
+            val stop = java.util.concurrent.atomic.AtomicBoolean(false)
+            kotlin.concurrent.thread {
+                server.taken.await(5, TimeUnit.SECONDS)
+                stop.set(true) // Stop is pressed while the engine is inside its connect
+            }
+            val t0 = System.nanoTime()
+            val e = try {
+                cc.resume(id, null, 0, { stop.get() }) {}
+                null
+            } catch (e: Exception) {
+                e
+            }
+            val ms = (System.nanoTime() - t0) / 1_000_000
+            assertEquals(com.fidenit.kite.engine.STOPPED, e?.message)
+            assertTrue("Stop took $ms ms", ms < 11_000)
+            assertEquals(listOf(id), cc.toClean)
+            assertFalse(cc.endedOnServer(id))
+        }
+    }
 }

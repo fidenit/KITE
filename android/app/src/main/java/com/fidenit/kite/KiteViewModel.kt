@@ -195,6 +195,13 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     /** 턴 끝의 디스크 정리(기록 지우기, 서버 파일 치우기)가 아직 도는 수. 시험이 끝나기를 기다릴 때 본다. */
     private val settling = java.util.concurrent.atomic.AtomicInteger(0)
 
+    /** 멈춤을 전하지 못한 실행을 서버에 닿는 대로 멈추고 치우는 일 (하나만 돈다), 그 기다림을 깨우는 것 */
+    private var settleJob: Job? = null
+    private val settleWaker = Waker()
+
+    /** 시험에서 "남은 실행을 서버에서 멈추고 치우기" 대신 쓴다: 받은 번호 가운데 멈추고 치운 것을 돌려준다 (앱은 바꾸지 않는다). */
+    internal var settleOverride: ((List<String>) -> List<String>)? = null
+
     /** 시험에서 서버의 실행 파일 치우기 대신 쓴다 (앱은 바꾸지 않는다). */
     internal var cleanOverride: ((String) -> Unit)? = null
 
@@ -252,6 +259,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         events.addAll(q.events)
         restoreView()
         resumeInterrupted()
+        settleWhenReachable() // 멈춤을 전하지 못한 채 꺼졌던 실행이 있으면 서버에 닿는 대로 멈추고 치운다
     }
 
     /** 보던 주제와 화면 아래 한마디를 되살린다 (`board.say` 는 보드 파일에 들어 있지 않다). */
@@ -380,6 +388,65 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (cc != null) syncToClean(cc)
         }.invokeOnCompletion { settling.decrementAndGet() }
+    }
+
+    private fun stopNotDelivered(): String =
+        if (english) "Stop could not reach the server → the work may still be running there → the app stops it as soon as it can connect"
+        else "서버에 닿지 않아 멈춤을 전하지 못했습니다 → 서버에서는 아직 일하고 있을 수 있습니다 → 연결되는 대로 앱이 멈추고 치웁니다"
+
+    /** 새 연결 하나 (턴의 엔진과 따로 쓴다). */
+    private fun newSsh() = Ssh(Server(store.host, store.port.toIntOrNull() ?: 22, store.user, store.password, store.privateKey, store.passphrase, store.fingerprint)) { store.fingerprint = it }
+
+    /** 치울 목록의 실행을 서버에서 멈추고 치운다 (턴의 엔진과 다른, 자기 연결로). 멈추고 치운 번호를 돌려준다. 입출력 스레드에서 부른다. */
+    private fun settleOnce(ids: List<String>): List<String> {
+        settleOverride?.let { return it(ids) }
+        if (!useSsh || needsSetup()) return emptyList()
+        val s = newSsh()
+        val cc = ClaudeCode(s, EngineConfig(store.claude, store.dir, store.permission, store.effort, store.extra))
+        ids.forEach { cc.addToClean(it) }
+        try {
+            s.connect(8000)
+            cc.settle()
+        } catch (_: Exception) {
+        } finally {
+            s.close()
+        }
+        val left = cc.toClean.toSet()
+        return ids.filter { it !in left }
+    }
+
+    /**
+     * 멈춤을 전하지 못한 실행이 치울 목록에 남아 있으면, 서버에 닿을 때까지 간격을 두고 다시 해 본다 (앱이 앞으로 돌아오면 바로).
+     * 닿으면 멈추고 치운다. 턴이 도는 동안에는 쉬고 (그 턴의 연결이 붙을 때 엔진이 한다), 목록이 비면 끝난다.
+     */
+    private fun settleWhenReachable() {
+        if (settleJob?.isActive == true) return
+        if (journal.readToClean().isEmpty()) return
+        if (settleOverride == null && (!useSsh || needsSetup())) return
+        settleJob = viewModelScope.launch {
+            var attempt = 0
+            while (true) {
+                val ids = journal.readToClean()
+                if (ids.isEmpty()) break
+                if (!busy) {
+                    val done = withContext(Dispatchers.IO) { runCatching { settleOnce(ids) }.getOrDefault(emptyList()) }
+                    if (done.isNotEmpty()) {
+                        synchronized(cleanLock) {
+                            journal.removeToClean(done)
+                            handed.removeAll(done.toSet())
+                            (engine as? ClaudeCode)?.forget(done)
+                        }
+                        attempt = 0
+                    }
+                    if (journal.readToClean().isEmpty()) {
+                        if (error == stopNotDelivered()) error = null // 이제 멈췄다: 알리던 줄을 거둔다
+                        break
+                    }
+                }
+                val wait = Detached.delayMs(attempt++)
+                withContext(Dispatchers.IO) { settleWaker.sleep(wait) { cleared } }
+            }
+        }
     }
 
     private fun save() {
@@ -603,11 +670,13 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             // 판단 모델(Jev)이 먼저 요청의 종류·주제를 보고 받았다는 한마디를 고른다. 입출력 스레드에서, 엔진을 부르기 전에.
             // 키가 없거나 입력이 비었거나 서버에서 돌던 턴에 다시 붙는 것이면 부르지 않는다.
             val turn = if (resume) record else beforeTurn(record, input)
+            var used: Runner? = null
             val result = withContext(turnIo) {
                 runCatching {
                     // 이 턴의 기록이 디스크에 닿기를 기다린 뒤에 네트워크를 쓴다 (입출력 스레드에서 기다린다)
                     if (!resume) journal.flush()
                     val e = if (resume) engineWhenReachable(record.id, evs) else engine()
+                    used = e
                     if (e is ClaudeCode) {
                         // 서버에서 떼어 돌린다: 실행 번호가 정해지면 (서버에 닿기 전에) 기록에 적는다.
                         e.onRunId = { id ->
@@ -642,13 +711,20 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             val cc = engine as? ClaudeCode
             val runId = currentRunId
             val msg = result.exceptionOrNull()?.message
+            val usedCc = used as? ClaudeCode // 이 턴을 실제로 돌린 엔진
+            // 멈춤을 눌렀는데 서버에서 끝난 것이 확인되지 않았다 = 멈춤이 서버에 닿지 않았다: 치울 목록에 두고, 닿는 대로 멈추고 치운다
+            val unreached = msg == STOPPED && runId != null && (usedCc == null || !usedCc.endedOnServer(runId))
+            if (unreached) runId?.let { markToClean(it) }
+            // 서버에서 아직 돌 수 있는 실행의 파일은 여기서 치우지 않는다 (멈춘 뒤에 치운다)
+            val cleanId = if (unreached) null else runId
             // 저장된 보드를 다시 읽기 전에 밀린 쓰기가 디스크에 닿게 한다 (입출력 스레드에서 기다린다)
             if (msg == GONE) withContext(Dispatchers.IO) { journal.flush() }
             if (gen != generation) {
                 // 화면을 비운 뒤에 끝났다: 새 화면에는 아무것도 반영하지 않고, 서버 실행만 치운다
                 activity = ""
                 busy = false
-                settleTurn(seq, cc, runId)
+                settleTurn(seq, cc, cleanId)
+                if (unreached) settleWhenReachable()
                 startPendingWords()
                 return@launch
             }
@@ -692,12 +768,15 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             }.onFailure { e ->
                 if (e.message != STOPPED && !stopFlag) error = e.message ?: e.toString()
             }
+            if (unreached) error = stopNotDelivered()
+            val wasStopped = stopFlag
             recent.add(shown to board.say)
             activity = ""
             busy = false
             rev++
             save() // 반영한 것을 먼저 저장한다. 그것이 디스크에 닿은 뒤에 돌던 턴의 기록을 지우고, 그 지우기가 닿은 뒤에야 서버의 실행 파일을 치운다
-            settleTurn(seq, cc, runId)
+            settleTurn(seq, cc, cleanId)
+            if (unreached) settleWhenReachable()
             if (result.isSuccess) reviewTurn() else touched.clear()
             // 기억이 바뀌었을 수 있으니 다음 턴을 위해 다시 읽어 둔다.
             launch(Dispatchers.IO) {
@@ -706,7 +785,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 } catch (_: Exception) {
                 }
             }
-            if (pending.isNotEmpty() || events.isNotEmpty()) {
+            // 멈춘 뒤에는 아무것도 저절로 시작하지 않는다: 카드 조작 알림은 다음에 사용자가 말을 보낼 때 함께 간다.
+            // (멈춘 뒤에 사용자가 새로 보낸 말이 줄 서 있으면 그 말은 보낸다.)
+            if (pending.isNotEmpty() || (events.isNotEmpty() && !wasStopped)) {
                 val next = pending.joinToString("\n")
                 pending.clear()
                 startTurn(next)
@@ -840,9 +921,15 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         pending.clear()
         saveQueue()
         silence()
+        eventTimer?.cancel() // 멈춘 뒤에는 카드 조작 알림도 저절로 보내지 않는다
         if (busy) {
             stopFlag = true
-            currentRunId?.let { markToClean(it) } // 서버에 닿지 않아 멈춤을 못 보내도 다음에 붙을 때 멈추고 치운다
+            currentRunId?.let { markToClean(it) } // 서버에 닿지 않아 멈춤을 못 보내도 연결되는 대로 멈추고 치운다
+            // 아직 서버에 붙는 중(연결·준비)이면 그 연결을 바로 끊어 풀어 준다: 그 단계에서는 이 연결로 서버에서 도는 것이 없다
+            if (!prepared) {
+                val now = ssh
+                if (now != null) viewModelScope.launch(Dispatchers.IO) { now.close() }
+            }
             // 서버에 닿는 단계(연결·준비)에서 멈추지 못하고 매달려 있으면 10초 뒤 연결을 끊어 풀어 준다
             val seq = turnSeq
             viewModelScope.launch {
@@ -1221,6 +1308,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     fun foreground() {
         resumeWaker.wake()
         (engine as? ClaudeCode)?.wake()
+        settleWaker.wake()
+        settleWhenReachable()
     }
 
     /** 앱이 뒤로 갔다: 보드를 저장하고, 말로 대화하기는 끈다 (마이크가 뒤에서 계속 돌지 않게). */
@@ -1240,6 +1329,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         cleared = true
         resumeWaker.wake()
+        settleWaker.wake()
         (engine as? ClaudeCode)?.abandon() // 서버의 실행은 그대로 두고 따라 읽기만 그만둔다 (다음에 켜면 inflight.json 으로 다시 붙는다)
         converse(false)
         player?.release()

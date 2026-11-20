@@ -225,8 +225,19 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
     val toClean: List<String> get() = leftover.toList()
 
     fun addToClean(id: String) {
-        if (Detached.valid(id) && !leftover.contains(id)) leftover.add(id)
+        if (Detached.valid(id)) leftover.addIfAbsent(id)
     }
+
+    /** 다른 연결로 이미 멈추고 치운 실행은 목록에서 뺀다. */
+    fun forget(ids: Collection<String>) {
+        leftover.removeAll(ids.toSet())
+    }
+
+    /** 서버에서 끝난 것이 확인된 실행 (끝났다는 줄을 받았거나, 멈춤이 서버에 닿았다) */
+    private val ended: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** 이 실행이 서버에서 끝난 것을 확인했는가. 멈춤을 눌렀는데 거짓이면 멈춤이 서버에 닿지 않은 것이다. */
+    fun endedOnServer(id: String): Boolean = ended.contains(id)
 
     @Volatile
     private var abandoned = false
@@ -278,8 +289,17 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
      * 5초 안에 못 하면 치울 목록에 둔다. 치웠으면 참.
      */
     fun cleanRun(id: String): Boolean {
-        val ok = bounded(5000) { ssh.run(cmds.clean(id)) }
-        if (ok) leftover.remove(id) else addToClean(id)
+        val ok = bounded(5000) {
+            // 멈춤이 닿지 않았던 실행은 먼저 멈춘다: 돌고 있는 실행의 파일(.pid)을 지우면 다시는 멈출 수 없다
+            if (leftover.contains(id) && !ended.contains(id)) ssh.run(cmds.stop(id))
+            ssh.run(cmds.clean(id))
+        }
+        if (ok) {
+            leftover.remove(id)
+            ended.remove(id)
+        } else {
+            addToClean(id)
+        }
         return ok
     }
 
@@ -409,6 +429,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
             if (!stopTried) {
                 stopTried = true
                 stopOk = stopRun(id)
+                if (stopOk) ended.add(id)
             }
             return stopOk
         }
@@ -579,12 +600,16 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
         /** 멈춤: 서버에 아무것도 올리지 않았으면 그냥 끝내고, 아니면 서버의 실행을 멈춘다 (못 하면 나중에 치울 목록에). */
         private fun stoppedEnd(): Nothing {
             parser.finish()
-            if (phase == Phase.UPLOAD && !uploadTried) throw Exception(STOPPED)
+            if (phase == Phase.UPLOAD && !uploadTried) {
+                ended.add(id) // 서버에 올린 것이 없다: 멈출 것도 없다
+                throw Exception(STOPPED)
+            }
             if (stopOnce()) cleanQuiet() else addToClean(id)
             throw Exception(STOPPED)
         }
 
         private fun finish(code: String): Stats {
+            ended.add(id) // 끝났다는 줄을 받았다
             parser.finish()
             if (stopped() || code == "stopped") {
                 cleanQuiet()
