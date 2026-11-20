@@ -605,7 +605,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private var proVoiceSkip = false
 
     /** Pro: 서버의 목소리로 부를 곳. 비밀 글은 GatewayLink 처럼 머리글에만 쓰고 글로 남기지 않는다. */
-    private fun proVoiceTarget(): Eleven.Target = Eleven.Target.pro(BuildConfig.GATEWAY_URL, store.deviceSecret, BuildConfig.VERSION_NAME + "-pro")
+    private fun proVoiceTarget(): Eleven.Target = Eleven.Target.pro(BuildConfig.GATEWAY_URL, store.deviceSecret, proApp)
 
     /** Pro: 목소리 호출에서 게이트웨이가 이 기기를 거절했다 (401·403): 보통의 상태 확인을 시작한다 (D-A2). 입출력 스레드에서 (상태 확인과 같은 자물쇠). */
     private fun proVoiceRefused(e: Throwable?) {
@@ -625,8 +625,14 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     var proState by mutableStateOf("")
         private set
 
+    /** 게이트웨이 요청과 목소리 호출에 붙는 앱 판 + 화면 설정 (`X-Aperit-App`, [proAppHeader]). 처음 쓸 때 한 번 읽는다. */
+    private val proApp: String by lazy {
+        val res = getApplication<Application>().resources
+        proAppHeader(BuildConfig.VERSION_NAME, res.configuration.screenWidthDp, res.configuration.screenHeightDp, res.displayMetrics.density, res.configuration.fontScale)
+    }
+
     /** 게이트웨이 요청에 붙는 앱 판 (`X-Aperit-App`). */
-    private val proHttp by lazy { gatewayClient(BuildConfig.VERSION_NAME + "-pro") }
+    private val proHttp by lazy { gatewayClient(proApp) }
 
     private val device: ProDevice by lazy {
         ProDevice(store, Enroller(BuildConfig.GATEWAY_URL, proHttp), { Triple(android.os.Build.MODEL.orEmpty(), android.os.Build.VERSION.RELEASE.orEmpty(), BuildConfig.VERSION_NAME) }, BuildConfig.ENROLL_TICKET)
