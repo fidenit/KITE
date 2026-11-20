@@ -39,6 +39,8 @@ class TodoPicker {
      * `focus` = 보드의 focus, `editing(id)` = 그 카드의 글 칸에 포커스가 있거나 보내지 않은 글이 있다. 붙은 카드의 ID 를 돌려준다.
      */
     fun update(asks: List<Card>, allCards: List<Card>, busy: Boolean, focus: String?, editing: (String) -> Boolean): String? {
+        // 처음 부를 때 보드에 남아 있던 focus (지난번에 저장된 것) 는 이미 본 것으로 친다: 켤 때는 가장 오래된 질문이 붙는다
+        if (known == null) focusSeen = focus
         val seen = known ?: asks.mapTo(HashSet()) { it.id }.also { known = it }
         try {
             // 1. AI 가 새로 focus 한 질문: 붙은 카드에 적는 중이 아니면 그것을 붙인다 (붙은 질문을 밀어낼 수 있는 것은 이것뿐)

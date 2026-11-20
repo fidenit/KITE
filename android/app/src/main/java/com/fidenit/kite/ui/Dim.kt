@@ -51,6 +51,7 @@ object Dim {
     val GRID_WIDE_DP = 840
     val TEXT_FLOOR = 12.sp // 보드의 어떤 글자도 이보다 작지 않다
     val FLASH_MS = 1200 // 가리킨 카드 테두리가 사라지는 시간
+    val POINT_WAIT_MS = 1000L // 가리키기: 새 주제의 줄이 놓일 때까지 기다리는 한도 (넘으면 하지 않는다)
     val metricSteps = listOf(metric, 26.sp, 22.sp, 20.sp) // 숫자가 한 줄에 안 들어가면 차례로 줄이고, 20 에서도 넘치면 줄을 바꾼다
     val flashStroke = 2.dp
     val listPadH = 10.dp
@@ -167,6 +168,7 @@ object Dim {
     // 내 차례 칸 (memory/specs/aperit-pro-grid-dock-v1.md §C2): 상태 줄과 아래 입력 줄 사이. 줄의 모든 것은 PILL_H 높이
     val DOCK_MAX = 0.6f // 칸(카드 + 줄) ≤ 이 비율 × (보드 목록 + 칸), 보드에 다른 카드가 있을 때. 없으면 입력 줄 위 전부
     val DOCK_FADE_MS = 200 // 다음 카드가 들어오는 시간
+    val DOCK_ARM_MS = 300L // 방금 붙은 카드가 누름을 받기 시작할 때까지
     val dockTop = 6.dp // 상태 줄과 카드 사이
     val dockBarTop = 4.dp // 카드와 줄 사이
     val dockText = 13.sp

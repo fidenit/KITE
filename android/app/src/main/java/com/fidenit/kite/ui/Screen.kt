@@ -17,6 +17,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -110,6 +111,10 @@ fun rowHeight(min: Dp, sizes: List<TextUnit>): Dp {
         maxOf(min, with(density) { tallest.toDp() })
     }
 }
+
+/** 아래 입력 줄의 칸 높이 (글 칸 한 줄·알약·마이크). */
+@Composable
+private fun barHeight(): Dp = rowHeight(Dim.BAR_H, listOf(Dim.input, Dim.pill, Dim.talk))
 
 /** 테두리만 있는 알약형 버튼. 글자는 가운데, 높이는 적어도 [height] (아래 줄 밖은 [Dim.PILL_H], 줄 높이를 맞출 때는 [rowHeight]); 글꼴이 아주 크면 글자 한 줄만큼 커진다. */
 @Composable
@@ -237,72 +242,79 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
     val dockTopic = vm.dockedId?.let { board.card(it)?.topic }
     // 위 줄의 주제·알약은 같은 높이 (보통 PILL_H, 글꼴이 아주 크면 같이 커진다)
     val topH = rowHeight(Dim.PILL_H, listOf(Dim.topic, Dim.pill))
-    Column(Modifier.fillMaxSize()) {
-        // 주제
-        Row(Modifier.fillMaxWidth().testTag("top-bar").padding(start = Dim.topPadH, end = Dim.topPadH, top = Dim.topPadTop, bottom = Dim.topPadBottom), verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Dim.topicGap)) {
-                for (t in board.topics) {
-                    val on = t.id == vm.current
-                    Box {
+    val barH = barHeight()
+    val density = LocalDensity.current
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // 첫 그림에서는 보드 높이를 아직 재지 않았다: 창 높이에서 위 줄과 입력 줄을 뺀 값으로 칸 한도를 먼저 정한다 (칸이 다 찼다가 줄어드는 일이 없게)
+        val windowH = if (constraints.hasBoundedHeight) constraints.maxHeight else 0
+        Column(Modifier.fillMaxSize()) {
+            // 주제
+            Row(Modifier.fillMaxWidth().testTag("top-bar").padding(start = Dim.topPadH, end = Dim.topPadH, top = Dim.topPadTop, bottom = Dim.topPadBottom), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Dim.topicGap)) {
+                    for (t in board.topics) {
+                        val on = t.id == vm.current
+                        Box {
+                            Text(
+                                t.name,
+                                color = if (on) C.text else C.dim,
+                                fontSize = Dim.topic,
+                                fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1,
+                                // 같은 줄의 알약과 같은 높이, 글자는 가운데
+                                modifier = Modifier
+                                    .height(topH)
+                                    .clip(RoundedCornerShape(Dim.topicCorner))
+                                    .combinedClickable(onClick = { vm.current = t.id }, onLongClick = { vm.archive(t.id) })
+                                    .wrapContentHeight(Alignment.CenterVertically)
+                                    .padding(horizontal = Dim.topicPadH),
+                            )
+                            // 내 차례 칸에 붙은 카드의 주제
+                            if (t.id == dockTopic) Box(Modifier.align(Alignment.TopEnd).padding(top = Dim.topicDotTop, end = Dim.topicDotEnd).size(Dim.topicDot).clip(CircleShape).background(C.accent).testTag("topic-dot"))
+                        }
+                    }
+                    if (board.topics.isEmpty()) Text(if (com.fidenit.kite.BuildConfig.PRO) "APERIT Pro" else "APERIT", color = C.text, fontSize = Dim.topic, fontWeight = FontWeight.Bold, modifier = Modifier.height(topH).wrapContentHeight(Alignment.CenterVertically).padding(horizontal = Dim.topicPadH))
+                }
+                Spacer(Modifier.width(Dim.topTopicsGap))
+                Pill(if (english) "Talk log" else "대화 기록", modifier = Modifier.testTag("top-log"), height = topH, onClick = onLog)
+                Spacer(Modifier.width(Dim.topPillGap))
+                Pill(if (english) "Settings" else "설정", modifier = Modifier.testTag("top-settings"), height = topH, onClick = onSettings)
+            }
+
+            vm.error?.let { e ->
+                Text(
+                    e,
+                    color = C.text,
+                    fontSize = Dim.error,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = Dim.errPadH, vertical = Dim.errPadV).clip(RoundedCornerShape(Dim.errCorner)).background(C.red.copy(alpha = 0.22f)).clickable { vm.error = null }.padding(Dim.errInner),
+                )
+            }
+
+            // 카드: 중요한 것부터 세 단계로 (같은 단계 안에서는 원래 순서 그대로). 내 차례 칸에 붙은 카드는 보드에서 뺀다.
+            val importance = vm.importance
+            val docked = vm.dockedId
+            val ordered = board.cards.filter { it.topic == vm.current && it.id != docked }.sortedBy { -Decide.level(importance[it.id]) }
+            if (ordered.isEmpty()) {
+                Box(Modifier.weight(1f).fillMaxWidth().onSizeChanged { boardH = it.height }.testTag("board-empty"), contentAlignment = Alignment.Center) {
+                    // Pro 에는 말로 대화하기가 없고 화면에 안내 문장을 두지 않는다 (A2)
+                    if (!com.fidenit.kite.BuildConfig.PRO) {
                         Text(
-                            t.name,
-                            color = if (on) C.text else C.dim,
-                            fontSize = Dim.topic,
-                            fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
-                            maxLines = 1,
-                            // 같은 줄의 알약과 같은 높이, 글자는 가운데
-                            modifier = Modifier
-                                .height(topH)
-                                .clip(RoundedCornerShape(Dim.topicCorner))
-                                .combinedClickable(onClick = { vm.current = t.id }, onLongClick = { vm.archive(t.id) })
-                                .wrapContentHeight(Alignment.CenterVertically)
-                                .padding(horizontal = Dim.topicPadH),
+                            if (english) "Tap the microphone and talk,\nor type below." else "마이크를 누르고 말하거나\n아래에 적어 보세요.",
+                            color = C.faint,
+                            fontSize = Dim.emptyHint,
+                            lineHeight = Dim.emptyHintLine,
                         )
-                        // 내 차례 칸에 붙은 카드의 주제
-                        if (t.id == dockTopic) Box(Modifier.align(Alignment.TopEnd).padding(top = Dim.topicDotTop, end = Dim.topicDotEnd).size(Dim.topicDot).clip(CircleShape).background(C.accent).testTag("topic-dot"))
                     }
                 }
-                if (board.topics.isEmpty()) Text(if (com.fidenit.kite.BuildConfig.PRO) "APERIT Pro" else "APERIT", color = C.text, fontSize = Dim.topic, fontWeight = FontWeight.Bold, modifier = Modifier.height(topH).wrapContentHeight(Alignment.CenterVertically).padding(horizontal = Dim.topicPadH))
+            } else {
+                BoardGrid(vm, ordered, rev, listState, Modifier.weight(1f).fillMaxWidth().onSizeChanged { boardH = it.height })
             }
-            Spacer(Modifier.width(Dim.topTopicsGap))
-            Pill(if (english) "Talk log" else "대화 기록", modifier = Modifier.testTag("top-log"), height = topH, onClick = onLog)
-            Spacer(Modifier.width(Dim.topPillGap))
-            Pill(if (english) "Settings" else "설정", modifier = Modifier.testTag("top-settings"), height = topH, onClick = onSettings)
-        }
 
-        vm.error?.let { e ->
-            Text(
-                e,
-                color = C.text,
-                fontSize = Dim.error,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = Dim.errPadH, vertical = Dim.errPadV).clip(RoundedCornerShape(Dim.errCorner)).background(C.red.copy(alpha = 0.22f)).clickable { vm.error = null }.padding(Dim.errInner),
-            )
+            // 보드에 다른 카드가 있으면 칸은 DOCK_MAX 까지, 없으면 입력 줄 위 전부
+            val fixed = with(density) { (Dim.topPadTop + topH + Dim.topPadBottom + Dim.barPadV * 2 + Dim.barRowTop + barH).roundToPx() }
+            val area = if (boardH > 0) boardH + dockH else (windowH - fixed).coerceAtLeast(0)
+            val dockMax = if (area <= 0) 0 else if (ordered.isNotEmpty()) (area * Dim.DOCK_MAX).toInt() else area
+            BottomBar(vm, english) { TodoDock(vm, dockMax, dockH) { dockH = it } }
         }
-
-        // 카드: 중요한 것부터 세 단계로 (같은 단계 안에서는 원래 순서 그대로). 내 차례 칸에 붙은 카드는 보드에서 뺀다.
-        val importance = vm.importance
-        val docked = vm.dockedId
-        val ordered = board.cards.filter { it.topic == vm.current && it.id != docked }.sortedBy { -Decide.level(importance[it.id]) }
-        if (ordered.isEmpty()) {
-            Box(Modifier.weight(1f).fillMaxWidth().onSizeChanged { boardH = it.height }.testTag("board-empty"), contentAlignment = Alignment.Center) {
-                // Pro 에는 말로 대화하기가 없고 화면에 안내 문장을 두지 않는다 (A2)
-                if (!com.fidenit.kite.BuildConfig.PRO) {
-                    Text(
-                        if (english) "Tap the microphone and talk,\nor type below." else "마이크를 누르고 말하거나\n아래에 적어 보세요.",
-                        color = C.faint,
-                        fontSize = Dim.emptyHint,
-                        lineHeight = Dim.emptyHintLine,
-                    )
-                }
-            }
-        } else {
-            BoardGrid(vm, ordered, rev, listState, Modifier.weight(1f).fillMaxWidth().onSizeChanged { boardH = it.height })
-        }
-
-        // 보드에 다른 카드가 있으면 칸은 DOCK_MAX 까지, 없으면 입력 줄 위 전부
-        val area = boardH + dockH
-        val dockMax = if (area <= 0) 0 else if (ordered.isNotEmpty()) (area * Dim.DOCK_MAX).toInt() else area
-        BottomBar(vm, english) { TodoDock(vm, dockMax, dockH) { dockH = it } }
     }
 }
 
@@ -346,7 +358,7 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean, dock: @Composable () 
         dock()
         Spacer(Modifier.height(Dim.barRowTop))
         // 아래 줄의 글 칸(한 줄일 때)·알약·마이크는 같은 높이: 보통 BAR_H, 글꼴이 아주 크면 같이 커진다
-        val barH = rowHeight(Dim.BAR_H, listOf(Dim.input, Dim.pill, Dim.talk))
+        val barH = barHeight()
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier.weight(1f).heightIn(min = barH).testTag("bar-input").clip(RoundedCornerShape(Dim.inputCorner)).background(C.card).border(1.dp, C.line, RoundedCornerShape(Dim.inputCorner))

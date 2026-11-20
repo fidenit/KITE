@@ -28,15 +28,20 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -78,9 +83,19 @@ fun TodoDock(vm: KiteViewModel, maxPx: Int, heightPx: Int, onHeight: (Int) -> Un
                 ) { c ->
                     // 반영하는 중에는 답한 모양으로 바뀌어도 높이를 줄이지 않는다 (손가락 아래가 튀지 않게)
                     var lastH by remember { mutableIntStateOf(0) }
+                    // 방금 붙은 카드는 DOCK_ARM_MS 동안 누름을 받지 않는다 (답한 손가락이 바로 다음 카드를 누르지 않게, 모양은 그대로)
+                    var armed by remember(c.id) { mutableStateOf(false) }
+                    LaunchedEffect(c.id) {
+                        val start = withFrameMillis { it }
+                        while (withFrameMillis { it } - start < Dim.DOCK_ARM_MS) Unit
+                        armed = true
+                    }
                     val keep = if (applying && lastH > 0) Modifier.heightIn(min = with(density) { lastH.toDp() }) else Modifier
                     Box(
                         Modifier.fillMaxWidth().testTag("dock-card").then(keep).onSizeChanged { if (!applying) lastH = it.height }
+                            .pointerInput(armed) {
+                                if (!armed) awaitPointerEventScope { while (true) awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() } }
+                            }
                             .verticalScroll(rememberScrollState()),
                     ) {
                         CardView(vm, c, rev)
@@ -93,10 +108,11 @@ fun TodoDock(vm: KiteViewModel, maxPx: Int, heightPx: Int, onHeight: (Int) -> Un
     }
 }
 
-/** 줄: ● 상태 · 주제 · 남은 N건 …… 다음 ›. 모든 것이 PILL_H 높이, 다음 › 의 누르는 자리도 줄 높이 전부. */
+/** 줄: ● 상태 · 주제 · 남은 N건 …… 다음 ›. 모든 것이 같은 높이(보통 PILL_H, 글꼴이 아주 크면 같이 커진다), 다음 › 의 누르는 자리도 줄 높이 전부. */
 @Composable
 private fun DockBar(vm: KiteViewModel, english: Boolean, applying: Boolean, topic: String, waiting: Int) {
-    Row(Modifier.fillMaxWidth().testTag("dock-bar").height(Dim.PILL_H), verticalAlignment = Alignment.CenterVertically) {
+    val barH = rowHeight(Dim.PILL_H, listOf(Dim.dockText, Dim.pill))
+    Row(Modifier.fillMaxWidth().testTag("dock-bar").height(barH), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(Dim.dockDot).clip(CircleShape).background(C.accent))
             Spacer(Modifier.width(Dim.dockGap))
@@ -106,7 +122,7 @@ private fun DockBar(vm: KiteViewModel, english: Boolean, applying: Boolean, topi
                 fontSize = Dim.dockText,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
-                modifier = Modifier.testTag("dock-state").height(Dim.PILL_H).wrapContentHeight(Alignment.CenterVertically).semantics { liveRegion = LiveRegionMode.Polite },
+                modifier = Modifier.testTag("dock-state").height(barH).wrapContentHeight(Alignment.CenterVertically).semantics { liveRegion = LiveRegionMode.Polite },
             )
             if (topic.isNotEmpty()) {
                 Spacer(Modifier.width(Dim.dockGap))
@@ -116,7 +132,7 @@ private fun DockBar(vm: KiteViewModel, english: Boolean, applying: Boolean, topi
                     fontSize = Dim.dockText,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false).height(Dim.PILL_H).wrapContentHeight(Alignment.CenterVertically),
+                    modifier = Modifier.weight(1f, fill = false).height(barH).wrapContentHeight(Alignment.CenterVertically),
                 )
             }
             if (waiting > 0) {
@@ -126,13 +142,13 @@ private fun DockBar(vm: KiteViewModel, english: Boolean, applying: Boolean, topi
                     color = C.dim,
                     fontSize = Dim.dockText,
                     maxLines = 1,
-                    modifier = Modifier.testTag("dock-count").height(Dim.PILL_H).wrapContentHeight(Alignment.CenterVertically),
+                    modifier = Modifier.testTag("dock-count").height(barH).wrapContentHeight(Alignment.CenterVertically),
                 )
             }
         }
         if (waiting >= 2 && !applying) {
             Spacer(Modifier.width(Dim.dockGap))
-            Pill(if (english) "Next ›" else "다음 ›", modifier = Modifier.testTag("dock-next")) { vm.dockNext() }
+            Pill(if (english) "Next ›" else "다음 ›", modifier = Modifier.testTag("dock-next"), height = barH) { vm.dockNext() }
         }
     }
 }

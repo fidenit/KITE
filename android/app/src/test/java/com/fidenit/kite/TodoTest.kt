@@ -54,6 +54,20 @@ class TodoTest {
     }
 
     @Test
+    fun aFocusAlreadyOnTheBoardAtStartUpIsSeenAndTheOldestDocks() {
+        decision("d1", "a")
+        decision("d2", "b")
+        ai("focus d2") // restored from the last run
+        assertEquals("d1", pick())
+        assertEquals("next-oldest", p.reason)
+        // a new AI focus after start-up still takes the dock
+        decision("d3", "c")
+        ai("focus d3")
+        assertEquals("d3", pick())
+        assertEquals("focus", p.reason)
+    }
+
+    @Test
     fun nothingWaitingMeansNoDock() {
         ai("card n1 note a 메모")
         assertNull(pick())

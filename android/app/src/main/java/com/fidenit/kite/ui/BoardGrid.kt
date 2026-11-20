@@ -33,6 +33,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
@@ -55,6 +56,8 @@ import com.fidenit.kite.core.BoardPoint
 import com.fidenit.kite.core.Card
 import com.fidenit.kite.core.GridSizes
 import java.lang.ref.WeakReference
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** 줄 안에서 이 카드가 받는 폭 (dp). 카드는 이것으로 글자 크기를 그리기 전에 정한다 (지표 숫자). 줄 밖(내 차례 칸 등)은 Unspecified. */
 val LocalCardWidth = compositionLocalOf { Dp.Unspecified }
@@ -99,13 +102,23 @@ fun BoardGrid(vm: KiteViewModel, cards: List<Card>, rev: Int, state: LazyListSta
             if (handledPoint?.get() === p) return@LaunchedEffect
             handledPoint = WeakReference(p)
             if (p.ids.isEmpty()) return@LaunchedEffect
+            // 주제가 같이 바뀌었으면 새 주제의 줄이 놓일 때까지 기다린다 (옛 주제의 배치로 스크롤·반짝임을 정하지 않게)
+            withTimeoutOrNull(Dim.POINT_WAIT_MS) {
+                snapshotFlow {
+                    val rowsNow = latestRows
+                    val keys = rowsNow.map { it.first().card.id }.toSet()
+                    val shown = state.layoutInfo.visibleItemsInfo
+                    rowsNow.any { r -> r.any { it.card.id in p.ids } } && shown.isNotEmpty() && shown.all { it.key in keys }
+                }.first { it }
+            } ?: return@LaunchedEffect
             val at = latestRows.indexOfFirst { r -> r.any { it.card.id in p.ids } }
             if (at < 0) return@LaunchedEffect
             val info = state.layoutInfo
             val item = info.visibleItemsInfo.firstOrNull { it.index == at }
             val whole = item != null && item.offset >= info.viewportStartOffset && item.offset + item.size <= info.viewportEndOffset
             if (!whole) state.animateScrollToItem(at)
-            val onScreen = state.layoutInfo.visibleItemsInfo.flatMap { latestRows.getOrNull(it.index).orEmpty() }.map { it.card.id }
+            val rowByKey = latestRows.associateBy { it.first().card.id }
+            val onScreen = state.layoutInfo.visibleItemsInfo.flatMap { rowByKey[it.key].orEmpty() }.map { it.card.id }
             flashing = onScreen.filter { it in p.ids }.toSet()
             try {
                 flash.snapTo(1f)
