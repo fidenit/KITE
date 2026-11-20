@@ -1298,15 +1298,19 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         transcribing = true
         val key = store.elevenKey.trim()
         val en = english
+        val waiting = standby // 부르는 말을 기다리던 중에 들은 소리인가
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { Eleven.transcribe(key, pcm, en) } }
             transcribing = false
             result.onSuccess {
                 hearFailShown = false
-                heardText(it)
+                // 받아쓰는 사이 말로 대화하기를 꺼도 (앱이 뒤로 가도 꺼진다) 켜져 있을 때 한 말은 보낸다.
+                // 다만 부르는 말을 기다리던 중에 들은 소리는, 꺼지면서 기다림이 풀렸어도 부르는 말이 아니면 보내지 않는다.
+                if (converse || !waiting || Words.isWake(it)) heardText(it)
             }.onFailure {
-                // 방금 들은 말은 버리고 계속 듣는다 (tick 이 마이크를 다시 연다). 한 줄로, 다시 받아쓸 때까지 한 번만 알린다.
-                if (!hearFailShown) error = Speaking.heardNotice((it as? Eleven.Failure)?.why ?: Eleven.Why.OTHER, en)
+                // 방금 들은 말은 버린다. 켜져 있으면 tick 이 마이크를 다시 열어 계속 듣고, 그사이 꺼졌으면 듣지 않는다: 그대로 알린다.
+                // 한 줄로, 다시 받아쓸 때까지 한 번만.
+                if (!hearFailShown) error = Speaking.heardNotice((it as? Eleven.Failure)?.why ?: Eleven.Why.OTHER, converse, en)
                 hearFailShown = true
             }
         }

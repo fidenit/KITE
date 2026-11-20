@@ -134,17 +134,17 @@ class SpeakingTest {
     fun theLineForAFailedTranscriptionIsEverydayWordsForEachCause() {
         val seen = HashSet<String>()
         for (why in listOf(Eleven.Why.KEY, Eleven.Why.LIMIT, Eleven.Why.NETWORK, Eleven.Why.OTHER)) for (english in listOf(false, true)) {
-            val l = Speaking.heardNotice(why, english)
+            val l = Speaking.heardNotice(why, true, english)
             assertEquals(l, 3, l.split(" → ").size)
             assertFalse(l, l.contains("HTTP") || l.contains("401") || l.contains("{") || l.contains("\n"))
             assertEquals(l, !english, hangul.containsMatchIn(l))
             assertTrue(l, l.contains("보내지 않았고, 계속 듣고 있습니다") || l.contains("was not sent, and the app keeps listening"))
             assertTrue("a line of its own: $l", seen.add(l))
         }
-        assertEquals("ElevenLabs 키가 거절되었습니다 → 방금 하신 말은 보내지 않았고, 계속 듣고 있습니다 → '설정'에서 'ElevenLabs 키'를 확인해 주세요", Speaking.heardNotice(Eleven.Why.KEY, false))
-        assertEquals("ElevenLabs refused the key → what you just said was not sent, and the app keeps listening → check the ElevenLabs key in Settings", Speaking.heardNotice(Eleven.Why.KEY, true))
-        assertFalse(Speaking.heardNotice(Eleven.Why.NETWORK, false).contains("키"))
-        assertFalse(Speaking.heardNotice(Eleven.Why.NETWORK, true).contains("key"))
+        assertEquals("ElevenLabs 키가 거절되었습니다 → 방금 하신 말은 보내지 않았고, 계속 듣고 있습니다 → '설정'에서 'ElevenLabs 키'를 확인해 주세요", Speaking.heardNotice(Eleven.Why.KEY, true, false))
+        assertEquals("ElevenLabs refused the key → what you just said was not sent, and the app keeps listening → check the ElevenLabs key in Settings", Speaking.heardNotice(Eleven.Why.KEY, true, true))
+        assertFalse(Speaking.heardNotice(Eleven.Why.NETWORK, true, false).contains("키"))
+        assertFalse(Speaking.heardNotice(Eleven.Why.NETWORK, true, true).contains("key"))
     }
 
     /** Reads one sentence with a fake phone voice: what the engine was asked to do, and the error if the sentence was not read. */
@@ -204,5 +204,18 @@ class SpeakingTest {
         assertEquals("이 앱에 마이크 권한이 없습니다 → 말로 대화하기를 껐습니다 → 폰의 '설정 > 애플리케이션(앱) > 이 앱 > 권한'에서 마이크를 허용한 뒤 다시 켜 주세요", Speaking.micNotice(com.fidenit.kite.voice.MicProblem.PERMISSION, false))
         assertTrue(Speaking.micNotice(com.fidenit.kite.voice.MicProblem.PERMISSION, true).contains("Settings > Apps > this app > Permissions"))
         assertFalse(Speaking.micNotice(com.fidenit.kite.voice.MicProblem.OPEN, false).contains("권한"))
+    }
+
+    /** W1: talking was switched off before the transcription failed: the line does not claim that the app keeps listening. */
+    @Test
+    fun theTranscriptionLineDoesNotClaimToListenWhenTalkingIsOff() {
+        for (why in listOf(Eleven.Why.KEY, Eleven.Why.LIMIT, Eleven.Why.NETWORK, Eleven.Why.OTHER)) for (english in listOf(false, true)) {
+            val off = Speaking.heardNotice(why, false, english)
+            assertEquals(off, 3, off.split(" → ").size)
+            assertFalse(off, off.contains("듣고 있습니다") || off.contains("keeps listening"))
+            assertTrue(off, off.contains("보내지 않았고, 말로 대화하기는 꺼져 있습니다") || off.contains("was not sent, and talking is switched off"))
+            assertEquals(off, !english, hangul.containsMatchIn(off))
+            assertTrue(Speaking.heardNotice(why, true, english) != off)
+        }
     }
 }
