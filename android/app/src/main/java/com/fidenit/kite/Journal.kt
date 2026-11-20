@@ -28,12 +28,24 @@ data class Inflight(
 class Queue(val pending: List<String>, val events: List<String>)
 
 class Journal(private val dir: File, private val async: Boolean = false) {
-    // async 면 쓰기는 일꾼 스레드 하나에서 한다: 같은 파일에 대한 쓰기는 마지막 것만 남기고, 파일 사이의 순서는 지킨다.
-    // flush() 는 밀린 쓰기가 다 끝날 때까지 기다린다 (뒤로 갈 때, 서버 파일을 치우기 전, 뷰모델이 없어질 때).
+    // async 면 쓰기는 일꾼 스레드 하나가 들어온 순서 그대로 한다. 지우기도 줄의 한 칸이고, 이미 줄에 있는 파일을 다시 써도
+    // 앞의 칸을 빼거나 옮기지 않는다 (줄의 맨 끝 칸이 같은 파일일 때만 그 칸의 내용을 바꾼다).
+    // 그래서 어느 순간에 꺼져도 디스크에는 앱이 실제로 지나온 어느 한 순간의 상태가 남는다:
+    // "보드를 쓴 다음 기록을 지운다"가 그 뒤에 온 쓰기 때문에 "기록을 지운 다음 보드를 쓴다"로 바뀌지 않는다.
+    private class Entry(val name: String, var text: String?) // text 가 null 이면 지운다
+
     private val lock = Object()
-    private val queued = LinkedHashMap<String, String?>() // 파일 이름 -> 내용 (null 이면 지운다)
-    private var scheduled = false
+    private val queued = ArrayDeque<Entry>()
+    private var running = false // 일꾼이 맡은 일이 남아 있다 (줄에 있거나 지금 쓰는 중)
+    private val failed = HashSet<String>() // 마지막 쓰기(지우기)가 실패한 파일
     private val worker by lazy { java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "journal").apply { isDaemon = true } } }
+
+    /** 시험용: 일꾼이 파일 하나를 쓰기(지우기) 바로 전에 일꾼 스레드에서 불린다. */
+    @Volatile
+    internal var beforeApply: ((name: String, text: String?) -> Unit)? = null
+
+    /** 시험용: 아직 줄에 서 있는 파일 이름 (순서대로). */
+    internal fun queuedNames(): List<String> = synchronized(lock) { queued.map { it.name } }
 
     private val inflightFile get() = File(dir, "inflight.json")
     private val queueFile get() = File(dir, "queue.json")
@@ -43,50 +55,66 @@ class Journal(private val dir: File, private val async: Boolean = false) {
     /** 파일 하나를 쓴다 (`null` 이면 지운다). */
     private fun put(file: File, text: String?) {
         if (!async) {
-            apply(file, text)
+            val ok = apply(file, text)
+            synchronized(lock) { if (ok) failed.remove(file.name) else failed.add(file.name) }
             return
         }
         synchronized(lock) {
-            queued.remove(file.name)
-            queued[file.name] = text
-            if (!scheduled) {
-                scheduled = true
+            val last = queued.lastOrNull()
+            if (last != null && last.name == file.name) last.text = text else queued.addLast(Entry(file.name, text))
+            if (!running) {
+                running = true
                 worker.execute { drain() }
             }
         }
     }
 
-    private fun apply(file: File, text: String?) {
+    private fun apply(file: File, text: String?): Boolean =
         if (text == null) {
             try {
                 file.delete()
+                !file.exists()
             } catch (_: Exception) {
+                false
             }
         } else {
             writeAtomic(file, text)
         }
-    }
 
     private fun drain() {
         while (true) {
-            val batch = synchronized(lock) {
-                if (queued.isEmpty()) {
-                    scheduled = false
+            val e = synchronized(lock) {
+                val head = queued.removeFirstOrNull()
+                if (head == null) {
+                    running = false
                     lock.notifyAll()
                     return
                 }
-                LinkedHashMap(queued).also { queued.clear() }
+                head
             }
-            for ((name, text) in batch) apply(File(dir, name), text)
+            val ok = try {
+                beforeApply?.invoke(e.name, e.text)
+                apply(File(dir, e.name), e.text)
+            } catch (_: Throwable) {
+                false
+            }
+            synchronized(lock) { if (ok) failed.remove(e.name) else failed.add(e.name) }
         }
     }
 
-    /** 밀린 쓰기가 다 끝날 때까지 (최대 5초) 기다린다. */
-    fun flush() {
-        if (!async) return
-        val end = System.currentTimeMillis() + 5000
+    /**
+     * 밀린 쓰기가 모두 디스크에 닿을 때까지 (최대 `timeoutMs`) 기다린다.
+     * 다 닿았고 마지막 쓰기가 실패한 채인 파일이 없을 때만 참: 거짓이면 그 뒤에 하려던 일(기록 지우기, 서버 파일 치우기)을 하면 안 된다.
+     */
+    fun flush(timeoutMs: Long = 5000): Boolean {
+        val end = System.currentTimeMillis() + timeoutMs
         synchronized(lock) {
-            while (scheduled && System.currentTimeMillis() < end) lock.wait(100)
+            while (running) {
+                val left = end - System.currentTimeMillis()
+                if (left <= 0) return false
+                lock.wait(minOf(left, 100L))
+            }
+            return failed.isEmpty()
         }
     }
 
@@ -130,29 +158,40 @@ class Journal(private val dir: File, private val async: Boolean = false) {
         put(queueFile, null)
     }
 
-    fun writeToClean(ids: List<String>) {
-        put(toCleanFile, JSONArray(ids.filter { Detached.valid(it) }.distinct()).toString())
+    // 치울 목록은 메모리에 들고 있다 (만들 때 한 번 읽는다): 더하고 빼는 일이 디스크를 읽거나 일꾼을 기다리지 않는다
+    // (멈춤 버튼은 메인 스레드에서 번호를 더한다). 바뀔 때마다 통째로 줄에 세워 쓴다.
+    private val cleanIds = ArrayList<String>()
+
+    init {
+        try {
+            cleanIds.addAll(strings(JSONArray(toCleanFile.readText())).filter { Detached.valid(it) }.distinct())
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun putClean() = put(toCleanFile, JSONArray(cleanIds).toString())
+
+    fun writeToClean(ids: List<String>) = synchronized(lock) {
+        cleanIds.clear()
+        cleanIds.addAll(ids.filter { Detached.valid(it) }.distinct())
+        putClean()
     }
 
     /** 치울 목록에 더한다 (합친다, 덮어쓰지 않는다). */
-    @Synchronized
-    fun addToClean(ids: Collection<String>) {
-        val have = readToClean()
-        writeToClean(have + ids.filter { it !in have })
+    fun addToClean(ids: Collection<String>) = synchronized(lock) {
+        val fresh = ids.filter { Detached.valid(it) && it !in cleanIds }.distinct()
+        if (fresh.isNotEmpty()) {
+            cleanIds.addAll(fresh)
+            putClean()
+        }
     }
 
     /** 서버에서 멈추고 치운 것이 확인된 실행만 목록에서 뺀다. */
-    @Synchronized
-    fun removeToClean(ids: Collection<String>) {
-        writeToClean(readToClean().filter { it !in ids })
+    fun removeToClean(ids: Collection<String>) = synchronized(lock) {
+        if (cleanIds.removeAll(ids.toSet())) putClean()
     }
 
-    fun readToClean(): List<String> = try {
-        flush()
-        strings(JSONArray(toCleanFile.readText())).filter { Detached.valid(it) }
-    } catch (_: Exception) {
-        emptyList()
-    }
+    fun readToClean(): List<String> = synchronized(lock) { cleanIds.toList() }
 
     fun writeCurrent(id: String?) {
         put(currentFile, id.orEmpty())

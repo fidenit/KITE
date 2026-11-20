@@ -148,4 +148,79 @@ class JournalTest {
         assertEquals(listOf("새 말"), j.readQueue().pending)
         d.deleteRecursively()
     }
+
+    /** R1: 줄에 있는 파일을 다시 써도 순서가 바뀌지 않는다: 보드를 쓴 다음에 지우기로 한 기록은 보드보다 먼저 지워지지 않는다. */
+    @Test
+    fun aFileQueuedAgainKeepsTheOrderAndADeleteStaysBehindTheWriteItFollowed() {
+        val d = dir()
+        val j = Journal(d, async = true)
+        val applied = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val busy = java.util.concurrent.CountDownLatch(1)
+        val hold = java.util.concurrent.CountDownLatch(1)
+        j.beforeApply = { name, text ->
+            if (name == "hold.txt") {
+                busy.countDown()
+                hold.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            applied.add(if (text == null) "delete $name" else "write $name $text")
+        }
+        j.writeFile("hold.txt", "x") // the writer is kept busy with this one while the rest queues up
+        assertTrue(busy.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        j.writeInflight(Inflight("ssh", "a-1", "t", "s", "b", 1L))
+        j.writeFile("board.txt", "턴 결과") // turn end: the board is saved ...
+        j.clearInflight() // ... and then the record is deleted
+        j.writeFile("board.txt", "턴 결과와 누른 카드") // a card tap right after, before the writer got there
+        assertEquals(listOf("inflight.json", "board.txt", "inflight.json", "board.txt"), j.queuedNames())
+        hold.countDown()
+        assertTrue(j.flush())
+        val board = applied.indexOf("write board.txt 턴 결과")
+        val delete = applied.indexOf("delete inflight.json")
+        assertTrue("the board of the turn is written before its record is deleted: $applied", board in 0 until delete)
+        assertEquals("write board.txt 턴 결과와 누른 카드", applied.last())
+        assertEquals("턴 결과와 누른 카드", File(d, "board.txt").readText())
+        assertNull(Journal(d).readInflight())
+        d.deleteRecursively()
+    }
+
+    /** R2: flush 는 디스크에 닿지 못한 쓰기가 있으면 거짓을 돌려준다 (그 뒤의 지우기·치우기를 막으려고). 다시 써서 닿으면 참. */
+    @Test
+    fun flushSaysWhetherEverythingReachedTheDisk() {
+        val d = dir()
+        val j = Journal(d, async = true)
+        File(d, "board.txt/x").mkdirs() // a folder in the file's place: the write cannot replace it
+        j.writeFile("board.txt", "보드")
+        assertFalse(j.flush())
+        File(d, "board.txt").deleteRecursively()
+        j.writeFile("board.txt", "보드")
+        assertTrue(j.flush())
+        // a writer that does not get there in time: false, and the write is not lost
+        val hold = java.util.concurrent.CountDownLatch(1)
+        j.beforeApply = { _, _ -> hold.await(5, java.util.concurrent.TimeUnit.SECONDS) }
+        j.writeCurrent("t1")
+        assertFalse(j.flush(200))
+        hold.countDown()
+        assertTrue(j.flush())
+        assertEquals("t1", Journal(d).readCurrent())
+        d.deleteRecursively()
+    }
+
+    /** R3: 치울 목록에 더하고 빼는 일은 일꾼을 기다리지 않는다 (멈춤 버튼이 메인 스레드에서 부른다), 그래도 디스크에는 합쳐진 목록이 남는다. */
+    @Test
+    fun theCleanListIsChangedWithoutWaitingForTheWriter() {
+        val d = dir()
+        Journal(d).writeToClean(listOf("a-1"))
+        val j = Journal(d, async = true)
+        val hold = java.util.concurrent.CountDownLatch(1)
+        j.beforeApply = { _, _ -> hold.await(5, java.util.concurrent.TimeUnit.SECONDS) }
+        j.writeFile("board.txt", "보드") // the writer is stuck on this
+        val t0 = System.nanoTime()
+        j.addToClean(listOf("b-2", "a-1"))
+        j.removeToClean(listOf("a-1"))
+        assertEquals(listOf("b-2"), j.readToClean())
+        assertTrue("no wait for the writer", (System.nanoTime() - t0) / 1_000_000 < 1000)
+        hold.countDown()
+        assertTrue(j.flush())
+        assertEquals(listOf("b-2"), Journal(d).readToClean())
+        d.deleteRecursively()
+    }
 }
