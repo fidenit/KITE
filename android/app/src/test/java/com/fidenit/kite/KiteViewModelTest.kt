@@ -705,4 +705,55 @@ class KiteViewModelTest {
         assertFalse(exists("inflight.json"))
         assertEquals(listOf("a-1"), Journal(files).readToClean()) // still to be stopped and cleaned on the server
     }
+
+    // R6: a tap made while the interrupted turn is replayed is applied after the replay, so the replayed lines do not overwrite it
+    @Test
+    fun aTapMadeWhileTheTurnIsReplayedIsAppliedAfterIt() {
+        serverSettings()
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@h:22"))
+        val vm = vm()
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val fake = Fake(lines = "upd k1 i1 todo | 여권 꼭\n", gate = gate)
+        vm.runnerOverride = fake
+        until("the engine has the turn") { fake.started.count == 0L }
+        val card = vm.board.card("k1")!!
+        vm.toggle(card, card.items.first()) // the user ticks the item while the turn is still being replayed
+        gate.countDown()
+        until("the replay and the turn for the tap end") { !vm.busy }
+        assertEquals("done", vm.board.card("k1")!!.items.first().cells.first())
+        vm.flushWrites()
+        assertEquals("done", Lang.load(File(files, "board.txt").readText()).card("k1")!!.items.first().cells.first())
+    }
+
+    // R6: clearing the screen during a replay drops the taps that belong to the old board
+    @Test
+    fun clearAllDuringAReplayDropsTheTapsOfTheOldBoard() {
+        serverSettings()
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@h:22"))
+        Journal(files).writeQueue(emptyList(), listOf("upd k3 i1 done | 가")) // a tap from before the kill
+        val vm = vm()
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val runs = java.util.concurrent.atomic.AtomicInteger(0)
+        vm.runnerOverride = object : Runner {
+            override val label = "two turns"
+
+            override fun run(turnText: String, stopped: () -> Boolean, send: (Ev) -> Unit): Stats {
+                if (runs.incrementAndGet() == 1) gate.await(10, java.util.concurrent.TimeUnit.SECONDS) // the replay is held
+                else send(Ev.Delta("topic t9 새 주제\ncard k3 checklist t9 3x2 새 목록\nadd k3 i1 todo | 가\n")) // the next turn makes a card with the same id
+                return Stats()
+            }
+        }
+        until("the replay runs") { runs.get() == 1 }
+        val card = vm.board.card("k1")!!
+        vm.toggle(card, card.items.first()) // and a tap during the replay
+        vm.clearAll()
+        gate.countDown()
+        until("the old turn ends") { !vm.busy }
+        vm.send("새로 시작")
+        until("the new turn ends") { runs.get() == 2 && !vm.busy }
+        assertEquals("todo", vm.board.card("k3")!!.items.first().cells.first())
+        assertNull(vm.board.card("k1"))
+    }
 }

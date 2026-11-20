@@ -210,6 +210,10 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 다시 붙는 동안 만진 카드: 따라잡기가 끝난 뒤에 순서대로 반영한다 (그 턴이 만든 카드를 만졌을 수 있다) */
     private var replayTaps: List<String> = emptyList()
+
+    /** 서버에서 돌던 턴을 다시 받는 중인가. 그동안 만진 카드는 바로 반영하지 않고 [lateTaps] 에 모았다가, 따라잡은 뒤에 순서대로 반영한다. */
+    private var replaying = false
+    private val lateTaps = mutableListOf<String>()
     private var reportUserRejects = false
 
     /** 시험에서 엔진 대신 쓴다 */
@@ -304,6 +308,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         if (serverTurn && useSsh && !needsSetup() && !stoppedBefore) {
             // 그 사이 만진 카드는 따라잡은 뒤에 반영한다 (그 턴이 만든 카드를 만졌을 수 있다)
             replayTaps = events.toList()
+            lateTaps.clear()
+            replaying = true
             busy = true
             error = null
             activity = ""
@@ -751,6 +757,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             val cleanId = if (unreached) null else runId
             // 저장된 보드를 다시 읽기 전에 밀린 쓰기가 디스크에 닿게 한다 (입출력 스레드에서 기다린다)
             if (msg == GONE) withContext(Dispatchers.IO) { journal.flush() }
+            if (resume) replaying = false // 여기서부터 이 턴의 끝맺음은 쉬지 않고 한 번에 돈다: 그동안 모은 조작을 아래에서 반영한다
             if (gen != generation) {
                 // 화면을 비운 뒤에 끝났다: 새 화면에는 아무것도 반영하지 않고, 서버 실행만 치운다
                 activity = ""
@@ -762,8 +769,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (msg == OTHER_SERVER) {
                 // 다시 붙기를 기다리는 사이 서버 설정이 바뀌었다: 새 서버에서는 이 턴을 받지도 다시 시작하지도 않는다. 기록을 지우고 알린다.
-                replayTaps.forEach { applyLine(it, Author.User) }
+                (replayTaps + lateTaps).forEach { applyLine(it, Author.User) }
                 replayTaps = emptyList()
+                lateTaps.clear()
                 activity = ""
                 busy = false
                 rev++
@@ -783,6 +791,12 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             if (msg == GONE) {
                 // 이 턴은 이미 끝나 저장되고 서버에서도 치워졌다: 저장된 보드를 그대로 보여 주고, 다시 돌리지 않는다
                 reloadFromDisk()
+                // 다시 붙는 동안 만진 카드는 저장된 보드에 아직 없다: 반영하고 저장한 뒤에 기록을 지운다
+                if (lateTaps.isNotEmpty()) {
+                    lateTaps.forEach { applyLine(it, Author.User) }
+                    lateTaps.clear()
+                    save()
+                }
                 settleTurn(seq, cc, null)
                 replayTaps = emptyList()
                 activity = ""
@@ -793,12 +807,14 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             lines.finish()?.let { aiLine(it) }
             liveSay = null
             board.cards.forEach { it.live = null }
-            if (replayTaps.isNotEmpty()) {
+            val taps = replayTaps + lateTaps // 꺼지기 전에 만진 것, 그다음 다시 붙는 동안 만진 것
+            replayTaps = emptyList()
+            lateTaps.clear()
+            if (taps.isNotEmpty()) {
                 // 다시 붙는 동안 만진 카드: 이제 그 카드가 있다. 아직도 거부되는 것은 다음 턴에 알린다.
                 reportUserRejects = true
-                replayTaps.forEach { applyLine(it, Author.User) }
+                taps.forEach { applyLine(it, Author.User) }
                 reportUserRejects = false
-                replayTaps = emptyList()
             }
             // 다른 말이 없었으면 남겨 둔 한마디를 읽는다.
             quietSay?.let {
@@ -1281,6 +1297,13 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------- 카드를 직접 만질 때
 
     private fun userLine(line: String, persist: Boolean = true) {
+        if (replaying) {
+            // 서버에서 돌던 턴을 다시 받는 중이다: 지금 반영하면 뒤따라오는 그 턴의 줄이 덮어쓴다. 모아 두었다가 따라잡은 뒤에 반영한다.
+            lateTaps.add(line)
+            events.add(line)
+            if (persist) saveQueue() // 그사이 꺼져도 다음에 켤 때 다시 반영된다
+            return
+        }
         applyLine(line, Author.User)
         events.add(line)
         if (persist) {
@@ -1343,6 +1366,12 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         board = Board()
         recent.clear()
         events.clear()
+        // 옛 화면에 딸린 것은 모두 버린다: 다시 붙는 동안 모아 둔 카드 조작, 다음 턴에 알리려던 거부
+        replayTaps = emptyList()
+        lateTaps.clear()
+        replaying = false
+        rejects.clear()
+        reportUserRejects = false
         touched.clear()
         unclear = emptyList()
         importance = emptyMap()
