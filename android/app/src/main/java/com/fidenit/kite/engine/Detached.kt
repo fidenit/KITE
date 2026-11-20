@@ -124,6 +124,9 @@ object Detached {
     /** 이어 읽는 명령이 고장 난 끝난 코드(문법 오류 2, 실행 못 함 126, 명령 없음 127)인가. 그 밖에는 끊김으로 본다. */
     fun followBroken(code: Int): Boolean = code == 2 || code == 126 || code == 127
 
+    /** 멈춤 명령이 멈춤 요청 파일을 만든 바로 뒤에 내는 줄. */
+    const val STOP_SENT = "APERITSTOP"
+
     /** 40초 동안 아무 줄도 없으면 연결이 죽은 것으로 본다. */
     const val IDLE_MS = 40_000L
 }
@@ -294,7 +297,7 @@ class DetachedCommands(private val cfg: EngineConfig) {
 
     /**
      * 멈춤: 신호를 보내지 않는다. 이 서버가 아는 실행(`.in` 이나 `.pid` 가 있다)이고 아직 끝나지 않았으면 멈춤 요청 파일 `.stop` 을 만들고,
-     * 감싼 bash 가 자기 자식을 끝내고 `.exit` 를 적기를 3초쯤 기다린다. `.pid` 의 번호가 이 실행의 감싼 bash 가 아니거나(서버가 다시 켜져
+     * 바로 `APERITSTOP` 한 줄을 낸다 (앱은 이 줄로 멈춤이 서버에 닿았다고 본다). 그 뒤 감싼 bash 가 자기 자식을 끝내고 `.exit` 를 적기를 3초쯤 기다린다. `.pid` 의 번호가 이 실행의 감싼 bash 가 아니거나(서버가 다시 켜져
      * 번호가 남의 것이 됐을 수 있다) 시작된 적이 없으면 `.exit` 에 `stopped` 를 적는다. 모르는 번호나 이미 끝난 실행에는 아무것도 하지 않는다.
      */
     fun stop(id: String): String {
@@ -306,6 +309,7 @@ class DetachedCommands(private val cfg: EngineConfig) {
             [ -f "${'$'}f.in" ] || [ -f "${'$'}f.pid" ] || exit 0
             [ -s "${'$'}f.exit" ] && exit 0
             : > "${'$'}f.stop"
+            echo "${Detached.STOP_SENT}"
             i=0; p=
             while [ ${'$'}i -lt 15 ] && [ ! -s "${'$'}f.exit" ]; do
               p=; { read -r p < "${'$'}f.pid"; } 2>/dev/null

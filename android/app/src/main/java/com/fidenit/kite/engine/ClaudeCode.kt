@@ -290,12 +290,12 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
 
     /**
      * 앱이 보드를 저장하고 기록을 지운 뒤에 부른다 (그 전에 치우면 앱이 그 사이에 꺼졌을 때 턴이 다시 돌 수 있다).
-     * 5초 안에 못 하면 치울 목록에 둔다. 치웠으면 참.
+     * 5초 안에 못 하면 치울 목록에 둔다. 치웠으면 참. 시간이 넘어도 연결은 끊지 않는다: 그 연결을 다음 턴이 쓰고 있을 수 있다.
      */
     fun cleanRun(id: String): Boolean {
-        val ok = bounded(5000) {
-            // 멈춤이 닿지 않았던 실행은 먼저 멈춘다: 끝난 값이 적히기를 기다린 뒤에 치운다 (돌고 있는 실행을 치우기만 해도 멈춤 요청은 남아 그 실행은 끝난다)
-            if (leftover.contains(id) && !ended.contains(id)) ssh.run(cmds.stop(id))
+        val ok = bounded(5000, cut = false) {
+            // 멈춤이 닿지 않았던 실행은 먼저 멈춤 요청을 적는다. 감싼 bash 가 끝내기를 기다리지 않는다 (돌고 있는 실행을 치워도 멈춤 요청은 남아 그 실행은 끝난다)
+            if (leftover.contains(id) && !ended.contains(id)) sendStop(id, java.util.concurrent.atomic.AtomicBoolean(), wait = false)
             ssh.run(cmds.clean(id))
         }
         if (ok) {
@@ -334,7 +334,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
         for (id in leftover.toList()) {
             if (id == except) continue
             if (bounded(8000) {
-                    ssh.run(cmds.stop(id))
+                    sendStop(id, java.util.concurrent.atomic.AtomicBoolean(), wait = false)
                     ssh.run(cmds.clean(id))
                 }
             ) {
@@ -343,8 +343,34 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
         }
     }
 
-    /** 서버에 짧은 명령을 `ms` 안에 돌린다. 못 하면 연결을 끊어 막힌 곳을 풀고 거짓을 돌려준다 (반쯤 죽은 연결에서 오래 매달리지 않으려고). */
-    private fun bounded(ms: Long, work: () -> Unit): Boolean {
+    /** 멈춤 요청이 적혔다는 줄을 받았으니 멈춤 명령을 더 기다리지 않는다 (서버의 명령은 남아서 끝까지 돈다). */
+    private class StopSent : RuntimeException()
+
+    /**
+     * 멈춤 명령을 돌린다. 멈춤 요청이 서버에 적혔다는 줄을 받으면 `sent` 가 참이 된다 (그 뒤에 연결이 끊기거나 시간이 넘어도 멈춤은 닿은 것이다).
+     * `wait` 가 참이면 명령이 끝날 때까지 (감싼 bash 가 실행을 끝내기를 3초쯤 기다린다), 거짓이면 그 줄까지만 기다린다.
+     * 줄 없이 0 으로 끝나면 멈출 것이 없는 실행이다 (모르는 번호거나 이미 끝났다). 그 밖에는 예외.
+     */
+    private fun sendStop(id: String, sent: java.util.concurrent.atomic.AtomicBoolean, wait: Boolean) {
+        try {
+            val (code, err) = ssh.exec(cmds.stop(id), null) {
+                if (it.trim() == Detached.STOP_SENT) {
+                    sent.set(true)
+                    if (!wait) throw StopSent()
+                }
+            }
+            if (sent.get()) return
+            if (code < 0) throw java.io.IOException("서버와의 연결이 끊겼습니다")
+            if (code != 0) throw RemoteFail(err.trim().takeLast(300).ifEmpty { "끝난 코드 $code" })
+        } catch (_: StopSent) {
+        }
+    }
+
+    /**
+     * 서버에 짧은 명령을 `ms` 안에 돌린다. 못 하면 거짓을 돌려준다. `cut` 이 참이면 그때 연결을 끊어 막힌 곳을 풀어 준다
+     * (반쯤 죽은 연결에서 오래 매달리지 않으려고); 거짓이면 연결은 그대로 두고 돌아온다 (다른 턴이 같은 연결을 쓰고 있을 수 있을 때).
+     */
+    private fun bounded(ms: Long, cut: Boolean = true, work: () -> Unit): Boolean {
         var ok = false
         val t = Thread {
             try {
@@ -358,6 +384,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
         }
         t.join(ms)
         if (t.isAlive) {
+            if (!cut) return false
             ssh.close()
             t.join(500)
             return false
@@ -365,9 +392,19 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
         return ok
     }
 
-    /** 서버에 멈춤을 보낸다. 닿지 않으면 10초까지 다시 붙어 보고 포기한다. 보냈으면 참. */
+    /**
+     * 서버에 멈춤을 보낸다. 닿지 않으면 8초까지 다시 붙어 보고 포기한다. 멈춤 요청이 서버에 적혔으면 참:
+     * 감싼 bash 가 실행을 끝내는 데 더 걸려 명령이 시간 안에 끝나지 않아도 닿은 것이다.
+     */
     private fun stopRun(id: String): Boolean {
         val end = System.currentTimeMillis() + 8_000
+        // 다른 스레드가 연결하는 중이면 그 연결을 그만두게 한다: 그 연결이 끝나기를 기다리느라 멈춤에 쓸 시간을 잃지 않는다.
+        // 이미 연결돼 있으면 그대로 쓴다.
+        if (!ssh.connected) {
+            ssh.close()
+            Thread.sleep(100) // 그만둔 쪽이 자기 뒷정리(연결 끊기)를 마칠 틈
+        }
+        val sent = java.util.concurrent.atomic.AtomicBoolean(false)
         while (true) {
             val left = end - System.currentTimeMillis()
             if (left < 1500) return false
@@ -375,13 +412,13 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
             val ok = bounded(left) {
                 try {
                     ssh.connect(minOf(left, 5000L).toInt())
-                    ssh.run(cmds.stop(id))
+                    sendStop(id, sent, wait = true)
                 } catch (e: SshFatal) {
                     give = true
                     throw e
                 }
             }
-            if (ok) return true
+            if (ok || sent.get()) return true
             if (give) return false
             ssh.close()
             if (end - System.currentTimeMillis() < 2500) return false
@@ -428,10 +465,14 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
         private var stopTried = false
         private var stopOk = false
 
+        /** 멈춤을 보내기 시작한 때 (0 = 아직 아니다): 멈춤 뒤의 치우기에 쓸 시간을 여기서부터 10초 안으로 잡는다. */
+        @Volatile private var stopAt = 0L
+
         @Synchronized
         private fun stopOnce(): Boolean {
             if (!stopTried) {
                 stopTried = true
+                stopAt = System.currentTimeMillis()
                 stopOk = stopRun(id)
                 if (stopOk) ended.add(id)
             }
@@ -603,7 +644,9 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
 
         private fun cleanQuiet() {
             if (!cleanAfterRun) return
-            if (!bounded(5000) { ssh.run(cmds.clean(id)) }) addToClean(id)
+            // 멈춤을 누른 뒤라면 누른 때부터 10초쯤 안에 돌아가야 한다: 남은 시간만 쓰고, 모자라면 치울 목록에 두어 다음에 치운다
+            val limit = if (stopAt == 0L) 5000L else minOf(5000L, stopAt + 10_000 - System.currentTimeMillis())
+            if (limit < 500 || !bounded(limit) { ssh.run(cmds.clean(id)) }) addToClean(id)
         }
 
         private fun errTail(): String {

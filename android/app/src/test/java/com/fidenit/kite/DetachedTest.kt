@@ -287,7 +287,7 @@ class DetachedTest {
             assertEquals(listOf("$id.exit"), File(home, ".kite/runs").list()!!.toList())
             assertEquals(listOf("APERITEXIT gone"), sh(home, c.follow(id, 0)).lines)
             assertEquals(listOf("APERITEXIT none"), sh(home, c.follow("20261120-999999-zzzz", 0)).lines)
-            sh(home, c.stop(id)) // 치운 실행에 멈춤은 아무 일도 없다: 파일도 남기지 않는다
+            assertEquals(emptyList<String>(), sh(home, c.stop(id)).lines) // 치운 실행에 멈춤은 아무 일도 없다: 파일도 줄도 남기지 않는다
             assertEquals("0", File(home, ".kite/runs/$id.exit").readText().trim())
             assertEquals(listOf("$id.exit"), File(home, ".kite/runs").list()!!.toList())
             sh(home, c.stop("20261120-999999-zzzz")) // 모르는 번호도 마찬가지
@@ -398,7 +398,8 @@ class DetachedTest {
             assertTrue("돌고 있어야 한다: ${alive(home, mark)}", alive(home, mark).any { it.contains(mark) })
             assertTrue(runnerAlive(pid))
             val t0 = System.currentTimeMillis()
-            sh(home, c.stop(id))
+            // 멈춤 요청을 적은 바로 뒤에 그 줄을 낸다 (앱은 이 줄로 멈춤이 닿았다고 본다)
+            assertEquals(listOf(Detached.STOP_SENT), sh(home, c.stop(id)).lines)
             val took = System.currentTimeMillis() - t0
             val exit = waitExit(home, id)
             assertTrue("끝난 값: $exit", exit in listOf("143", "137", "stopped"))
@@ -410,6 +411,7 @@ class DetachedTest {
             // 끝난 뒤 다시 멈춰도 아무 일 없다
             val again = sh(home, c.stop(id))
             assertTrue("두 번째 멈춤이 ${again.ms}ms 걸림", again.ms < 3000)
+            assertEquals("이미 끝난 실행에는 멈춤 요청을 적지 않는다", emptyList<String>(), again.lines)
             assertEquals(exit, exitOf(home, id))
             // 같은 번호로 다시 시작해도 돌지 않는다
             assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
@@ -487,6 +489,7 @@ class DetachedTest {
             sh(home, c.upload(id), "hi")
             val st = sh(home, c.stop(id))
             assertTrue("멈춤이 ${st.ms}ms 걸림", st.ms < 5000)
+            assertEquals(listOf(Detached.STOP_SENT), st.lines)
             assertTrue(File(home, ".kite/runs/$id.stop").exists())
             assertEquals("stopped", exitOf(home, id))
             assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
