@@ -129,21 +129,42 @@ class ProTextTest {
         for (en in listOf(false, true)) {
             for (g in listOf(Eleven.Gate.OFF, Eleven.Gate.KEY, Eleven.Gate.REFUSED, Eleven.Gate.DEVICE, Eleven.Gate.TOO_LARGE, Eleven.Gate.BAD_REQUEST, Eleven.Gate.OTHER)) {
                 assertEquals("D1 $g", ProVoice.cannotSpeak(en), ProVoice.speakNotice(Speaking.Outcome(f(g), false), en))
-                assertEquals("D3 $g", ProVoice.cannotHear(en), ProVoice.heardNotice(f(g), false, en))
+                assertEquals("D3 $g", ProVoice.cannotHear(en), ProVoice.heardNotice(f(g), en))
             }
             for (g in listOf(Eleven.Gate.LIMIT, Eleven.Gate.RATE)) {
                 assertEquals("D2 $g", ProVoice.speakLimit(en), ProVoice.speakNotice(Speaking.Outcome(f(g, Eleven.Why.LIMIT), false), en))
-                assertEquals("D4 $g", ProVoice.hearLimit(en), ProVoice.heardNotice(f(g, Eleven.Why.LIMIT), false, en))
+                assertEquals("D4 $g", ProVoice.hearLimit(en), ProVoice.heardNotice(f(g, Eleven.Why.LIMIT), en))
             }
-            // D5: not reachable (the server's voice_unreachable, or the phone's own network) -> the free flavor's network lines (no key, no Settings in them)
+            // D5a / D5b: not reachable (the server's voice_unreachable, a proxy 5xx, or the phone's own network)
             for (net in listOf(f(Eleven.Gate.UNREACHABLE, Eleven.Why.NETWORK), Eleven.Failure(Eleven.Why.NETWORK, false, "x"))) {
-                val speak = ProVoice.speakNotice(Speaking.Outcome(net, false), en)!!
-                assertEquals(Speaking.notice(Speaking.Outcome(net, false), en), speak)
-                for (listening in listOf(false, true)) assertEquals(Speaking.heardNotice(Eleven.Why.NETWORK, listening, en), ProVoice.heardNotice(net, listening, en))
-                for (l in listOf(speak, ProVoice.heardNotice(net, true, en))) {
-                    assertFalse(l, l.contains("키") || l.contains("설정") || l.contains("key") || l.contains("Settings"))
-                }
+                assertEquals(ProVoice.unreachableSpeak(en), ProVoice.speakNotice(Speaking.Outcome(net, false), en))
+                assertEquals(ProVoice.unreachableHear(en), ProVoice.heardNotice(net, en))
             }
+            // D6 / D7
+            assertEquals(ProVoice.noVoiceAtAll(en), ProVoice.speakNotice(Speaking.Outcome(f(Eleven.Gate.OFF), true), en))
+            assertEquals(ProVoice.brokeOff(en), ProVoice.speakNotice(Speaking.Outcome(Eleven.Failure(Eleven.Why.NETWORK, true, "x"), false), en))
+        }
+    }
+
+    /** texts-pro-v1 D5a, D5b, D6, D7, D8 (decided 17:30-17:35), word for word, KO and EN. */
+    @Test
+    fun decidedVoiceTextsD5ToD8AreTheWording() {
+        val rows = listOf(
+            "D5a" to both { ProVoice.unreachableSpeak(it) } to ("서버에 닿지 않아 서버의 목소리를 쓸 수 없습니다 → 이 답은 폰의 목소리로 읽습니다 → 연결을 확인해 주세요" to
+                "The server cannot be reached, so its voice cannot be used → this answer is read with the phone's own voice → check the connection"),
+            "D5b" to both { ProVoice.unreachableHear(it) } to ("서버에 닿지 않아 말을 글로 바꾸지 못했습니다 → 방금 한 말은 보내지 않았습니다 → 연결을 확인한 뒤 다시 말하거나 글로 적어 보내 주세요" to
+                "The server cannot be reached, so your speech could not be turned into text → what you just said was not sent → check the connection, then say it again or type it"),
+            "D6" to both { ProVoice.noVoiceAtAll(it) } to ("서버의 목소리도 폰의 목소리도 쓸 수 없습니다 → 이 답은 글로만 보여 드립니다 → 폰 설정의 '텍스트 음성 변환'을 확인해 주세요" to
+                "Neither the server's voice nor the phone's own voice can be used → this answer is shown as text only → check 'Text-to-speech' in the phone's settings"),
+            "D7" to both { ProVoice.brokeOff(it) } to ("서버의 목소리가 읽는 중에 끊겼습니다 → 이 문장은 끝까지 읽지 못했습니다 → 답은 화면의 글로 확인해 주세요" to
+                "The server's voice broke off while reading → this sentence was not read to the end → read the answer on the screen"),
+            "D8" to both { ProVoice.talkingOff(it) } to ("서버에서 말로 대화하기가 꺼졌습니다 → 대화를 끝냈습니다 → 글로 적어 보내 주세요" to
+                "Talking was switched off on the server → the conversation was ended → type instead"),
+        )
+        for ((pair, want) in rows) {
+            val (name, got) = pair
+            assertEquals("$name KO", want.first, got.first)
+            assertEquals("$name EN", want.second, got.second)
         }
     }
 }

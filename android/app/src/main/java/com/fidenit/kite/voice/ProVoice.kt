@@ -24,27 +24,61 @@ object ProVoice {
     fun hearLimit(en: Boolean): String = if (en) "The server's speech-to-text limit was reached → what you just said was not sent → type it instead"
     else "서버의 받아쓰기 사용 한도에 닿았습니다 → 방금 한 말은 보내지 않았습니다 → 글로 적어 보내 주세요"
 
+    /** D5a */
+    fun unreachableSpeak(en: Boolean): String = if (en) "The server cannot be reached, so its voice cannot be used → this answer is read with the phone's own voice → check the connection"
+    else "서버에 닿지 않아 서버의 목소리를 쓸 수 없습니다 → 이 답은 폰의 목소리로 읽습니다 → 연결을 확인해 주세요"
+
+    /** D5b */
+    fun unreachableHear(en: Boolean): String = if (en) "The server cannot be reached, so your speech could not be turned into text → what you just said was not sent → check the connection, then say it again or type it"
+    else "서버에 닿지 않아 말을 글로 바꾸지 못했습니다 → 방금 한 말은 보내지 않았습니다 → 연결을 확인한 뒤 다시 말하거나 글로 적어 보내 주세요"
+
+    /** D6 */
+    fun noVoiceAtAll(en: Boolean): String = if (en) "Neither the server's voice nor the phone's own voice can be used → this answer is shown as text only → check 'Text-to-speech' in the phone's settings"
+    else "서버의 목소리도 폰의 목소리도 쓸 수 없습니다 → 이 답은 글로만 보여 드립니다 → 폰 설정의 '텍스트 음성 변환'을 확인해 주세요"
+
+    /** D7 */
+    fun brokeOff(en: Boolean): String = if (en) "The server's voice broke off while reading → this sentence was not read to the end → read the answer on the screen"
+    else "서버의 목소리가 읽는 중에 끊겼습니다 → 이 문장은 끝까지 읽지 못했습니다 → 답은 화면의 글로 확인해 주세요"
+
+    /** D8 */
+    fun talkingOff(en: Boolean): String = if (en) "Talking was switched off on the server → the conversation was ended → type instead"
+    else "서버에서 말로 대화하기가 꺼졌습니다 → 대화를 끝냈습니다 → 글로 적어 보내 주세요"
+
     /**
-     * 문장 하나를 읽은 결과의 한 줄 (Pro). 키·설정을 말하지 않는다 (D-A2).
-     * 연결 문제(서버에 닿지 않음, 서버가 ElevenLabs 에 닿지 않음)와 폰 쪽 문제(스피커, 폰의 기본 음성)는 무료 앱의 줄 (D5: 키도 설정도 말하지 않는 줄들),
-     * 서버가 목소리를 내주지 않았으면 D1, 한도면 D2. 그때 폰의 기본 음성도 못 읽었으면 폰의 기본 음성 줄 (D1·D2 의 "폰의 목소리로 읽습니다" 가 참이 아니므로).
+     * 문장 하나를 읽은 결과의 한 줄 (Pro). 키도, 앱의 설정도, ElevenLabs 도 말하지 않는다 (D-A2). 잘 읽었으면 null.
+     * 소리가 조금 나간 뒤 끊겼으면 D7 (폰의 목소리로 다시 읽지 않는다), 폰의 목소리도 못 읽었으면 D6,
+     * 그 밖에는 폰의 목소리가 정말 읽었을 때만: 서버에 닿지 않음 D5a, 한도 D2, 나머지 D1.
+     * 서버를 부르지 않고 폰의 목소리로 읽은 문장(D-A4)이 실패해도 D6.
      */
     fun speakNotice(o: Speaking.Outcome, en: Boolean): String? {
-        val f = o.eleven ?: return Speaking.notice(o, en)
-        if (f.why == Eleven.Why.NETWORK || (f.gate == null && f.why == Eleven.Why.SPEAKER)) return Speaking.notice(o, en)
-        if (o.phoneFailed) return Speaking.notice(Speaking.Outcome(null, true), en)
-        return if (f.why == Eleven.Why.LIMIT) speakLimit(en) else cannotSpeak(en)
+        val f = o.eleven ?: return if (o.phoneFailed) noVoiceAtAll(en) else null
+        if (f.played) return brokeOff(en)
+        if (o.phoneFailed) return noVoiceAtAll(en)
+        return when (f.why) {
+            Eleven.Why.NETWORK -> unreachableSpeak(en)
+            Eleven.Why.LIMIT -> speakLimit(en)
+            else -> cannotSpeak(en)
+        }
     }
 
-    /** 받아쓰기가 실패한 뒤 말로 대화하기를 끄는가 (D-A3: D3·D4 면 끈다, 연결 문제면 무료 앱처럼 계속 듣는다). */
+    /** 받아쓰기가 실패한 뒤 말로 대화하기를 끄는가 (D-A3: D3·D4 면 끈다, 서버에 닿지 않으면(D5b) 계속 듣는다). */
     fun stopsTalking(e: Throwable): Boolean = (e as? Eleven.Failure)?.why != Eleven.Why.NETWORK
 
-    /** 받아쓰기 실패의 한 줄 (Pro). 연결 문제는 무료 앱의 줄 (D5), 한도는 D4, 나머지는 D3. `listening` = 그 뒤에도 계속 듣는가. */
-    fun heardNotice(e: Throwable, listening: Boolean, en: Boolean): String {
+    /** 받아쓰기 실패의 한 줄 (Pro): 서버에 닿지 않음 D5b, 한도 D4, 나머지 D3. */
+    fun heardNotice(e: Throwable, en: Boolean): String {
         val f = e as? Eleven.Failure
-        if (f?.why == Eleven.Why.NETWORK) return Speaking.heardNotice(Eleven.Why.NETWORK, listening, en)
-        return if (f?.why == Eleven.Why.LIMIT) hearLimit(en) else cannotHear(en)
+        return when (f?.why) {
+            Eleven.Why.NETWORK -> unreachableHear(en)
+            Eleven.Why.LIMIT -> hearLimit(en)
+            else -> cannotHear(en)
+        }
     }
+
+    /** 이 문장을 서버의 목소리로 읽어 볼까 (D-A4: 같은 답에서 서버의 목소리가 한 번 실패했으면 남은 문장은 폰의 목소리로만). */
+    fun tryServer(voice: Boolean, failedThisAnswer: Boolean): Boolean = voice && !failedThisAnswer
+
+    /** 대화하는 중에 서버가 말로 대화하기를 껐다: 대화를 끝내고 D8 을 띄운다 (말없이 끝내지 않는다). */
+    fun endsConversation(voice: Boolean, conversing: Boolean): Boolean = !voice && conversing
 
     /** 게이트웨이가 이 기기를 거절했다 (401·403): (이유, 허용 대기 번호) — 앱은 보통의 상태 확인을 시작한다 (D-A2). 아니면 null. */
     fun deviceProblem(e: Throwable?): Pair<String, String>? {

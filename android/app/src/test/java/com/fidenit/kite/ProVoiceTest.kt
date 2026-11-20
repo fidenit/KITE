@@ -119,7 +119,10 @@ class ProVoiceTest {
         Triple(403, """{"error":"pending","code":"482913"}""", listOf(Eleven.Gate.DEVICE, Eleven.Why.OTHER, "pending", "482913")),
         Triple(403, """{"error":"revoked"}""", listOf(Eleven.Gate.DEVICE, Eleven.Why.OTHER, "revoked", "")),
         Triple(403, """{"error":"role_not_supported"}""", listOf(Eleven.Gate.DEVICE, Eleven.Why.OTHER, "role_not_supported", "")),
-        Triple(502, "<html>bad gateway</html>", listOf(Eleven.Gate.OTHER, Eleven.Why.OTHER, "", "")),
+        // D-A4: a 5xx that is not the gateway's JSON (a proxy page) is a connection problem (D5a/D5b), not D1/D3
+        Triple(502, "<html>bad gateway</html>", listOf(Eleven.Gate.UNREACHABLE, Eleven.Why.NETWORK, "", "")),
+        Triple(504, "", listOf(Eleven.Gate.UNREACHABLE, Eleven.Why.NETWORK, "", "")),
+        Triple(404, "<html>not found</html>", listOf(Eleven.Gate.OTHER, Eleven.Why.OTHER, "", "")),
     )
 
     private fun speakFailure(): Eleven.Failure = try {
@@ -167,7 +170,7 @@ class ProVoiceTest {
 
             for (en in listOf(false, true)) {
                 val speakLine = ProVoice.speakNotice(Speaking.Outcome(s, false), en)
-                val hearLine = ProVoice.heardNotice(h, listening = false, en = en)
+                val hearLine = ProVoice.heardNotice(h, en)
                 when (want[0]) {
                     Eleven.Gate.LIMIT, Eleven.Gate.RATE -> {
                         assertEquals(label, ProVoice.speakLimit(en), speakLine)
@@ -175,9 +178,9 @@ class ProVoiceTest {
                         assertTrue(label, ProVoice.stopsTalking(h))
                     }
                     Eleven.Gate.UNREACHABLE -> {
-                        // D5: the free flavor's network lines (they name no key and no Settings); listening goes on
-                        assertEquals(label, Speaking.notice(Speaking.Outcome(s, false), en), speakLine)
-                        assertEquals(label, Speaking.heardNotice(Eleven.Why.NETWORK, false, en), hearLine)
+                        // D5a / D5b; listening goes on
+                        assertEquals(label, ProVoice.unreachableSpeak(en), speakLine)
+                        assertEquals(label, ProVoice.unreachableHear(en), hearLine)
                         assertFalse(label, ProVoice.stopsTalking(h))
                     }
                     else -> {
@@ -204,7 +207,7 @@ class ProVoiceTest {
     }
 
     @Test
-    fun aNetworkFailureIsTheFreeNetworkLineAndKeepsListening() {
+    fun aNetworkFailureIsD5aAndD5bAndKeepsListening() {
         val dead = MockWebServer().apply { start() }
         val base = dead.url("/").toString()
         dead.shutdown()
@@ -225,8 +228,8 @@ class ProVoiceTest {
         assertEquals(Eleven.Why.NETWORK, h.why)
         assertFalse(ProVoice.stopsTalking(h))
         for (en in listOf(false, true)) {
-            assertEquals(Speaking.notice(Speaking.Outcome(s, false), en), ProVoice.speakNotice(Speaking.Outcome(s, false), en))
-            assertEquals(Speaking.heardNotice(Eleven.Why.NETWORK, true, en), ProVoice.heardNotice(h, true, en))
+            assertEquals(ProVoice.unreachableSpeak(en), ProVoice.speakNotice(Speaking.Outcome(s, false), en))
+            assertEquals(ProVoice.unreachableHear(en), ProVoice.heardNotice(h, en))
         }
     }
 
@@ -238,25 +241,60 @@ class ProVoiceTest {
         for (en in listOf(false, true)) {
             for (f in failures) {
                 for (phoneFailed in listOf(false, true)) ProVoice.speakNotice(Speaking.Outcome(f, phoneFailed), en)?.let { lines.add(it) }
-                for (listening in listOf(false, true)) lines.add(ProVoice.heardNotice(f, listening, en))
+                lines.add(ProVoice.heardNotice(f, en))
             }
             ProVoice.speakNotice(Speaking.Outcome(null, true), en)?.let { lines.add(it) }
-            lines.add(ProVoice.heardNotice(RuntimeException("x"), false, en))
+            lines.add(ProVoice.heardNotice(RuntimeException("x"), en))
+            lines.add(ProVoice.talkingOff(en))
         }
         assertTrue(lines.size > 100)
+        // the one allowed mention of a settings screen: the PHONE's own text-to-speech setting, only in D6
+        val phoneSetting = mapOf(false to "폰 설정의 '텍스트 음성 변환'", true to "'Text-to-speech' in the phone's settings")
+        for (en in listOf(false, true)) assertTrue(ProVoice.noVoiceAtAll(en).contains(phoneSetting.getValue(en)))
         for (l in lines) {
-            for (bad in listOf("키", "'설정'", "key", "Settings", "gateway", "게이트웨이", "HTTP", "voice_")) assertFalse("$bad in: $l", l.contains(bad))
+            val d6 = l == ProVoice.noVoiceAtAll(false) || l == ProVoice.noVoiceAtAll(true)
+            val rest = if (d6) l.replace(phoneSetting.getValue(false), "").replace(phoneSetting.getValue(true), "") else l
+            for (bad in listOf("ElevenLabs", "키", "key", "Key", "인터넷", "internet", "설정", "Settings", "settings", "gateway", "게이트웨이", "HTTP", "voice_")) assertFalse("$bad in: $l", rest.contains(bad))
             assertEquals(l, 2, l.count { it == '→' })
         }
         assertNull(ProVoice.speakNotice(Speaking.Outcome(null, false), false))
     }
 
     @Test
-    fun aServerVoiceFailureWhenThePhoneVoiceAlsoFailsDoesNotSayItWasReadAloud() {
+    fun whenThePhoneVoiceAlsoFailsTheLineIsD6() {
         val f = Eleven.Failure(Eleven.Why.OTHER, false, "HTTP 503 voice_off", gate = Eleven.Gate.OFF)
         for (en in listOf(false, true)) {
-            assertEquals(Speaking.notice(Speaking.Outcome(null, true), en), ProVoice.speakNotice(Speaking.Outcome(f, true), en))
+            for (why in Eleven.Why.values()) assertEquals("$why", ProVoice.noVoiceAtAll(en), ProVoice.speakNotice(Speaking.Outcome(Eleven.Failure(why, false, "x"), true), en))
+            assertEquals(ProVoice.noVoiceAtAll(en), ProVoice.speakNotice(Speaking.Outcome(f, true), en))
+            // D-A4: a later sentence of the same answer goes straight to the phone's voice; if that fails too: D6
+            assertEquals(ProVoice.noVoiceAtAll(en), ProVoice.speakNotice(Speaking.Outcome(null, true), en))
         }
+    }
+
+    @Test
+    fun aVoiceThatBrokeOffAfterSomeSoundIsD7NeverALineThatSaysThePhoneReadIt() {
+        for (en in listOf(false, true)) for (why in Eleven.Why.values()) for (phoneFailed in listOf(false, true)) {
+            assertEquals("$why", ProVoice.brokeOff(en), ProVoice.speakNotice(Speaking.Outcome(Eleven.Failure(why, true, "x"), phoneFailed), en))
+        }
+        // the stream breaks mid-sentence through the gateway: played = true -> D7
+        server.enqueue(MockResponse().setResponseCode(200).setChunkedBody("a".repeat(96000), 4800).setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))
+        val f = speakFailure()
+        assertTrue(f.played)
+        assertEquals(ProVoice.brokeOff(false), ProVoice.speakNotice(Speaking.Outcome(f, false), false))
+    }
+
+    @Test
+    fun afterAServerVoiceFailureTheRestOfTheAnswerSkipsTheServer() {
+        assertTrue(ProVoice.tryServer(voice = true, failedThisAnswer = false))
+        assertFalse(ProVoice.tryServer(voice = true, failedThisAnswer = true))
+        assertFalse(ProVoice.tryServer(voice = false, failedThisAnswer = false))
+    }
+
+    @Test
+    fun theCapabilityTurningFalseEndsTheConversationWithD8() {
+        assertTrue(ProVoice.endsConversation(voice = false, conversing = true))
+        assertFalse(ProVoice.endsConversation(voice = false, conversing = false))
+        assertFalse(ProVoice.endsConversation(voice = true, conversing = true))
     }
 
     @Test
@@ -312,6 +350,30 @@ class ProVoiceTest {
         assertEquals("/v1/enroll", take().path)
         repeat(4) { assertEquals("/v1/me", take().path) }
         assertEquals("/v1/enroll", take().path)
+    }
+
+    @Test
+    fun anApprovalFromEnrollingAsksMeOnceMoreForTheVoice() {
+        val m = Mem()
+        var clock = 1_000_000L
+        val d = ProDevice(m, Enroller(server.url("/").toString()), { Triple("Pixel 8", "14", "0.3.0") }, "tkt-1", { clock }, 0)
+        server.enqueue(MockResponse().setBody("""{"status":"approved","ticket":"ok"}"""))
+        server.enqueue(MockResponse().setBody("""{"status":"approved","voice":true}"""))
+        assertEquals("approved", d.check().status)
+        assertFalse(d.voice)
+        assertTrue(d.voiceAfterApproval())
+        assertTrue(d.voice)
+        assertFalse("only once per approval", d.voiceAfterApproval())
+        assertEquals("/v1/enroll", take().path)
+        val me = take()
+        assertEquals("/v1/me", me.path)
+        assertEquals("Bearer ${m.deviceSecret}", me.getHeader("Authorization"))
+        // approved through /v1/me (the waiting number was approved): that answer already had the voice, no extra call
+        server.enqueue(MockResponse().setBody("""{"status":"approved","voice":false}"""))
+        clock += 1
+        d.check()
+        assertFalse(d.voiceAfterApproval())
+        assertEquals(3, server.requestCount)
     }
 
     @Test

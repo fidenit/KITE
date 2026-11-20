@@ -598,8 +598,11 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private var lastProLogged = ""
 
     /** APERIT Pro: 서버의 목소리를 쓸 수 있다 (마지막 `/v1/me` 의 `voice`). 참일 때만 대화·마이크 버튼과 설정의 음성 칸이 보인다 (D-A1). 무료 앱은 늘 거짓. */
-    var proVoiceOn by mutableStateOf(false)
+    var proVoiceOn by mutableStateOf(BuildConfig.PRO && store.proVoice == "1") // 저장된 값으로 첫 화면부터 (D-A5)
         private set
+
+    /** Pro: 이번 답에서 서버의 목소리가 이미 실패했다: 남은 문장은 폰의 목소리로만 읽는다 (D-A4). 턴이 시작할 때 풀린다. */
+    private var proVoiceSkip = false
 
     /** Pro: 서버의 목소리로 부를 곳. 비밀 글은 GatewayLink 처럼 머리글에만 쓰고 글로 남기지 않는다. */
     private fun proVoiceTarget(): Eleven.Target = Eleven.Target.pro(BuildConfig.GATEWAY_URL, store.deviceSecret, BuildConfig.VERSION_NAME + "-pro")
@@ -659,7 +662,10 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val now = st?.status ?: "offline"
         // 서버의 목소리: 상태와 같은 때에 새로 본다. 꺼졌으면 말로 대화하기도 끈다.
         proVoiceOn = store.proVoice == "1"
-        if (!proVoiceOn && converse) converse(false)
+        if (ProVoice.endsConversation(proVoiceOn, converse)) {
+            converse(false)
+            error = ProVoice.talkingOff(en) // D8: 말없이 끝내지 않는다
+        }
         if (!seed && now != lastProLogged) {
             lastProLogged = now
             Thread { proLog("device status=$now id=${store.deviceId.take(8)}" + if (ticketRejected.isNotEmpty()) " ticket=$ticketRejected" else "") }.start()
@@ -699,7 +705,14 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             yield() // init 이 끝난 뒤에 돈다 (아래에 선언된 속성을 읽는다)
             if (proState.isEmpty()) proShow(DeviceStatus(store.proStatus.ifEmpty { "offline" }, store.proCode), "", seed = true) // 첫 답 전에도 비어 있지 않게 (A7)
-            val r = withContext(Dispatchers.IO) { runCatching { device.check() to device.ticketRejected } }
+            val r = withContext(Dispatchers.IO) {
+                runCatching {
+                    val st = device.check()
+                    val rejected = device.ticketRejected
+                    device.voiceAfterApproval() // 방금 등록으로 허용됐으면 서버의 목소리를 바로 묻는다 (D-A5)
+                    st to rejected
+                }
+            }
             proShow(r.getOrNull()?.first, r.getOrNull()?.second.orEmpty(), auto = true)
         }
     }
@@ -788,6 +801,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         // 사용자가 보낸 말이면 간격을 건너뛰고 한 번 더 묻는다 (ProDevice 가 간격을 지킨다: 허용 대기 중 3초, 그 밖 15초). 다시 붙는 턴은 이미 보낸 말이다.
         val st = device.check(force = !resume)
         val rejected = device.ticketRejected
+        device.voiceAfterApproval() // D-A5
         viewModelScope.launch { proShow(st, rejected) }
         val en = english
         val id8 = store.deviceId.take(8)
@@ -941,6 +955,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         hush = false
         touched.clear()
         turnSpoken.clear()
+        proVoiceSkip = false // 새 답은 서버의 목소리를 다시 써 본다 (D-A4)
         quietSay = null
         lines = LineStream()
         val before = Lang.save(board)
@@ -1381,7 +1396,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         val epoch = ++speakEpoch
         val key = store.elevenKey.trim()
         // Pro: 키 없이 서버의 목소리로 (서버가 쓸 수 있다고 했을 때만)
-        val target = if (BuildConfig.PRO && proVoiceOn) proVoiceTarget() else null
+        val target = if (BuildConfig.PRO && ProVoice.tryServer(proVoiceOn, proVoiceSkip)) proVoiceTarget() else null
         val viaEleven: () -> Unit = if (target != null) {
             { Eleven.speak(target, store.voiceId.trim(), board.show(text), player ?: Player().also { player = it }, { epoch != speakEpoch }) }
         } else {
@@ -1397,6 +1412,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             if (BuildConfig.PRO && target != null) {
                 proVoiceLog("voice tts chars=${text.length} ms=${System.currentTimeMillis() - t0} ${ProVoice.logWhy(out.eleven)} phoneFailed=${out.phoneFailed}")
                 proVoiceRefused(out.eleven)
+                if (out.eleven != null) proVoiceSkip = true // D-A4: 이 답의 남은 문장은 폰의 목소리로
             }
             if (epoch != speakEpoch) return@launch
             // 한 줄로 알린다 (무엇이 문제 → 이 문장을 어떻게 했나 → 할 일). 다시 잘 읽을 때까지는 한 번만. Pro: 대화 한 번에 한 번만 (D-A3).
@@ -1590,7 +1606,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 if (BuildConfig.PRO) {
                     // Pro: 서버가 받아쓰지 못했거나 한도면 말로 대화하기를 끈다 (D-A3), 연결 문제면 무료 앱처럼 계속 듣는다 (D5)
                     val off = ProVoice.stopsTalking(it)
-                    if (!hearFailShown) error = ProVoice.heardNotice(it, converse && !off, en)
+                    if (!hearFailShown) error = ProVoice.heardNotice(it, en)
                     hearFailShown = true
                     if (off && converse) converse(false)
                     return@onFailure

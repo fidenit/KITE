@@ -118,6 +118,8 @@ object Eleven {
             word == "bad_request" -> Gate.BAD_REQUEST
             code == 429 -> Gate.RATE
             code == 413 -> Gate.TOO_LARGE
+            // 5xx 인데 게이트웨이의 JSON 이 아니다 (중간 서버의 쪽): 서버에 제대로 닿지 않은 것 (D-A4 → D5a·D5b)
+            code in 500..599 && word.isEmpty() -> Gate.UNREACHABLE
             else -> Gate.OTHER
         }
         val why = when (g) {

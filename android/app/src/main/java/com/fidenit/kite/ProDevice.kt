@@ -127,6 +127,7 @@ class ProDevice(
 
     private fun ask(): DeviceStatus {
         if (store.deviceId.isBlank() || store.deviceSecret.isBlank()) renew()
+        var fromMe = store.proStatus.isNotEmpty()
         var st = if (store.proStatus.isEmpty()) enroll() else enroller.me(store.deviceSecret).also { me ->
             // `/v1/me` 의 답만 `voice` 를 싣는다: 답이 왔으면(잊혔음 포함) 그 값을 둔다
             if (me.status in setOf("approved", "pending", "revoked", "unknown")) store.proVoice = if (me.voice) "1" else ""
@@ -139,18 +140,40 @@ class ProDevice(
                 DeviceStatus("forgotten")
             }
             if (st.status in setOf("limited", "error", "unknown")) st = DeviceStatus("forgotten")
+            fromMe = false
         }
         if (st.status == "conflict") {
             if (renewed) return st // 새 이름표도 409: 더 만들지 않는다
             renewed = true
             renew()
             st = enroll()
+            fromMe = false
         }
+        // 등록의 답에는 voice 가 없다: 등록으로 허용됐으면 [voiceAfterApproval] 이 `/v1/me` 를 한 번 더 묻는다 (D-A5)
+        voiceUnknown = st.status == "approved" && !fromMe
         if (st.status in setOf("approved", "pending", "revoked")) {
             store.proStatus = st.status
             store.proCode = if (st.status == "pending") st.code else ""
         }
         return st
+    }
+
+    private var voiceUnknown = false
+
+    /**
+     * 방금 등록으로 허용됐다면 (처음 켤 때 허용권으로, 또는 허용 대기가 허용된 뒤 다시 등록) `/v1/me` 를 한 번 더 물어 서버의 목소리를 받는다 (D-A5).
+     * [check] 다음에 부른다. 같은 자물쇠(한 번에 하나)이고, 허용될 때마다 한 번만 묻는다. 물었으면 참. 예외를 던지지 않는다.
+     */
+    fun voiceAfterApproval(): Boolean = synchronized(lock) {
+        if (!voiceUnknown || store.memoryOnly) return false
+        voiceUnknown = false
+        try {
+            val me = enroller.me(store.deviceSecret)
+            if (me.status in setOf("approved", "pending", "revoked", "unknown")) store.proVoice = if (me.voice) "1" else ""
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun enroll(): DeviceStatus {
