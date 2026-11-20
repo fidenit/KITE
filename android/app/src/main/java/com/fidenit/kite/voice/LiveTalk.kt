@@ -74,8 +74,8 @@ class LiveTalk(private val listenOpener: LiveListen.Opener, private val host: Ho
         openedAt = now()
         val ev = object : LiveEvents {
             override fun opened(ms: Long) = host.post { if (g == gen) host.log("live listen open ms=$ms") }
-            override fun message(m: LiveWire.In) = host.post { if (g == gen) message(m) }
-            override fun closed(c: LiveWire.Close) = host.post { if (g == gen) closed(c) }
+            override fun message(m: LiveWire.In) = host.post { if (g == gen) got(m) }
+            override fun closed(c: LiveWire.Close) = host.post { if (g == gen) ended(c) }
         }
         val s = try {
             listenOpener.open(host.english, ev)
@@ -83,7 +83,7 @@ class LiveTalk(private val listenOpener: LiveListen.Opener, private val host: Ho
             null
         }
         sock = s
-        if (s == null) host.post { if (g == gen) closed(LiveWire.Close(null, -1, false)) } // 열지도 못했다: 끊긴 것과 같이
+        if (s == null) host.post { if (g == gen) ended(LiveWire.Close(null, -1, false)) } // 열지도 못했다: 끊긴 것과 같이
     }
 
     /** 마이크에서 읽은 조각 하나 (마이크 스레드). 소켓이 없으면 버린다. */
@@ -91,7 +91,7 @@ class LiveTalk(private val listenOpener: LiveListen.Opener, private val host: Ho
         sock?.audio(pcm, n)
     }
 
-    private fun message(m: LiveWire.In) {
+    private fun got(m: LiveWire.In) {
         when (m) {
             is LiveWire.In.Ready -> {
                 ready = true
@@ -143,7 +143,7 @@ class LiveTalk(private val listenOpener: LiveListen.Opener, private val host: Ho
         }
     }
 
-    private fun closed(c: LiveWire.Close) {
+    private fun ended(c: LiveWire.Close) {
         val hadReady = ready
         sock = null
         ready = false
