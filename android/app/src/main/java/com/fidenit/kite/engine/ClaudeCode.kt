@@ -294,7 +294,7 @@ class ClaudeCode(private val ssh: Ssh, private val cfg: EngineConfig) : Runner {
      */
     fun cleanRun(id: String): Boolean {
         val ok = bounded(5000) {
-            // 멈춤이 닿지 않았던 실행은 먼저 멈춘다: 돌고 있는 실행의 파일(.pid)을 지우면 다시는 멈출 수 없다
+            // 멈춤이 닿지 않았던 실행은 먼저 멈춘다: 끝난 값이 적히기를 기다린 뒤에 치운다 (돌고 있는 실행을 치우기만 해도 멈춤 요청은 남아 그 실행은 끝난다)
             if (leftover.contains(id) && !ended.contains(id)) ssh.run(cmds.stop(id))
             ssh.run(cmds.clean(id))
         }

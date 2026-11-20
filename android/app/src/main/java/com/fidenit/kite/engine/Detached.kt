@@ -1,5 +1,6 @@
 // 서버에서 떼어 돌리는 턴: 안드로이드 API 없이 명령 글과 줄 분류만 만든다 (JVM 시험 가능).
-// 서버 폴더 ~/.kite/runs/ 에 실행 하나당 파일 다섯: <id>.in(턴 글) .out(stream-json) .err .exit(끝난 코드) .pid(감싼 bash 의 번호).
+// 서버 폴더 ~/.kite/runs/ 에 실행 하나당 파일 여섯: <id>.in(턴 글) .out(stream-json) .err .exit(끝난 코드) .pid(감싼 bash 의 번호, 살아 있는지 볼 때만 쓴다) .stop(멈춤 요청, 빈 파일).
+// 신호는 감싼 bash 가 자기가 띄운 자식에게만 보낸다. 멈춤·치우기·따라 읽기 명령은 어떤 신호도 보내지 않는다: 파일에 적힌 번호가 낡았거나 틀려도 다른 프로세스가 다칠 수 없다.
 package com.fidenit.kite.engine
 
 import java.text.SimpleDateFormat
@@ -145,35 +146,77 @@ class DetachedCommands(private val cfg: EngineConfig) {
         return if (dir.isEmpty() || dir == "~") "cd" else "cd ${if (dir.startsWith("~/")) "\"\$HOME\"/" + shq(dir.removePrefix("~/")) else shq(dir)}"
     }
 
+    /** 번호 `$1` 이 이 실행의 감싼 bash 인가: 명령 글에 이 실행의 파일 이름이 있는지 본다 (신호는 보내지 않는다). 숫자가 아니거나 없는 프로세스면 아니다. */
+    private fun ours(id: String): String =
+        "ours() { case \"\$1\" in ''|*[!0-9]*) return 1;; esac; if [ -r \"/proc/\$1/cmdline\" ]; then a=\$(tr '\\0' ' ' < \"/proc/\$1/cmdline\" 2>/dev/null); else a=\$(ps -ww -p \"\$1\" -o args= 2>/dev/null); fi; case \"\$a\" in *\"runs/${Detached.check(id)}.\"*) return 0;; esac; return 1; }"
+
     /** 올리기. 표준 입력 = 턴 글. 이레 넘은 옛 파일은 지운다. */
     fun upload(id: String): String = serverShell(
         "mkdir -p ~/.kite/runs && find ~/.kite/runs -type f -mtime +7 -delete 2>/dev/null; cat > ${path(id, "in")}",
     )
 
-    /** 시작. 서버에서 떼어 돌리고 바로 돌아온다: `APERITRUN <id>` 또는 `APERITFAIL <이유>`. */
+    /**
+     * 서버에서 `bash -c` 로 도는 감싼 글. `claude` 를 자기 자식으로 띄우고 그 번호를 셸 변수(`$!`)로만 갖고 있다가, 0.2초마다 `.stop` 이 생겼는지 본다.
+     * 생겼으면 자식과 그 자손(`pgrep -P`, 자손부터)에 TERM, 1초쯤 뒤 아직 자기 자식으로 살아 있으면 KILL. 그 뒤 자기 세션에 남은 것
+     * (`pgrep -s $$`: setsid 로 띄웠을 때만 있다)도 끝내고, 자식의 끝난 코드를 `.exit` 에 적는다.
+     * 신호를 받는 번호는 `$!` 이거나 `pgrep` 이 방금 준 것뿐이고, 쓰기 전에 `ok` 로 숫자이고 1보다 크고 자기 번호가 아닌지 본다. 파일에서 읽은 번호는 쓰지 않는다.
+     * 자기가 TERM 을 받아도(서버가 꺼질 때) 죽지 않고 `.exit` 를 적는다.
+     */
+    fun runner(id: String): String = """
+        g=0; trap 'g=1' TERM
+        echo ${'$'}${'$'} > ${path(id, "pid")}
+        if [ -e ${path(id, "stop")} ]; then echo stopped > ${path(id, "exit")}; exit 0; fi
+        ${claudeLine()} < ${path(id, "in")} > ${path(id, "out")} 2> ${path(id, "err")} &
+        c=${'$'}!
+        ok() { case "${'$'}1" in ''|*[!0-9]*) return 1;; esac; [ "${'$'}1" -gt 1 ] && [ "${'$'}1" != "${'$'}${'$'}" ]; }
+        k1() { ok "${'$'}1" && kill -"${'$'}2" "${'$'}1" 2>/dev/null; }
+        kt() { ok "${'$'}1" || return 1; for k in ${'$'}(exec pgrep -P "${'$'}1" 2>/dev/null); do kt "${'$'}k" "${'$'}2"; done; k1 "${'$'}1" "${'$'}2"; }
+        sw() { o=0; for k in ${'$'}(exec pgrep -s "${'$'}${'$'}" 2>/dev/null); do k1 "${'$'}k" "${'$'}1" && o=1; done; return 0; }
+        mine() { ok "${'$'}c" || return 1; set -- ${'$'}(ps -o ppid= -o stat= -p "${'$'}c" 2>/dev/null); [ "${'$'}1" = "${'$'}${'$'}" ] || return 1; case "${'$'}2" in Z*) return 1;; esac; return 0; }
+        s=0
+        while mine; do
+          if [ -e ${path(id, "stop")} ]; then
+            s=1; kt "${'$'}c" TERM
+            i=0; while [ ${'$'}i -lt 5 ] && mine; do sleep 0.2; i=${'$'}((i+1)); done
+            mine && kt "${'$'}c" KILL
+            break
+          fi
+          sleep 0.2
+        done
+        g=0; wait "${'$'}c"; x=${'$'}?
+        while [ "${'$'}g" = 1 ]; do g=0; wait "${'$'}c"; y=${'$'}?; [ "${'$'}y" = 127 ] || x=${'$'}y; done
+        [ -e ${path(id, "stop")} ] && s=1
+        if [ "${'$'}s" = 1 ]; then sw TERM; if [ "${'$'}o" = 1 ]; then sleep 0.4; sw KILL; fi; fi
+        echo ${'$'}x > ${path(id, "exit")}
+    """.trimIndent()
+
+    /**
+     * 시작. 서버에서 떼어 돌리고 바로 돌아온다: `APERITRUN <id>` 또는 `APERITFAIL <이유>`.
+     * 멈춤 요청(`.stop`)이 이미 있으면 아무것도 띄우지 않고 `.exit` 에 `stopped` 를 적는다 (멈춘 뒤 늦게 닿은 시작이 돌지 않게).
+     */
     fun start(id: String): String {
-        val inner = "trap : TERM; echo \$\$ > ${path(id, "pid")}; ${claudeLine()} < ${path(id, "in")} > ${path(id, "out")} 2> ${path(id, "err")}; echo \$? > ${path(id, "exit")}"
         return serverShell(
             """
             [ -f ${path(id, "in")} ] || { echo "APERITFAIL noin"; exit 0; }
             [ -s ${path(id, "pid")} ] && { echo "APERITRUN $id"; exit 0; }
+            [ -e ${path(id, "stop")} ] && { [ -s ${path(id, "exit")} ] || echo stopped > ${path(id, "exit")}; echo "APERITRUN $id"; exit 0; }
             ${cd()} 2>/dev/null || { echo "APERITFAIL cd"; exit 0; }
             S=; command -v setsid >/dev/null 2>&1 && S=setsid
-            ( ${'$'}S nohup bash -c ${shq(inner)} > /dev/null 2>&1 < /dev/null & )
+            ( ${'$'}S nohup bash -c ${shq(runner(id))} > /dev/null 2>&1 < /dev/null & )
             i=0; while [ ! -s ${path(id, "pid")} ] && [ ${'$'}i -lt 100 ]; do sleep 0.05; i=${'$'}((i+1)); done
             if [ -s ${path(id, "pid")} ]; then echo "APERITRUN $id"; else echo "APERITFAIL start"; fi
             """.trimIndent(),
         )
     }
 
-    /** 따라 읽기: `n` 줄까지 받은 뒤부터. 출력은 이 루프 하나만 쓴다. */
+    /** 따라 읽기: `n` 줄까지 받은 뒤부터. 출력은 이 루프 하나만 쓴다. 돌고 있는지는 `.pid` 의 번호가 이 실행의 감싼 bash 인지로만 본다 (신호를 보내지 않는다). */
     fun follow(id: String, n: Int): String {
         require(n >= 0)
         Detached.check(id)
         return serverShell(
             """
-            f="${'$'}HOME/.kite/runs/$id"; n=$n; last=-1; beat=0; ver=0
-            ours() { if [ -r "/proc/${'$'}1/cmdline" ]; then a=${'$'}(tr '\0' ' ' < "/proc/${'$'}1/cmdline" 2>/dev/null); else a=${'$'}(ps -ww -p "${'$'}1" -o args= 2>/dev/null); fi; case "${'$'}a" in *"runs/$id."*) return 0;; esac; return 1; }
+            f="${'$'}HOME/.kite/runs/$id"; n=$n; last=-1; beat=0
+            ${ours(id)}
             [ -f "${'$'}f.in" ] || { if [ -s "${'$'}f.exit" ]; then echo "APERITEXIT gone"; else echo "APERITEXIT none"; fi; exit 0; }
             if [ ! -s "${'$'}f.pid" ] && [ ! -s "${'$'}f.exit" ]; then echo "APERITEXIT none"; exit 0; fi
             while :; do
@@ -185,9 +228,7 @@ class DetachedCommands(private val cfg: EngineConfig) {
               fi
               if [ "${'$'}fin" = 1 ]; then echo "APERITEXIT ${'$'}(cat "${'$'}f.exit")"; exit 0; fi
               p=; { read -r p < "${'$'}f.pid"; } 2>/dev/null
-              alive=0
-              if kill -0 "${'$'}p" 2>/dev/null; then if [ "${'$'}ver" = 1 ] || ours "${'$'}p"; then ver=1; alive=1; fi; fi
-              if [ "${'$'}alive" = 0 ]; then
+              if ! ours "${'$'}p"; then
                 sleep 0.3; [ -s "${'$'}f.exit" ] && continue
                 echo "APERITEXIT lost"; exit 0
               fi
@@ -199,40 +240,39 @@ class DetachedCommands(private val cfg: EngineConfig) {
     }
 
     /**
-     * 멈춤: `.pid` 의 번호가 이 실행의 감싼 bash 인지 확인한 뒤에만 끝낸다 (서버가 다시 켜져 번호가 남의 것이 됐을 수 있다:
-     * 아니면 아무것도 끝내지 않고 `stopped` 만 적는다). 묶음에 TERM (감싼 bash 는 `trap : TERM` 이라 살아서 `.exit` 에 143 을 적는다). 1초 안에 안 끝나면
-     * 묶음과 자식에 KILL. 그래도 `.exit` 가 없으면 `stopped` 를 적는다.
+     * 멈춤: 신호를 보내지 않는다. 이 서버가 아는 실행(`.in` 이나 `.pid` 가 있다)이고 아직 끝나지 않았으면 멈춤 요청 파일 `.stop` 을 만들고,
+     * 감싼 bash 가 자기 자식을 끝내고 `.exit` 를 적기를 3초쯤 기다린다. `.pid` 의 번호가 이 실행의 감싼 bash 가 아니거나(서버가 다시 켜져
+     * 번호가 남의 것이 됐을 수 있다) 시작된 적이 없으면 `.exit` 에 `stopped` 를 적는다. 모르는 번호나 이미 끝난 실행에는 아무것도 하지 않는다.
      */
     fun stop(id: String): String {
         Detached.check(id)
         return serverShell(
-        """
-        f="${'$'}HOME/.kite/runs/$id"
-        ours() { if [ -r "/proc/${'$'}1/cmdline" ]; then a=${'$'}(tr '\0' ' ' < "/proc/${'$'}1/cmdline" 2>/dev/null); else a=${'$'}(ps -ww -p "${'$'}1" -o args= 2>/dev/null); fi; case "${'$'}a" in *"runs/$id."*) return 0;; esac; return 1; }
-        [ -s "${'$'}f.exit" ] && exit 0
-        i=0; while [ ! -s "${'$'}f.pid" ] && [ -f "${'$'}f.in" ] && [ ${'$'}i -lt 10 ]; do sleep 0.1; i=${'$'}((i+1)); done
-        p=${'$'}(cat "${'$'}f.pid" 2>/dev/null)
-        case "${'$'}p" in ''|*[!0-9]*) exit 0;; esac
-        [ -s "${'$'}f.exit" ] && exit 0
-        if ! { kill -0 "${'$'}p" 2>/dev/null && ours "${'$'}p"; }; then sleep 0.3; [ -s "${'$'}f.exit" ] || echo stopped > "${'$'}f.exit"; exit 0; fi
-        kt() { for c in ${'$'}(pgrep -P "${'$'}1" 2>/dev/null); do kt "${'$'}c" "${'$'}2"; done; kill -"${'$'}2" "${'$'}1" 2>/dev/null; }
-        kill -TERM -- -"${'$'}p" 2>/dev/null || kt "${'$'}p" TERM
-        i=0; while [ ${'$'}i -lt 10 ] && [ ! -s "${'$'}f.exit" ] && kill -0 "${'$'}p" 2>/dev/null; do sleep 0.1; i=${'$'}((i+1)); done
-        if [ ! -s "${'$'}f.exit" ] && kill -0 "${'$'}p" 2>/dev/null; then kt "${'$'}p" KILL; fi
-        kill -KILL -- -"${'$'}p" 2>/dev/null
-        sleep 0.2
-        [ -s "${'$'}f.exit" ] || echo stopped > "${'$'}f.exit"
-        exit 0
-        """.trimIndent(),
+            """
+            f="${'$'}HOME/.kite/runs/$id"
+            ${ours(id)}
+            [ -f "${'$'}f.in" ] || [ -f "${'$'}f.pid" ] || exit 0
+            [ -s "${'$'}f.exit" ] && exit 0
+            : > "${'$'}f.stop"
+            i=0; p=
+            while [ ${'$'}i -lt 15 ] && [ ! -s "${'$'}f.exit" ]; do
+              p=; { read -r p < "${'$'}f.pid"; } 2>/dev/null
+              if [ -n "${'$'}p" ]; then ours "${'$'}p" || break; elif [ ${'$'}i -ge 5 ]; then break; fi
+              sleep 0.2; i=${'$'}((i+1))
+            done
+            if [ ! -s "${'$'}f.exit" ] && ! ours "${'$'}p"; then sleep 0.3; [ -s "${'$'}f.exit" ] || echo stopped > "${'$'}f.exit"; fi
+            exit 0
+            """.trimIndent(),
         )
     }
 
     /**
-     * 치우기: `.in .out .err .pid` 를 지운다. `.exit` 는 남긴다 (이레 뒤 정리에서 지워진다): 이미 끝나 치워진 실행에 다시 붙으면
+     * 치우기: `.in .out .err .pid` 를 지운다. 아직 도는 실행(`.pid` 가 있고 `.exit` 가 없다)이면 멈춤 요청 `.stop` 을 남겨 감싼 bash 가 끝내게 하고,
+     * 아니면 `.stop` 도 지운다. `.exit` 는 남긴다 (이레 뒤 정리에서 지워진다): 이미 끝나 치워진 실행에 다시 붙으면
      * `APERITEXIT gone` 이 나오고, 같은 말이 처음부터 다시 돌지 않는다.
      */
     fun clean(id: String): String = serverShell(
-        "rm -f ${path(id, "in")} ${path(id, "out")} ${path(id, "err")} ${path(id, "pid")}",
+        "if [ -s ${path(id, "pid")} ] && [ ! -s ${path(id, "exit")} ]; then : > ${path(id, "stop")}; else rm -f ${path(id, "stop")}; fi; " +
+            "rm -f ${path(id, "in")} ${path(id, "out")} ${path(id, "err")} ${path(id, "pid")}",
     )
 
     /** 표준 오류 끝부분 (치우기 전에 읽는다). */

@@ -11,6 +11,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeFalse
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -179,7 +180,40 @@ class DetachedTest {
     private val okFake = "#!/bin/sh\nmkdir -p \"\$HOME/cap\"\necho \"\$*\" > \"\$HOME/cap/args\"\npwd > \"\$HOME/cap/pwd\"\ncat > \"\$HOME/cap/stdin\"\n" +
         "echo '{\"type\":\"system\",\"subtype\":\"init\"}'\nfor i in 1 2 3 4; do echo \"{\\\"type\\\":\\\"stream_event\\\",\\\"n\\\":\$i}\"; sleep 0.4; done\necho '{\"type\":\"result\",\"result\":\"ok\"}'\n"
 
-    private fun alive(home: File): List<String> = sh(File("/"), "ps -eo args").lines.filter { (it.contains(home.absolutePath) || it.contains("sleep 37.31")) && !it.contains("ps -eo") }
+    /** 이 시험의 가짜 실행에서 아직 살아 있는 것: 명령 글에 시험 폴더나 이 시험만 쓰는 sleep 값이 있는 프로세스 (읽기만 한다). */
+    private fun alive(home: File, mark: String): List<String> = sh(File("/"), "ps -eo args").lines.filter { (it.contains(home.absolutePath) || it.contains(mark)) && !it.contains("ps -eo") }
+
+    private fun waitGone(home: File, mark: String, ms: Long): List<String> {
+        val end = System.currentTimeMillis() + ms
+        var left = alive(home, mark)
+        while (left.isNotEmpty() && System.currentTimeMillis() < end) {
+            Thread.sleep(100)
+            left = alive(home, mark)
+        }
+        return left
+    }
+
+    /** `.pid` 에 적힌 감싼 bash 가 아직 있는가 (읽기만 한다). */
+    private fun runnerAlive(pid: String): Boolean = pid.isNotEmpty() && pid.all { it.isDigit() } && sh(File("/"), "ps -p $pid -o pid= 2>/dev/null; true").lines.any { it.trim() == pid }
+
+    /**
+     * 시험 뒤 정리. 신호를 보내지 않는다: 남은 가짜 실행에는 멈춤 요청 파일만 남기고 (감싼 bash 가 자기 자식을 끝낸다) 잠깐 기다린다.
+     * 그래도 남은 것은 가짜 claude 가 길어야 40초 뒤 스스로 끝난다.
+     */
+    private fun endRuns(home: File, mark: String, vararg ids: String) {
+        for (id in ids) runCatching { File(home, ".kite/runs/$id.stop").createNewFile() }
+        waitGone(home, mark, 4000)
+        home.deleteRecursively()
+    }
+
+    /** 끝난 값이 적히기를 `ms` 까지 기다려 읽는다 (없으면 빈 글). */
+    private fun waitExit(home: File, id: String, ms: Long = 3000): String {
+        val end = System.currentTimeMillis() + ms
+        while (exitOf(home, id).isEmpty() && System.currentTimeMillis() < end) Thread.sleep(100)
+        return exitOf(home, id)
+    }
+
+    private fun exitOf(home: File, id: String): String = File(home, ".kite/runs/$id.exit").let { if (it.exists()) it.readText().trim() else "" }
 
     @Test
     fun uploadStartFollowRunUnderShell() {
@@ -229,8 +263,11 @@ class DetachedTest {
             assertEquals(listOf("$id.exit"), File(home, ".kite/runs").list()!!.toList())
             assertEquals(listOf("APERITEXIT gone"), sh(home, c.follow(id, 0)).lines)
             assertEquals(listOf("APERITEXIT none"), sh(home, c.follow("20261120-999999-zzzz", 0)).lines)
-            sh(home, c.stop(id)) // 치운 실행에 멈춤은 아무 일도 없다
+            sh(home, c.stop(id)) // 치운 실행에 멈춤은 아무 일도 없다: 파일도 남기지 않는다
             assertEquals("0", File(home, ".kite/runs/$id.exit").readText().trim())
+            assertEquals(listOf("$id.exit"), File(home, ".kite/runs").list()!!.toList())
+            sh(home, c.stop("20261120-999999-zzzz")) // 모르는 번호도 마찬가지
+            assertEquals(listOf("$id.exit"), File(home, ".kite/runs").list()!!.toList())
         } finally {
             home.deleteRecursively()
         }
@@ -268,43 +305,215 @@ class DetachedTest {
         }
     }
 
+    /**
+     * 서버에 보내는 글을 글자로만 검사한다 (아무것도 실행하지 않는다): 올리기·따라 읽기·멈춤·치우기·오류 읽기에는 신호를 보내는 명령이 아예 없고,
+     * 감싼 글의 신호는 한 곳(`k1`)에서만 나가며 그 번호는 `$!` 이거나 `pgrep` 이 준 것이고 쓰기 전에 검사한다.
+     */
+    @Test
+    fun commandTextsSendNoSignalToANumberFromAFile() {
+        val c = DetachedCommands(cfg)
+        val id = "20261120-013000-a1b2"
+        val quiet = mapOf("upload" to c.upload(id), "follow" to c.follow(id, 0), "stop" to c.stop(id), "clean" to c.clean(id), "errTail" to c.errTail(id))
+        for ((name, text) in quiet) {
+            println("==== $name\n$text")
+            assertFalse("$name 에 kill 이 있다", text.lowercase().contains("kill"))
+            assertFalse("$name 에 pgrep 이 있다", text.contains("pgrep"))
+        }
+        val r = c.runner(id)
+        println("==== runner\n$r")
+        println("==== start\n${c.start(id)}")
+        fun count(text: String, part: String) = text.windowed(part.length).count { it == part }
+        // 신호는 한 곳에서만 나간다: 번호 검사(ok) 바로 뒤, 신호 이름과 번호는 함수 인자
+        assertEquals(1, count(r, "kill"))
+        // 대문자 KILL 은 신호 이름으로만, 정해진 두 곳에만 있다
+        assertEquals(1, count(r.replace("kt \"\$c\" KILL", "").replace("sw KILL;", "").lowercase(), "kill"))
+        assertTrue(r.contains("k1() { ok \"\$1\" && kill -\"\$2\" \"\$1\" 2>/dev/null; }"))
+        // 번호 검사: 숫자만, 1보다 크고, 자기 번호가 아니다
+        assertTrue(r.contains("ok() { case \"\$1\" in ''|*[!0-9]*) return 1;; esac; [ \"\$1\" -gt 1 ] && [ \"\$1\" != \"\$\$\" ]; }"))
+        // 묶음이나 음수로 보내는 꼴, 파일에서 번호를 읽는 꼴이 없다
+        assertFalse(r.contains("kill --"))
+        assertFalse(r.contains("-- -"))
+        assertFalse(Regex("\\b(cat|read|killpg)\\b").containsMatchIn(r))
+        assertFalse(Regex("<\\s*\"\\\$HOME/\\.kite/runs/$id\\.(pid|stop|exit|out|err)\"").containsMatchIn(r))
+        // k1 을 부르는 곳: 나무 훑기(kt, 뿌리를 먼저 검사)와 세션 훑기(sw)뿐
+        assertEquals(3, count(r, "k1 ") + count(r, "k1("))
+        assertTrue(r.contains("kt() { ok \"\$1\" || return 1; for k in \$(exec pgrep -P \"\$1\" 2>/dev/null); do kt \"\$k\" \"\$2\"; done; k1 \"\$1\" \"\$2\"; }"))
+        assertTrue(r.contains("sw() { o=0; for k in \$(exec pgrep -s \"\$\$\" 2>/dev/null); do k1 \"\$k\" \"\$1\" && o=1; done; return 0; }"))
+        assertEquals(2, count(r, "pgrep"))
+        // kt 의 뿌리는 `$!` 을 담은 변수뿐이고, 그 변수는 한 번만 정해진다
+        val roots = Regex("kt \"\\$([a-z0-9]+)\" (\\S+)").findAll(r).map { it.groupValues[1] to it.groupValues[2] }.toList()
+        assertEquals(listOf("k" to "\"\$2\";", "c" to "TERM", "c" to "KILL"), roots)
+        assertEquals(1, Regex("(^|[\\s;])c=").findAll(r).count())
+        assertTrue(r.contains("\nc=\$!\n"))
+        assertEquals(listOf("TERM;", "KILL;"), Regex("\\bsw (\\S+)").findAll(r).map { it.groupValues[1] }.toList())
+        // 시작 글은 감싼 글을 그대로 싣고, 그 밖에는 신호를 보내는 명령이 없다
+        assertEquals(1, count(c.start(id).replace("kt \"\$c\" KILL", "").replace("sw KILL;", "").lowercase(), "kill"))
+        assertEquals(2, count(c.start(id), "pgrep"))
+    }
+
+    private val longFake = "#!/bin/sh\ncat > /dev/null\necho '{\"type\":\"system\"}'\n"
+
     @Test
     fun stopEndsWrapperClaudeAndChildren() {
         assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
-        val home = newHome("#!/bin/sh\ncat > /dev/null\necho '{\"type\":\"system\"}'\nsleep 37.31\necho '{\"type\":\"result\"}'\n")
+        val mark = "sleep 37.31"
+        val home = newHome(longFake + "$mark\n")
         val c = DetachedCommands(cfg)
         val id = "stop-1"
         try {
             sh(home, c.upload(id), "hi")
             assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
+            val pid = File(home, ".kite/runs/$id.pid").readText().trim()
             Thread.sleep(600)
-            assertTrue("돌고 있어야 한다: ${alive(home)}", alive(home).any { it.contains("sleep 37.31") })
+            assertTrue("돌고 있어야 한다: ${alive(home, mark)}", alive(home, mark).any { it.contains(mark) })
+            assertTrue(runnerAlive(pid))
             val t0 = System.currentTimeMillis()
             sh(home, c.stop(id))
             val took = System.currentTimeMillis() - t0
-            val exit = File(home, ".kite/runs/$id.exit").readText().trim()
+            val exit = waitExit(home, id)
             assertTrue("끝난 값: $exit", exit in listOf("143", "137", "stopped"))
             assertTrue("멈춤이 ${took}ms 걸림", took < 5000)
             Thread.sleep(300)
-            assertEquals("남은 프로세스", emptyList<String>(), alive(home))
+            assertEquals("남은 프로세스", emptyList<String>(), alive(home, mark))
+            assertFalse("감싼 bash 가 남았다", runnerAlive(pid))
             assertEquals(listOf("APERITEXIT $exit"), sh(home, c.follow(id, 2)).lines.filter { it.startsWith("APERITEXIT") })
             // 끝난 뒤 다시 멈춰도 아무 일 없다
-            sh(home, c.stop(id))
-            assertEquals(exit, File(home, ".kite/runs/$id.exit").readText().trim())
+            val again = sh(home, c.stop(id))
+            assertTrue("두 번째 멈춤이 ${again.ms}ms 걸림", again.ms < 3000)
+            assertEquals(exit, exitOf(home, id))
+            // 같은 번호로 다시 시작해도 돌지 않는다
+            assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
+            Thread.sleep(300)
+            assertEquals(emptyList<String>(), alive(home, mark))
         } finally {
-            sh(File("/"), "pkill -f ${home.absolutePath}; true")
-            home.deleteRecursively()
+            endRuns(home, mark, id)
         }
     }
 
-    /** 서버가 다시 켜져 `.pid` 의 번호가 남의 프로세스가 됐다: 돌고 있다고 보지 않고, 멈춤도 그 프로세스를 건드리지 않는다. */
+    /** TERM 을 무시하는 claude 도 멈춤 뒤 3초쯤 안에 없다 (1초 뒤 KILL). */
+    @Test
+    fun stopEndsAClaudeThatIgnoresTerm() {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val mark = "sleep 37.32"
+        val home = newHome("#!/bin/sh\ntrap '' TERM\ncat > /dev/null\necho '{\"type\":\"system\"}'\n$mark\n")
+        val c = DetachedCommands(cfg)
+        val id = "stop-2"
+        try {
+            sh(home, c.upload(id), "hi")
+            assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
+            val pid = File(home, ".kite/runs/$id.pid").readText().trim()
+            Thread.sleep(600)
+            assertTrue("돌고 있어야 한다", alive(home, mark).any { it.contains(mark) })
+            val t0 = System.currentTimeMillis()
+            val st = sh(home, c.stop(id))
+            val left = waitGone(home, mark, 3000)
+            val gone = System.currentTimeMillis() - t0
+            assertEquals("남은 프로세스 (${gone}ms)", emptyList<String>(), left)
+            assertTrue("멈춤이 ${st.ms}ms 걸림", st.ms < 5000)
+            assertTrue("없어지기까지 ${gone}ms", gone < 5000)
+            val exit = waitExit(home, id)
+            assertTrue("끝난 값: $exit", exit in listOf("137", "stopped"))
+            Thread.sleep(300)
+            assertFalse(runnerAlive(pid))
+        } finally {
+            endRuns(home, mark, id)
+        }
+    }
+
+    /** 두 번 갈라져 나가 부모가 없어진 손자(TERM 도 무시한다)도 멈춤 뒤에 남지 않는다: 감싼 bash 가 자기 세션을 훑는다 (setsid 가 있는 서버). */
+    @Test
+    fun stopEndsADoubleForkedGrandchild() {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        assumeTrue(sh(File("/"), "command -v setsid >/dev/null 2>&1 && echo yes").lines == listOf("yes"))
+        val mark = "sleep 38.1"
+        val home = newHome("#!/bin/sh\ncat > /dev/null\n( trap '' TERM; sleep 38.11 & )\n( sleep 38.12 & )\necho '{\"type\":\"system\"}'\nsleep 38.13\n")
+        val c = DetachedCommands(cfg)
+        val id = "stop-3"
+        try {
+            sh(home, c.upload(id), "hi")
+            assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
+            Thread.sleep(600)
+            val before = alive(home, mark)
+            assertTrue("손자가 돌고 있어야 한다: $before", before.any { it.contains("sleep 38.11") } && before.any { it.contains("sleep 38.12") } && before.any { it.contains("sleep 38.13") })
+            val st = sh(home, c.stop(id))
+            assertTrue("멈춤이 ${st.ms}ms 걸림", st.ms < 5000)
+            assertEquals("남은 프로세스", emptyList<String>(), waitGone(home, mark, 3000))
+            val exit = waitExit(home, id)
+            assertTrue("끝난 값: $exit", exit in listOf("143", "137", "stopped"))
+        } finally {
+            endRuns(home, mark, id)
+        }
+    }
+
+    /** 시작 전에 멈춤이 먼저 닿았다: 그 뒤의 시작은 아무것도 띄우지 않고, 따라 읽으면 stopped 다. */
+    @Test
+    fun stopBeforeStartLaunchesNothing() {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val mark = "sleep 37.37"
+        val home = newHome(okFake)
+        val c = DetachedCommands(cfg)
+        val id = "stop-4"
+        try {
+            sh(home, c.upload(id), "hi")
+            val st = sh(home, c.stop(id))
+            assertTrue("멈춤이 ${st.ms}ms 걸림", st.ms < 5000)
+            assertTrue(File(home, ".kite/runs/$id.stop").exists())
+            assertEquals("stopped", exitOf(home, id))
+            assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
+            Thread.sleep(500)
+            assertFalse("아무것도 뜨지 않아야 한다", File(home, "cap").exists())
+            assertFalse(File(home, ".kite/runs/$id.pid").exists())
+            assertEquals(emptyList<String>(), alive(home, mark))
+            assertEquals(listOf("APERITEXIT stopped"), sh(home, c.follow(id, 0)).lines)
+            // 치우면 끝난 값만 남고, 다시 붙으면 gone 이다
+            sh(home, c.clean(id))
+            assertEquals(listOf("$id.exit"), File(home, ".kite/runs").list()!!.toList())
+            assertEquals(listOf("APERITEXIT gone"), sh(home, c.follow(id, 0)).lines)
+        } finally {
+            endRuns(home, mark, id)
+        }
+    }
+
+    /** 돌고 있는 실행을 치우면 멈춤 요청이 남아 그 실행이 끝난다. */
+    @Test
+    fun cleanOfARunningRunEndsIt() {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val mark = "sleep 37.35"
+        val home = newHome(longFake + "$mark\n")
+        val c = DetachedCommands(cfg)
+        val id = "clean-1"
+        try {
+            sh(home, c.upload(id), "hi")
+            assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
+            val pid = File(home, ".kite/runs/$id.pid").readText().trim()
+            Thread.sleep(600)
+            assertTrue("돌고 있어야 한다", alive(home, mark).any { it.contains(mark) })
+            sh(home, c.clean(id))
+            assertEquals("남은 프로세스", emptyList<String>(), waitGone(home, mark, 4000))
+            var i = 0
+            while (exitOf(home, id).isEmpty() && i++ < 30) Thread.sleep(100)
+            Thread.sleep(300)
+            assertFalse(runnerAlive(pid))
+            assertTrue("끝난 값: ${exitOf(home, id)}", exitOf(home, id) in listOf("143", "137"))
+            assertEquals(listOf("$id.exit", "$id.stop"), File(home, ".kite/runs").list()!!.sorted())
+            assertEquals(listOf("APERITEXIT gone"), sh(home, c.follow(id, 0)).lines)
+            assertEquals(listOf("APERITFAIL noin"), sh(home, c.start(id)).lines)
+        } finally {
+            endRuns(home, mark, id)
+        }
+    }
+
+    /**
+     * `.pid` 의 번호가 남의 프로세스다 (서버가 다시 켜져 번호가 다시 쓰였다; 여기서는 이 시험이 띄운 프로세스):
+     * 돌고 있다고 보지 않고, 멈춤도 치우기도 그 프로세스를 건드리지 않는다.
+     */
     @Test
     fun foreignPidIsNotOurs() {
         assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
         val home = newHome(okFake)
         val c = DetachedCommands(cfg)
-        val other = ProcessBuilder("sh", "-c", "echo \$\$; exec sleep 51.7").start()
-        val otherPid = other.inputStream.bufferedReader().readLine().trim()
+        val other = ProcessBuilder("sh", "-c", "echo \$\$; exec sleep 36.7").start()
+        val otherPid = other.inputStream.bufferedReader().readLine().trim() // 이 시험이 띄운 프로세스가 알려 준 자기 번호
         try {
             val runs = File(home, ".kite/runs").also { it.mkdirs() }
             File(runs, "f1.in").writeText("hi")
@@ -312,9 +521,20 @@ class DetachedTest {
             val t0 = System.currentTimeMillis()
             assertEquals(listOf("APERITEXIT lost"), sh(home, c.follow("f1", 0)).lines)
             assertTrue("lost 까지 ${System.currentTimeMillis() - t0}ms", System.currentTimeMillis() - t0 < 4000)
-            sh(home, c.stop("f1"))
+            val st = sh(home, c.stop("f1"))
+            assertTrue("멈춤이 ${st.ms}ms 걸림", st.ms < 5000)
             assertTrue("남의 프로세스가 살아 있어야 한다", other.isAlive)
             assertEquals("stopped", File(runs, "f1.exit").readText().trim())
+            sh(home, c.clean("f1"))
+            assertTrue("남의 프로세스가 살아 있어야 한다", other.isAlive)
+            assertEquals(listOf("f1.exit"), runs.list()!!.toList())
+            // 끝난 값이 없는 채로 치워도 (멈춤 요청만 남는다) 그 프로세스는 그대로다
+            File(runs, "f2.in").writeText("hi")
+            File(runs, "f2.pid").writeText(otherPid + "\n")
+            sh(home, c.clean("f2"))
+            Thread.sleep(1500)
+            assertTrue("남의 프로세스가 살아 있어야 한다", other.isAlive)
+            assertEquals(listOf("f1.exit", "f2.stop"), runs.list()!!.sorted())
         } finally {
             other.destroyForcibly()
             home.deleteRecursively()
@@ -330,9 +550,6 @@ class DetachedTest {
         try {
             sh(home, c.upload("n1"), "hi")
             assertEquals(listOf("APERITEXIT none"), sh(home, c.follow("n1", 0)).lines)
-            // 멈춤은 아무것도 끝내지 않고, 시작한 적이 없으니 `.exit` 도 적지 않는다
-            sh(home, c.stop("n1"))
-            assertFalse(File(home, ".kite/runs/n1.exit").exists())
             // 그 뒤 같은 번호로 시작하면 돈다
             assertEquals(listOf("APERITRUN n1"), sh(home, c.start("n1")).lines)
             assertEquals("APERITEXIT 0", sh(home, c.follow("n1", 0)).lines.last())
