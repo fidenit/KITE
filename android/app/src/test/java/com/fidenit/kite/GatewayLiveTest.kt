@@ -13,6 +13,8 @@ import com.fidenit.kite.engine.GatewayLink
 import com.fidenit.kite.engine.NOTE
 import com.fidenit.kite.engine.PutResult
 import com.fidenit.kite.engine.StateClient
+import com.fidenit.kite.engine.Link
+import com.fidenit.kite.engine.STOPPED
 import com.fidenit.kite.engine.gatewayClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -149,5 +151,66 @@ class GatewayLiveTest {
             assertTrue("restored: $back", back is PutResult.Ok)
         }
         println("상태: 처음 판 $base → 시험 ${base + 1}" + if (before != null) " → 되돌림 ${base + 2}" else " (서버에 없던 상태: 시험 문서가 남음)")
+    }
+
+    /** 올리기·시작을 센다 (다시 올리거나 다시 시작하지 않았는지 보려고). */
+    private class Counting(val inner: Link) : Link by inner {
+        @Volatile var uploads = 0
+
+        @Volatile var starts = 0
+
+        override fun upload(id: String, text: String?): Pair<Int, String> = inner.upload(id, text).also { uploads++ }
+
+        override fun start(id: String, onLine: (String) -> Unit): Pair<Int, String> = inner.start(id, onLine).also { starts++ }
+    }
+
+    /**
+     * part C: 도구가 도는 동안 멈춤 (뷰모델처럼 `stopped` 를 참으로) → 10초 안에 STOPPED, 다시 올리기·시작 없음,
+     * 그 뒤 n 부터 따라 읽으면 끝난 값(143 / stopped) 이나 gone.
+     */
+    @Test
+    fun aStopEndsTheTurnAsStopped() {
+        assumeTrue("APERIT_LIVE_GATEWAY_URL / APERIT_LIVE_GATEWAY_TOKEN not set", env("APERIT_LIVE_GATEWAY_URL").isNotEmpty() && env("APERIT_LIVE_GATEWAY_TOKEN").isNotEmpty())
+        val effort = env("APERIT_LIVE_EFFORT")
+        val link = GatewayLink(env("APERIT_LIVE_GATEWAY_URL"), { env("APERIT_LIVE_GATEWAY_TOKEN") }, effort, { false }, gatewayClient("0.2.0-pro"))
+        val counting = Counting(link)
+        val cc = ClaudeCode(counting, EngineConfig("claude", "", "default", effort, ""))
+        val (_, home) = cc.where()
+        cc.prepare(File("../../src/prompt.md").readText().replace("{{PARTS}}", partsTable().trimEnd()) + NOTE)
+        cc.cleanAfterRun = false
+        val r = Rig(link, cc, home)
+        val lines = java.util.concurrent.atomic.AtomicInteger(0)
+        val sawBash = java.util.concurrent.atomic.AtomicBoolean(false)
+        val stop = java.util.concurrent.atomic.AtomicBoolean(false)
+        val stopAt = java.util.concurrent.atomic.AtomicLong(0)
+        cc.onDataLine = { l ->
+            lines.incrementAndGet()
+            if (l.contains("\"name\":\"Bash\"")) sawBash.set(true)
+        }
+        val trigger = Thread {
+            val deadline = System.currentTimeMillis() + 45_000
+            while (!(lines.get() >= 1 && sawBash.get()) && System.currentTimeMillis() < deadline) Thread.sleep(100)
+            stopAt.set(System.currentTimeMillis())
+            stop.set(true)
+        }.apply {
+            isDaemon = true
+            start()
+        }
+        val err = runCatching { cc.run(turn(r, "Use the Bash tool to run: sleep 60  and then reply done."), { stop.get() }) {} }.exceptionOrNull()
+        val took = System.currentTimeMillis() - stopAt.get()
+        trigger.join(1000)
+        println("멈춤까지 ${took}ms, 받은 줄 ${cc.linesReceived}, Bash ${sawBash.get()}")
+        assertTrue("a Bash tool call must have been seen before the stop", sawBash.get())
+        assertEquals(STOPPED, err?.message)
+        assertTrue("stopped in $took ms", took < 10_000)
+        assertEquals("no second upload", 1, counting.uploads)
+        assertEquals("no second start", 1, counting.starts)
+        val id = cc.runId!!
+        val got = mutableListOf<String>()
+        link.follow(id, cc.linesReceived) { got.add(it) }
+        val end = got.lastOrNull { it.startsWith("APERITEXIT") }
+        println("그 뒤 따라 읽기의 끝: $end")
+        assertTrue("end value: $end", end in listOf("APERITEXIT 143", "APERITEXIT stopped", "APERITEXIT gone"))
+        cc.clean(id)
     }
 }

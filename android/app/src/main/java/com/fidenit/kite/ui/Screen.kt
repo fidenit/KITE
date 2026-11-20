@@ -195,7 +195,7 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
     if (com.fidenit.kite.BuildConfig.PRO) {
         LaunchedEffect(vm.refill) {
             vm.refill?.let {
-                if (input.isBlank()) input = it
+                input = if (input.isBlank()) it else it + "\n" + input // 그사이 새로 적은 글은 뒤에 남긴다
                 vm.refill = null
             }
         }

@@ -378,10 +378,7 @@ class GatewayLinkTest {
         assertTrue(f.log.contains("DELETE /v1/runs/ID true"))
     }
 
-    /**
-     * 끝난 값(lost / gone / 1) 은 따라 읽기에서 SSH 와 같은 줄로 온다. 엔진 고리가 이 끝을 어떻게 다루는지는 f045 의 몫이라 여기서는
-     * 고리를 거치지 않고 길만 본다 (지금 고리는 finish() 의 예외를 끊김처럼 다시 해 본다: 손넘김 맨 위 참고).
-     */
+    /** 끝난 값(lost / gone / 1 / stopped) 은 따라 읽기에서 SSH 와 같은 줄로 온다 (길만. 엔진 고리 전체는 endValuesLeaveTheLoopWithTheirMessage). */
     @Test
     fun endValuesErrTailAndCleanTravelLikeTheSshPath() {
         val f = Fake()
@@ -599,18 +596,77 @@ class GatewayLinkTest {
 
     @Test
     fun aSlowPrepareIsReleasedByClose() {
-        server.enqueue(MockResponse().setResponseCode(204).setHeadersDelay(20, TimeUnit.SECONDS))
-        val l = link()
-        var e: Throwable? = null
-        val t = Thread { e = runCatching { l.prepare("system") }.exceptionOrNull() }
-        t.start()
-        Thread.sleep(300)
+        // a server that accepts and never answers (no MockWebServer: its shutdown would wait for a delayed answer)
+        val mute = java.net.ServerSocket(0)
+        val held = Collections.synchronizedList(mutableListOf<java.net.Socket>())
+        val acceptor = Thread {
+            try {
+                while (true) held.add(mute.accept())
+            } catch (_: Exception) {
+            }
+        }.apply {
+            isDaemon = true
+            start()
+        }
+        try {
+            val l = GatewayLink("http://127.0.0.1:${mute.localPort}/", { tok })
+            var e: Throwable? = null
+            val t = Thread { e = runCatching { l.prepare("system") }.exceptionOrNull() }
+            t.start()
+            Thread.sleep(300)
+            val t0 = System.currentTimeMillis()
+            l.close()
+            t.join(3000)
+            assertFalse(t.isAlive)
+            assertTrue(System.currentTimeMillis() - t0 < 1500)
+            assertTrue("$e", e is java.io.IOException)
+            assertEquals(com.fidenit.kite.engine.GatewayText.notAnswering(false), e!!.message)
+        } finally {
+            mute.close()
+            held.forEach { runCatching { it.close() } }
+            acceptor.interrupt()
+        }
+    }
+
+    @Test
+    fun anUnreachableServerBeforeATurnShowsTheNotAnsweringLineOnly() {
+        val dead = java.net.ServerSocket(0).let {
+            val p = it.localPort
+            it.close()
+            p
+        }
+        for (en in listOf(false, true)) {
+            val logged = Collections.synchronizedList(mutableListOf<String>())
+            val l = GatewayLink("http://127.0.0.1:$dead/", { tok }, english = { en }).also { it.log = { x -> logged.add(x) } }
+            for (f in listOf<() -> Any>({ l.prepare("s") }, { l.core() }, { l.version() }, { l.where() })) {
+                val e = runCatching { f() }.exceptionOrNull()
+                assertTrue("$e", e is java.io.IOException)
+                assertEquals(com.fidenit.kite.engine.GatewayText.notAnswering(en), e!!.message)
+                assertFalse(e.message!!, e.message!!.contains("127.0.0.1") || e.message!!.contains("$dead"))
+            }
+            assertEquals("every failure is logged with its detail", 4, logged.count { it.startsWith("short call") })
+        }
+    }
+
+    @Test
+    fun aStopAnsweredWith204EndsAsStoppedWhenTheFollowEndsWith143() {
+        val f = Fake()
+        f.followAnswer = { _, _ -> MockResponse().setBody(sse(">$init") + sse(*Array(6) { "APERITBEAT" }) + sse("APERITEXIT 143")).throttleBody(32, 100, TimeUnit.MILLISECONDS) }
+        val c = cc(f)
         val t0 = System.currentTimeMillis()
-        l.close()
-        t.join(3000)
-        assertFalse(t.isAlive)
-        assertTrue(System.currentTimeMillis() - t0 < 1500)
-        assertTrue("$e", e is java.io.IOException)
+        val e = runCatching { c.run("t", { c.linesReceived >= 1 }) {} }.exceptionOrNull()
+        assertEquals(STOPPED, e?.message)
+        assertTrue("took ${System.currentTimeMillis() - t0} ms", System.currentTimeMillis() - t0 < 3000)
+        assertTrue(f.log.toString(), f.log.contains("POST /v1/runs/ID/stop true"))
+        assertEquals("ended by itself: no watcher close and no re-attach", 1, f.follows.size)
+        assertEquals(1, f.inputs)
+        assertEquals(1, f.log.count { it.startsWith("start ") })
+        // stopped on the server without a Stop on this phone: the base's own outcome
+        val g = Fake()
+        g.followAnswer = { _, _ -> MockResponse().setBody(sse(">$init", "APERITEXIT stopped")) }
+        val other = runCatching { cc(g).run("t", { false }) {} }.exceptionOrNull()
+        assertEquals(com.fidenit.kite.engine.STOPPED_ELSEWHERE, other?.message)
+        assertEquals(1, g.follows.size)
     }
 
     @Test

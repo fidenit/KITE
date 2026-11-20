@@ -361,8 +361,16 @@ class GatewayLink(
         -1 to ""
     }
 
-    /** 실패하면 예외를 던지는 짧은 호출. */
-    private fun text(r: Request, phase: LinkPhase = LinkPhase.BEFORE): String = call(r, http, phase) { resp ->
+    /** 실패하면 예외를 던지는 짧은 호출. 닿지 않으면(이름 풀기·연결·시간 초과) 화면에는 B16a 한 줄만, 자세한 이유는 [log] 로. */
+    private fun text(r: Request, phase: LinkPhase = LinkPhase.BEFORE): String = try {
+        textCall(r, phase)
+    } catch (e: IOException) {
+        if (e.message == GatewayText.notAnswering(english()) || e.message == GatewayText.unreadableAnswer(english())) throw e
+        note("short call ${r.url.encodedPath} ${e.javaClass.simpleName}: ${e.message}")
+        throw IOException(GatewayText.notAnswering(english()))
+    }
+
+    private fun textCall(r: Request, phase: LinkPhase): String = call(r, http, phase) { resp ->
         refusedCheck(resp, phase)
         when {
             resp.isSuccessful -> resp.body?.string().orEmpty()
