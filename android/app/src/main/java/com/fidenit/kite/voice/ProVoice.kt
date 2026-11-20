@@ -44,6 +44,10 @@ object ProVoice {
     fun talkingOff(en: Boolean): String = if (en) "Talking was switched off on the server → the conversation was ended → type instead"
     else "서버에서 말로 대화하기가 꺼졌습니다 → 대화를 끝냈습니다 → 글로 적어 보내 주세요"
 
+    /** D9: 실시간 음성 연결이 끊겨 이번 대화는 예전 방식으로 (대화에 한 번) */
+    fun liveDropped(en: Boolean): String = if (en) "The live voice connection dropped → this conversation listens and reads the earlier way → nothing to do"
+    else "실시간 음성 연결이 끊겼습니다 → 이번 대화는 예전 방식으로 듣고 읽습니다 → 할 일은 없습니다"
+
     /**
      * 문장 하나를 읽은 결과의 한 줄 (Pro). 키도, 앱의 설정도, ElevenLabs 도 말하지 않는다 (D-A2). 잘 읽었으면 null.
      * 소리가 조금 나간 뒤 끊겼으면 D7 (폰의 목소리로 다시 읽지 않는다), 폰의 목소리도 못 읽었으면 D6,

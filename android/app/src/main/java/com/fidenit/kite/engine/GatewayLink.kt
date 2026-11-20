@@ -132,7 +132,7 @@ object DeviceKeys {
  * 등록 상태: approved / pending / revoked, 그 밖에 앱 쪽에서 붙이는 conflict(409) / limited(429) / unknown(401).
  * `ticket` = 등록 표를 보냈을 때 서버의 판단 (ok / used / expired / revoked / invalid), 보내지 않았으면 빈 글.
  */
-data class DeviceStatus(val status: String, val code: String = "", val voice: Boolean = false, val jev: Boolean = false, val ticket: String = "")
+data class DeviceStatus(val status: String, val code: String = "", val voice: Boolean = false, val jev: Boolean = false, val ticket: String = "", val voiceLive: Boolean = false)
 
 /** 게이트웨이용 OkHttp. `app` (예: `0.2.0-pro`) 은 모든 요청에 `X-Aperit-App` 으로 붙는다. 따라 읽기는 [GatewayLink] 가 읽기 한도만 늘려 쓴다. */
 fun gatewayClient(app: String = ""): OkHttpClient = OkHttpClient.Builder()
@@ -209,7 +209,7 @@ class Enroller(private val base: String, private val http: OkHttpClient = gatewa
         }
         val s = j.optString("status")
         if (s.isEmpty()) throw IOException("bad answer")
-        return DeviceStatus(s, j.optString("code"), j.optBoolean("voice", false), j.optBoolean("jev", false), j.optString("ticket"))
+        return DeviceStatus(s, j.optString("code"), j.optBoolean("voice", false), j.optBoolean("jev", false), j.optString("ticket"), j.optBoolean("voice_live", false))
     }
 }
 

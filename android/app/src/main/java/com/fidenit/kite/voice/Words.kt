@@ -36,4 +36,20 @@ object Words {
         if (gb.size < 3) return false
         return gb.count { it in ga }.toFloat() / gb.size > 0.6f
     }
+
+    /** 받아쓴 한 말을 어떻게 하나 (뷰모델 heardText: 무료·Pro·실시간이 같은 규칙). */
+    enum class Heard { IGNORE, SEND, WAIT, STOP }
+
+    /**
+     * 빈 말은 버린다. 기다리는 중이면 분명히 부르는 말만 보낸다. "잠깐만" → 기다림, "그만" → 멈춤.
+     * 스피커에서 나온 AI 자기 목소리(이번 답에서 읽은 마지막 세 문장과 거의 같음)는 버린다. 나머지는 보낸다.
+     */
+    fun route(text: String, standby: Boolean, spoken: List<String>): Heard = when {
+        text.isBlank() -> Heard.IGNORE
+        standby -> if (isWake(text)) Heard.SEND else Heard.IGNORE
+        isWait(text) -> Heard.WAIT
+        isStop(text) -> Heard.STOP
+        spoken.takeLast(3).any { similar(it, text) } -> Heard.IGNORE
+        else -> Heard.SEND
+    }
 }

@@ -44,8 +44,12 @@ fun talkMode(context: Context, on: Boolean) {
     }
 }
 
-/** 마이크. 만들면 바로 듣기 시작하고, 들은 소리를 쌓아 둔다 (16kHz, 16비트, 한 채널). */
-class Mic {
+/**
+ * 마이크. 만들면 바로 듣기 시작하고, 들은 소리를 쌓아 둔다 (16kHz, 16비트, 한 채널).
+ * [onFrame] 을 주면 (Pro 실시간 듣기) 20ms 마다 읽은 조각을 그 자리에서 넘기고 쌓아 두지 않는다 (조각 배열은 다음 읽기에 다시 쓴다).
+ * [onEffects] 를 주면 열 때 한 번, 에코 지우기·잡음 줄이기를 만들었는지·켰는지를 `aec=만듦/켬 ns=만듦/켬` (1/0) 으로 알린다.
+ */
+class Mic(private val onFrame: ((ShortArray, Int) -> Unit)? = null, private val onEffects: ((String) -> Unit)? = null) {
     @Volatile
     var level: Float = 0f
         private set
@@ -82,6 +86,13 @@ class Mic {
             }
             if (AcousticEchoCanceler.isAvailable()) aec = AcousticEchoCanceler.create(rec.audioSessionId)?.also { it.enabled = true }
             if (NoiseSuppressor.isAvailable()) ns = NoiseSuppressor.create(rec.audioSessionId)?.also { it.enabled = true }
+            onEffects?.let { tell ->
+                fun flag(made: Boolean, on: () -> Boolean) = (if (made) "1" else "0") + "/" + (if (made && try { on() } catch (_: Exception) { false }) "1" else "0")
+                try {
+                    tell("aec=${flag(aec != null) { aec!!.enabled }} ns=${flag(ns != null) { ns!!.enabled }}")
+                } catch (_: Exception) {
+                }
+            }
             rec.startRecording()
             recording = true
             val buf = ShortArray(MIC_RATE / 50) // 20ms
@@ -98,6 +109,13 @@ class Mic {
                     sum += v * v
                 }
                 level = sqrt(sum / n).toFloat()
+                if (onFrame != null) {
+                    try {
+                        onFrame.invoke(buf, n)
+                    } catch (_: Exception) {
+                    }
+                    continue
+                }
                 synchronized(lock) {
                     if (size + n > pcm.size) pcm = pcm.copyOf(maxOf(pcm.size * 2, size + n))
                     System.arraycopy(buf, 0, pcm, size, n)
@@ -139,8 +157,8 @@ class Mic {
     }
 }
 
-/** 스피커. 받은 소리를 바로 튼다. */
-class Player : Eleven.Sink {
+/** 스피커. 받은 소리를 바로 튼다. [fastStart] (Pro 실시간 읽기, 안드로이드 12 이상): 0.5초 버퍼가 찰 때까지 기다리지 않고 약 100ms 가 쌓이면 틀기 시작한다. */
+class Player(fastStart: Boolean = false) : Eleven.Sink {
     private val track: AudioTrack
 
     @Volatile
@@ -154,6 +172,12 @@ class Player : Eleven.Sink {
             .setBufferSizeInBytes(maxOf(min, TTS_RATE)) // 0.5초
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
+        if (fastStart && Build.VERSION.SDK_INT >= 31) {
+            try {
+                track.setStartThresholdInFrames(TTS_RATE / 10)
+            } catch (_: Exception) {
+            }
+        }
         track.play()
     }
 

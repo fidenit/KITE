@@ -57,6 +57,10 @@ import com.fidenit.kite.engine.Ssh
 import com.fidenit.kite.engine.SshFatal
 import com.fidenit.kite.engine.Waker
 import com.fidenit.kite.voice.Eleven
+import com.fidenit.kite.voice.LiveListen
+import com.fidenit.kite.voice.LiveTalk
+import com.fidenit.kite.voice.OkLiveListen
+import com.fidenit.kite.voice.liveClient
 import com.fidenit.kite.voice.Mic
 import com.fidenit.kite.voice.MicProblem
 import com.fidenit.kite.voice.Player
@@ -152,6 +156,10 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     var micLevel by mutableFloatStateOf(0f)
         private set
     var heard by mutableStateOf(false)
+        private set
+
+    /** Pro 실시간 듣기: 지금 들리는 말의 끝 부분 (상태 줄에 한 줄로). 안 들리면 null. */
+    var liveHeard by mutableStateOf<String?>(null)
         private set
 
     // ---------------------------------------------------------------- 안에서만 쓰는 상태
@@ -391,6 +399,20 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private var echo = 0f
     private var bargeSince: Long? = null
     private var voiceLoop: Job? = null
+
+    // Pro 실시간 음성 (spec aperit-pro-voice-realtime-v1 §3): 서버가 `voice_live` 라고 했을 때만, 대화 한 번마다 새로
+    private var live: LiveTalk? = null
+
+    /** 시험에서 게이트웨이의 듣기 소켓 대신 쓴다 (주면 무료 변형에서도 실시간으로 듣는다). 앱은 바꾸지 않는다. */
+    internal var liveListenOverride: LiveListen.Opener? = null
+
+    /** 이번 대화에서 D9 를 띄웠다 */
+    private var liveNoticeShown = false
+
+    /** 지금 읽는 문장을 읽기 시작한 때, 그 문장에서 소리 크기 규칙이 끼어들었을 것이라고 이미 적었나 (speakEpoch) */
+    private var speakStartedAt = 0L
+    private var energyWouldEpoch = -1
+    private val liveHttp by lazy { liveClient() }
 
     private val english: Boolean get() = store.lang == "en"
     private val voice: Boolean get() = converse
@@ -1530,13 +1552,14 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private fun speak(text: String) {
         speaking = true
         val epoch = ++speakEpoch
+        speakStartedAt = System.currentTimeMillis()
         val key = store.elevenKey.trim()
         // Pro: 키 없이 서버의 목소리로 (서버가 쓸 수 있다고 했을 때만)
         val target = if (BuildConfig.PRO && ProVoice.tryServer(proVoiceOn, proVoiceSkip)) proVoiceTarget() else null
         val viaEleven: () -> Unit = if (target != null) {
-            { Eleven.speak(target, store.voiceId.trim(), board.show(text), player ?: Player().also { player = it }, { epoch != speakEpoch }) }
+            { Eleven.speak(target, store.voiceId.trim(), board.show(text), player ?: Player(fastStart = live?.listening == true).also { player = it }, { epoch != speakEpoch }) }
         } else {
-            { Eleven.speak(key, store.voiceId.trim(), board.show(text), player ?: Player().also { player = it }) { epoch != speakEpoch } }
+            { Eleven.speak(key, store.voiceId.trim(), board.show(text), player ?: Player(fastStart = live?.listening == true).also { player = it }) { epoch != speakEpoch } }
         }
         val useEleven = if (BuildConfig.PRO) target != null else key.isNotEmpty()
         viewModelScope.launch {
@@ -1618,11 +1641,13 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         if (on) {
             speakFailShown = false
             hearFailShown = false
+            liveNoticeShown = false
         }
         talkMode(getApplication(), on)
         if (on) {
             player?.release()
             player = null // 통화 경로로 다시 만든다
+            if ((BuildConfig.PRO && store.proVoiceLive == "1") || liveListenOverride != null) live = newLiveTalk().also { it.start() }
             voiceLoop = viewModelScope.launch {
                 while (isActive) {
                     tick()
@@ -1632,6 +1657,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             voiceLoop?.cancel()
             voiceLoop = null
+            live?.stop() // 두 소켓에 end 를 보내고 닫는다
+            live = null
+            liveHeard = null
             silence()
             mic?.finish()
             mic = null
@@ -1646,6 +1674,10 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
      * 마이크는 AI 가 일하는 동안에도, 말하는 동안에도 열어 둔다. 말하는 중에 사용자가 끼어들면 AI 는 말을 멈추고 듣는다.
      */
     private fun tick() {
+        live?.takeIf { it.listening }?.let {
+            liveTick(it)
+            return
+        }
         val now = System.currentTimeMillis()
         val threshold = store.micThreshold.toFloatOrNull() ?: 0.02f
         val m = mic
@@ -1661,10 +1693,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         m.error?.let {
-            // 마이크는 "열지 못했다 / 멈췄다"까지만 안다. 권한이 없어서인지는 여기서 본다. 말로 대화하기를 끄고 한 줄로 알린다.
-            val granted = getApplication<Application>().checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            error = Speaking.micNotice(if (granted) it else MicProblem.PERMISSION, english)
-            converse(false)
+            micFailed(it)
             return
         }
         val level = m.level
@@ -1714,6 +1743,112 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 마이크는 "열지 못했다 / 멈췄다"까지만 안다. 권한이 없어서인지는 여기서 본다. 말로 대화하기를 끄고 한 줄로 알린다. */
+    private fun micFailed(p: MicProblem) {
+        val granted = getApplication<Application>().checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        error = Speaking.micNotice(if (granted) p else MicProblem.PERMISSION, english)
+        converse(false)
+    }
+
+    /**
+     * Pro 실시간 듣기 (§3.2): 마이크는 대화 내내 한 번 열고 20ms 조각을 그대로 듣기 소켓으로 보낸다. 말이 끝났는지는 서버가 정한다 (1.1초 규칙 없음).
+     * 소리 크기로 끼어들지 않는다: 그 규칙이 끼어들었을 때만 pro.log 에 적는다 (말로 끼어들기와 비교하려고).
+     */
+    private fun liveTick(lt: LiveTalk) {
+        val now = System.currentTimeMillis()
+        val m = mic
+        if (m == null) {
+            mic = Mic(onFrame = { pcm, n -> lt.frame(pcm, n) }, onEffects = { proVoiceLog("live mic $it") })
+            micSince = now
+            echo = 0f
+            bargeSince = null
+            return
+        }
+        m.error?.let {
+            micFailed(it)
+            return
+        }
+        val level = m.level
+        micLevel = level
+        if (speaking) {
+            val threshold = store.micThreshold.toFloatOrNull() ?: 0.02f
+            echo = echo * 0.95f + level * 0.05f
+            val loud = level > maxOf(threshold * 1.5f, echo * 2f)
+            if (!loud) bargeSince = null else if (bargeSince == null) bargeSince = now
+            if (bargeSince?.let { now - it > 200 } == true && energyWouldEpoch != speakEpoch) {
+                energyWouldEpoch = speakEpoch
+                proVoiceLog("live barge energy-would ms=${now - speakStartedAt}")
+            }
+        } else {
+            bargeSince = null
+        }
+        lt.tick()
+    }
+
+    private fun newLiveTalk(): LiveTalk {
+        val opener = liveListenOverride ?: OkLiveListen(liveHttp, BuildConfig.GATEWAY_URL, { store.deviceSecret }, proApp)
+        return LiveTalk(opener, liveHost)
+    }
+
+    /** 실시간 듣기가 뷰모델에 하는 일 */
+    private val liveHost = object : LiveTalk.Host {
+        override val english: Boolean get() = this@KiteViewModel.english
+        override val busy: Boolean get() = this@KiteViewModel.busy
+        override val speaking: Boolean get() = this@KiteViewModel.speaking
+        override val reading: String? get() = null // 읽는 문장은 읽기 시작할 때 turnSpoken 에 들어간다
+        override val spoken: List<String> get() = turnSpoken.toList()
+        override fun post(block: () -> Unit) {
+            viewModelScope.launch { block() }
+        }
+
+        override fun heard(tail: String?) {
+            liveHeard = tail
+            this@KiteViewModel.heard = tail != null
+        }
+
+        override fun final(text: String) = heardText(text)
+
+        override fun hush() {
+            this@KiteViewModel.hush = true
+        }
+
+        override fun barge() {
+            proVoiceLog("live barge words ms=${System.currentTimeMillis() - speakStartedAt}")
+            silence()
+        }
+
+        override fun fallback(why: String, notice: Boolean) {
+            // 이번 대화는 예전 방식으로: 실시간 마이크를 닫으면 다음 tick 이 오늘의 마이크를 연다
+            mic?.finish()
+            mic = null
+            heard = false
+            liveHeard = null
+            if (notice && !liveNoticeShown) {
+                liveNoticeShown = true
+                error = ProVoice.liveDropped(english)
+            }
+        }
+
+        override fun limit() {
+            error = ProVoice.hearLimit(english)
+            if (converse) converse(false)
+        }
+
+        override fun device(word: String) {
+            val kind = when (word) {
+                "pending" -> "pending"
+                "revoked" -> "revoked"
+                else -> "unknown"
+            }
+            viewModelScope.launch(Dispatchers.IO) {
+                this@KiteViewModel.device.refused(kind, "")
+                proRefresh()
+            }
+        }
+
+        override fun log(line: String) = proVoiceLog(line)
+    }
+
     /** 받아쓰기가 실패했다고 이미 알렸는가 (말할 때마다 같은 줄을 되풀이해 띄우지 않는다). 다시 받아쓰면 풀린다. */
     private var hearFailShown = false
 
@@ -1754,20 +1889,17 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun heardText(text: String) {
-        when {
-            text.isBlank() -> {}
-            // 기다리는 중: 분명히 부르는 말에만 깨어난다.
-            standby -> if (Words.isWake(text)) send(text)
+        // 기다리는 중이면 분명히 부르는 말에만 깨어난다. 스피커에서 나온 AI 자기 목소리를 받아쓴 것은 버린다 (Words.route).
+        when (Words.route(text, standby, turnSpoken)) {
+            Words.Heard.IGNORE -> {}
+            Words.Heard.SEND -> send(text)
             // "잠깐만", "확인해 볼게": 말을 멈추고 부를 때까지 기다린다.
-            Words.isWait(text) -> {
+            Words.Heard.WAIT -> {
                 silence()
                 standby = true
             }
             // "그만", "멈춰": 말도 일도 바로 멈춘다. 새 요청으로 보내지 않는다.
-            Words.isStop(text) -> stop()
-            // 스피커에서 나온 AI 자기 목소리를 받아쓴 것: 버린다.
-            turnSpoken.takeLast(3).any { Words.similar(it, text) } -> {}
-            else -> send(text)
+            Words.Heard.STOP -> stop()
         }
     }
 

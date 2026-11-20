@@ -24,6 +24,11 @@ interface DeviceStore {
         get() = ""
         set(_) {}
 
+    /** 마지막 `/v1/me` 답의 `voice_live` ("1" = 실시간 음성 소켓을 쓸 수 있다). 기본은 두지 않음 (시험용 저장소). */
+    var proVoiceLive: String
+        get() = ""
+        set(_) {}
+
     /** 암호화 저장소를 열지 못해 이번 실행 동안만 메모리에 둔다: 등록하지 않는다 (켤 때마다 새 기기가 생기지 않게). */
     val memoryOnly: Boolean get() = false
 }
@@ -76,6 +81,9 @@ class ProDevice(
 
     /** 서버의 목소리를 쓸 수 있다 (마지막 `/v1/me` 의 `voice`). 상태와 같은 때에 새로 받는다 ([check]). */
     val voice: Boolean get() = store.proVoice == "1"
+
+    /** 실시간 음성 소켓을 쓸 수 있다 (마지막 `/v1/me` 의 `voice_live`, D3). */
+    val voiceLive: Boolean get() = store.proVoiceLive == "1"
 
     /** 마지막 [check] 에서 보낸 등록 표를 서버가 받지 않았다 (used / expired / revoked / invalid), 아니면 빈 글. */
     @Volatile
@@ -130,7 +138,10 @@ class ProDevice(
         var fromMe = store.proStatus.isNotEmpty()
         var st = if (store.proStatus.isEmpty()) enroll() else enroller.me(store.deviceSecret).also { me ->
             // `/v1/me` 의 답만 `voice` 를 싣는다: 답이 왔으면(잊혔음 포함) 그 값을 둔다
-            if (me.status in setOf("approved", "pending", "revoked", "unknown")) store.proVoice = if (me.voice) "1" else ""
+            if (me.status in setOf("approved", "pending", "revoked", "unknown")) {
+                store.proVoice = if (me.voice) "1" else ""
+                store.proVoiceLive = if (me.voiceLive) "1" else ""
+            }
         }
         if (st.status == "unknown") {
             // 서버가 이 폰을 잊었다 (허용 대기가 30분 지남 등): 같은 이름표로 바로 다시 등록한다. 못 했으면 forgotten.
@@ -169,7 +180,10 @@ class ProDevice(
         voiceUnknown = false
         try {
             val me = enroller.me(store.deviceSecret)
-            if (me.status in setOf("approved", "pending", "revoked", "unknown")) store.proVoice = if (me.voice) "1" else ""
+            if (me.status in setOf("approved", "pending", "revoked", "unknown")) {
+                store.proVoice = if (me.voice) "1" else ""
+                store.proVoiceLive = if (me.voiceLive) "1" else ""
+            }
             true
         } catch (_: Exception) {
             false

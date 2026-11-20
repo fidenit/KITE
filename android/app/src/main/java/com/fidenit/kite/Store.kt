@@ -51,6 +51,9 @@ class Store(context: Context) : DeviceStore, com.fidenit.kite.engine.StateMarks 
     /** APERIT Pro: 마지막 `/v1/me` 답의 `voice` ("1" = 서버의 목소리를 쓸 수 있다). */
     override var proVoice by Text()
 
+    /** APERIT Pro: 마지막 `/v1/me` 답의 `voice_live` ("1" = 실시간 음성 소켓을 쓸 수 있다). */
+    override var proVoiceLive by Text()
+
     /** 암호화 저장소를 열지 못해 이번 실행 동안만 메모리에 둔다 (Pro). */
     override val memoryOnly: Boolean get() = prefs is MemoryPrefs
 

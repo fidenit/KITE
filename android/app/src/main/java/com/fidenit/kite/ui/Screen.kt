@@ -343,6 +343,7 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean, dock: @Composable () 
         if (say.isNotEmpty()) Text(say, color = C.text, fontSize = Dim.say, lineHeight = Dim.sayLine, fontWeight = FontWeight.Medium)
         // 지금 무엇을 하는지
         val status = when {
+            vm.converse && vm.liveHeard.orEmpty().isNotEmpty() -> vm.liveHeard.orEmpty() // Pro 실시간 듣기: 들리는 말의 끝 부분
             vm.activity.isNotEmpty() -> vm.activity
             !vm.busy && vm.proLine.isNotEmpty() -> vm.proLine
             vm.transcribing -> if (english) "Writing down what you said…" else "받아쓰는 중…"
