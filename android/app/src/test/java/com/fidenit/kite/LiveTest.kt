@@ -27,12 +27,13 @@ import java.io.File
  *   APERIT_SSH_KEY       개인 키 파일. 없으면 새로 만들고, 공개 키를 APERIT_SSH_AUTHKEYS 파일에 덧붙인다.
  *   APERIT_SSH_PASSWORD  암호로 붙을 때
  *   APERIT_EXTRA         claude 에 더 줄 옵션 (예: --model sonnet)
+ *   APERIT_TEST_TAG      시험 입력 앞에 붙일 글 (없어도 된다)
  */
 class LiveTest {
     private fun env(k: String) = System.getenv(k).orEmpty()
 
-    /** 이 서버를 쓰는 사람의 말로 기록되지 않게 시험 입력 앞에 붙인다. */
-    private val tag = "[f045 시험 — 대표 말 아님] "
+    /** 시험 입력 앞에 붙이는 글 (APERIT_TEST_TAG, 없으면 붙이지 않는다): 이 서버를 쓰는 사람의 말로 기록되지 않게 하고 싶을 때 쓴다. */
+    private val tag = System.getenv("APERIT_TEST_TAG").orEmpty()
 
     /**
      * 끝없이 돌 수 있는 호출마다 주는 기한: `sec` 초가 지나면 멈춤이 눌린 것처럼 된다 (그러면 엔진이 STOPPED 로 돌아온다).
@@ -151,12 +152,22 @@ class LiveTest {
         println("멈춤까지 ${System.currentTimeMillis() - started}ms: ${err?.message}")
         assertEquals(STOPPED, err?.message)
         assertTrue("멈춤은 눌린 뒤 15초 안에 돌아와야 한다", System.currentTimeMillis() - stopT0 < 2500 + 15_000)
+        // 감싼 bash 가 실행을 끝내고 끝난 값을 적기까지 몇 초 걸릴 수 있다 (멈춤 명령이 기다리는 3초보다 길 수도 있다): 그때까지 기다려 본다
+        var ended = ""
+        val until = System.currentTimeMillis() + 8000
+        while (true) {
+            ended = ssh.run("cat ~/.kite/runs/${cc.runId}.exit 2>/dev/null || true").trim()
+            if (ended.isNotEmpty() || System.currentTimeMillis() > until) break
+            Thread.sleep(300)
+        }
+        assertTrue("멈춘 실행의 끝난 값: '$ended'", ended in listOf("143", "137", "stopped"))
         Thread.sleep(500)
         // 패턴의 `[a]` 는 이 검사 명령 자신이 걸리지 않게 하는 것
         val left = ssh.run("pgrep -f '[a]ppend-system-prompt-file.*[.]kite/system.txt' || true").trim()
         assertEquals("남은 프로세스가 없어야 한다", "", left)
         assertEquals("멈춘 실행의 프로세스가 없어야 한다", "", leftOf(Rig(ssh, cc, os, home), cc.runId!!))
-        assertEquals("멈춘 실행도 서버에서 치워져야 한다", "", ssh.run("ls ~/.kite/runs/${cc.runId}.* 2>/dev/null | grep -v '[.]exit$' || true").trim())
+        // 끝난 값은 남고, 아직 돌 때 치웠으면 멈춤 요청 파일(.stop)도 남는다. 그 밖의 파일은 없어야 한다
+        assertEquals("멈춘 실행도 서버에서 치워져야 한다", "", ssh.run("ls ~/.kite/runs/${cc.runId}.* 2>/dev/null | grep -v -e '[.]exit$' -e '[.]stop$' || true").trim())
         ssh.close()
     }
 
@@ -240,7 +251,7 @@ class LiveTest {
         var stop = false
         var tool = 0L
         val t0 = System.currentTimeMillis()
-        val input = "Bash 로 \"for i in \$(seq 1 40); do date; sleep 2; done # F045STOPMARK\" 를 한 번 실행하고 끝나면 카드 한 장에 '끝'이라고 써 줘."
+        val input = "Bash 로 \"for i in \$(seq 1 40); do date; sleep 2; done # APERITSTOPMARK\" 를 한 번 실행하고 끝나면 카드 한 장에 '끝'이라고 써 줘."
         val dC = Deadline(300)
         val err = runCatching {
             r.cc.run(turn(r, input), { stop || dC.reached }) { ev ->
@@ -264,7 +275,7 @@ class LiveTest {
         println("(c) 서버 .exit=$exit")
         assertTrue("끝난 값: $exit", exit in listOf("143", "137", "stopped"))
         assertEquals("그 실행의 프로세스가 없어야 한다", "", leftOf(r, id))
-        assertEquals("도구가 띄운 프로세스가 없어야 한다", "", r.ssh.run("pgrep -af '[F]045STOPMARK' || true").trim())
+        assertEquals("도구가 띄운 프로세스가 없어야 한다", "", r.ssh.run("pgrep -af '[A]PERITSTOPMARK' || true").trim())
         println("(c) 남은 프로세스: 없음")
         r.cc.clean(id)
         r.ssh.close()
