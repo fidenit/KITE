@@ -756,4 +756,50 @@ class KiteViewModelTest {
         assertEquals("todo", vm.board.card("k3")!!.items.first().cells.first())
         assertNull(vm.board.card("k1"))
     }
+
+    // R7: the connection test in Settings uses a connection of its own: the engine of the running turn is not asked, and the turn goes on
+    @Test
+    fun theConnectionTestDuringATurnLeavesTheTurnAlone() {
+        Store(app).apply { engineKind = "ssh"; host = "127.0.0.1"; port = "1"; user = "u" } // nothing listens there
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@127.0.0.1:1"))
+        val vm = vm()
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val fake = Fake(lines = "card k3 note t2 새 카드\n", gate = gate)
+        vm.runnerOverride = fake
+        until("the engine has the turn") { fake.started.count == 0L }
+        val answer = kotlinx.coroutines.runBlocking { vm.testConnection() }
+        assertTrue("the test went to the server by itself, not through the turn's engine: $answer", answer.startsWith("실패"))
+        assertTrue(vm.busy)
+        vm.flushWrites()
+        assertTrue(exists("inflight.json"))
+        gate.countDown()
+        until("turn ends") { !vm.busy }
+        assertNotNull(vm.board.card("k3"))
+        assertNull(vm.error)
+    }
+
+    // R7: a turn whose engine was given up is picked up again at once: its record is not left for the next message to overwrite
+    @Test
+    fun aTurnWhoseEngineWasGivenUpIsPickedUpAgainAtOnce() {
+        serverSettings()
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@h:22"))
+        val vm = vm()
+        val runs = java.util.concurrent.atomic.AtomicInteger(0)
+        vm.runnerOverride = object : Runner {
+            override val label = "given up once"
+
+            override fun run(turnText: String, stopped: () -> Boolean, send: (Ev) -> Unit): Stats {
+                if (runs.incrementAndGet() == 1) throw Exception(com.fidenit.kite.engine.ABANDONED)
+                send(Ev.Delta("card k3 note t2 새 카드\n"))
+                return Stats()
+            }
+        }
+        until("the turn is picked up again and ends") { runs.get() == 2 && !vm.busy }
+        assertNotNull(vm.board.card("k3"))
+        assertNull(vm.error)
+        vm.flushWrites()
+        assertFalse(exists("inflight.json"))
+    }
 }

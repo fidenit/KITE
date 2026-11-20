@@ -279,8 +279,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
      * 앱이 켜질 때: 도는 도중에 꺼진 턴이 있으면 그 턴 시작 전 보드로 되돌리고(그 뒤에 만진 카드는 다시 반영),
      * 서버에서 떼어 돌던 턴이면 0번 줄부터 다시 붙어 결과를 반영한다. 그럴 수 없으면 기록을 지우고 한 줄로 알린다.
      */
-    private fun resumeInterrupted() {
-        val i = journal.readInflight()
+    private fun resumeInterrupted(left: Inflight? = journal.readInflight()) {
+        val i = left
         if (i == null) {
             // 턴은 끝났는데 줄 세워 둔 말이 남았다 (그 말을 넘기기 전에 꺼졌다)
             startPendingWords()
@@ -561,14 +561,29 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         engineSig = ""
     }
 
-    /** 설정 화면의 "연결 시험": 서버의 Claude Code 버전, 또는 API 키가 맞는지(요금 없는 모델 목록) 알아본다. */
+    /**
+     * 설정 화면의 "연결 시험": 서버의 Claude Code 버전, 또는 API 키가 맞는지(요금 없는 모델 목록) 알아본다.
+     * 서버는 이 시험만의 연결로 알아본다: 돌고 있는(또는 다시 붙는) 턴의 엔진과 연결은 건드리지 않는다.
+     */
     suspend fun testConnection(): String = withContext(Dispatchers.IO) {
         try {
-            engineSig = ""
-            when (val e = engine()) {
-                is ClaudeCode -> "연결됨 · $serverOs · Claude Code ${e.version()}"
-                is Api -> e.check()
-                else -> "연결됨"
+            if (useSsh) {
+                val s = newSsh()
+                try {
+                    val cc = ClaudeCode(s, EngineConfig(store.claude, store.dir, store.permission, store.effort, store.extra))
+                    s.connect()
+                    "연결됨 · ${cc.where().first} · Claude Code ${cc.version()}"
+                } finally {
+                    s.close()
+                }
+            } else if (busy) {
+                if (english) "Answering now, so the connection was not tested → try again when the answer is done" else "지금 답하는 중이라 연결 시험은 하지 않았습니다 → 답이 끝난 뒤 다시 눌러 주세요"
+            } else {
+                engineSig = ""
+                when (val e = engine()) {
+                    is Api -> e.check()
+                    else -> "연결됨"
+                }
             }
         } catch (e: Exception) {
             "실패: ${e.message}"
@@ -785,7 +800,11 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 // 엔진이 바뀌어 따라 읽기를 그만뒀다: 서버의 실행은 그대로고 기록도 남는다 (앱을 다시 열면 이어 받는다)
                 activity = ""
                 busy = false
-                error = if (english) "The connection settings changed, so this message is no longer followed → it keeps running on the server → open the app again to pick it up" else "연결 설정이 바뀌어 이 말을 더 따라 받지 않습니다 → 서버에서는 계속 일합니다 → 앱을 다시 열면 이어서 받습니다"
+                if (cleared) return@launch // 앱이 닫히는 중이다: 기록이 남아 있으니 다음에 켤 때 이어 받는다
+                // 서버의 실행은 그대로 돌고 기록도 남아 있다. 그대로 두면 다음 말이 기록을 덮어써 그 실행을 잃으므로, 지금 설정으로 바로 다시 붙는다
+                // (턴 시작 전 보드로 되돌리고 처음부터 다시 받는다. 이어 받을 수 없는 설정이면 기록을 지우고 한 줄로 알린다).
+                lateTaps.clear()
+                resumeInterrupted(if (runId != null) turn.copy(engine = "ssh", id = runId, started = true) else turn)
                 return@launch
             }
             if (msg == GONE) {
