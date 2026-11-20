@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.fidenit.kite.KiteViewModel
 import com.fidenit.kite.engine.Decide
+import com.fidenit.kite.voice.ProVoice
 
 object C {
     val bg = Color(0xFF0B0B0C)
@@ -249,8 +250,8 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
                     Pill(if (english) "Stop" else "멈춤", color = C.red) { vm.stop() }
                     Spacer(Modifier.width(8.dp))
                 }
-                // 마이크: 켜져 있으면 들리는 소리 크기만큼 테두리가 밝아진다. Pro 1단계에는 없다 (A1)
-                if (!com.fidenit.kite.BuildConfig.PRO) {
+                // 마이크: 켜져 있으면 들리는 소리 크기만큼 테두리가 밝아진다. Pro 는 서버의 목소리를 쓸 수 있을 때만 (D-A1, 아니면 A1)
+                if (ProVoice.controlsShown(com.fidenit.kite.BuildConfig.PRO, vm.proVoiceOn)) {
                 val on = vm.converse
                 val glow = if (on) (vm.micLevel * 12f).coerceIn(0f, 1f) else 0f
                 Box(
@@ -262,8 +263,8 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
                         .clickable {
                             if (on) {
                                 vm.converse(false)
-                            } else if (vm.store.elevenKey.isBlank()) {
-                                vm.converse(true) // 키가 없으면 마이크 권한은 묻지 않고, 키가 필요하다는 안내만 낸다
+                            } else if (!ProVoice.mayTalk(com.fidenit.kite.BuildConfig.PRO, vm.proVoiceOn, vm.store.elevenKey)) {
+                                vm.converse(true) // 키가 없으면 마이크 권한은 묻지 않고, 키가 필요하다는 안내만 낸다 (Pro 는 키 대신 서버의 목소리)
                             } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                                 vm.converse(true)
                             } else {
