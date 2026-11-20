@@ -146,7 +146,7 @@ class ProTextTest {
         }
     }
 
-    /** texts-pro-v1 D5a, D5b, D6, D7, D8 (decided 17:30-17:35), word for word, KO and EN. */
+    /** texts-pro-v1 D5a, D5b, D6, D7, D8 (decided 17:30-17:35) and D9 (realtime, 2026-11-21), word for word, KO and EN. */
     @Test
     fun decidedVoiceTextsD5ToD8AreTheWording() {
         val rows = listOf(
@@ -160,6 +160,8 @@ class ProTextTest {
                 "The server's voice broke off while reading → this sentence was not read to the end → read the answer on the screen"),
             "D8" to both { ProVoice.talkingOff(it) } to ("서버에서 말로 대화하기가 꺼졌습니다 → 대화를 끝냈습니다 → 글로 적어 보내 주세요" to
                 "Talking was switched off on the server → the conversation was ended → type instead"),
+            "D9" to both { ProVoice.liveDropped(it) } to ("실시간 음성 연결이 끊겼습니다 → 이번 대화는 예전 방식으로 듣고 읽습니다 → 할 일은 없습니다" to
+                "The live voice connection dropped → this conversation listens and reads the earlier way → nothing to do"),
         )
         for ((pair, want) in rows) {
             val (name, got) = pair

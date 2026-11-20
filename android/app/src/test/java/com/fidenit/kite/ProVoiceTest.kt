@@ -246,6 +246,7 @@ class ProVoiceTest {
             ProVoice.speakNotice(Speaking.Outcome(null, true), en)?.let { lines.add(it) }
             lines.add(ProVoice.heardNotice(RuntimeException("x"), en))
             lines.add(ProVoice.talkingOff(en))
+            lines.add(ProVoice.liveDropped(en))
         }
         assertTrue(lines.size > 100)
         // the one allowed mention of a settings screen: the PHONE's own text-to-speech setting, only in D6
@@ -319,6 +320,36 @@ class ProVoiceTest {
         override var proCode = ""
         override var ticketUsed = ""
         override var proVoice = ""
+        override var proVoiceLive = ""
+    }
+
+    /** spec aperit-pro-voice-realtime-v1 D3: `voice_live` comes only from `/v1/me`, stored like `voice`; missing = false (old gateway). */
+    @Test
+    fun voiceLiveIsTheLastMeAnswerAndMissingMeansFalse() {
+        val m = Mem()
+        m.proStatus = "approved"
+        m.deviceId = "d"
+        m.deviceSecret = "s"
+        var clock = 1_000_000L
+        val d = ProDevice(m, Enroller(server.url("/").toString()), { Triple("Pixel 8", "14", "0.5.0") }, "", { clock }, 0)
+        server.enqueue(MockResponse().setBody("""{"status":"approved","voice":true,"voice_live":true}"""))
+        server.enqueue(MockResponse().setBody("""{"status":"approved","voice":true}"""))
+        server.enqueue(MockResponse().setBody("""{"status":"approved","voice":true,"voice_live":true}"""))
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setBody("""{"status":"pending","code":"111111"}"""))
+        d.check()
+        assertTrue(d.voiceLive)
+        assertEquals("1", m.proVoiceLive)
+        clock += 1
+        d.check()
+        assertTrue(d.voice)
+        assertFalse("an old gateway sends no voice_live", d.voiceLive)
+        clock += 1
+        d.check()
+        assertTrue(d.voiceLive)
+        clock += 1
+        assertEquals("pending", d.check().status)
+        assertFalse("a forgotten phone has no realtime voice", d.voiceLive)
     }
 
     @Test
