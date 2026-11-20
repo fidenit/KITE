@@ -75,4 +75,52 @@ class SpeakingTest {
     fun afterAStopNothingMoreIsDone() {
         assertEquals(listOf("eleven"), read({ throw failure(played = false) }, current = false).calls)
     }
+
+    private val hangul = Regex("[가-힣]")
+
+    private fun line(why: Eleven.Why, english: Boolean, played: Boolean = false, phoneFailed: Boolean = false): String =
+        Speaking.notice(Speaking.Outcome(failure(played, why), phoneFailed), english)!!
+
+    /** V2: one line, what is wrong → what was done with this sentence → what to do, in everyday words and in the language of the app. */
+    @Test
+    fun theLineOnScreenIsOneLineOfEverydayWordsForEachCause() {
+        val seen = HashSet<String>()
+        for (why in Eleven.Why.values()) for (english in listOf(false, true)) for ((played, phoneFailed) in listOf(false to false, true to false, false to true)) {
+            val l = line(why, english, played, phoneFailed)
+            assertEquals(l, 3, l.split(" → ").size)
+            // nothing of the server's answer: no status number, no JSON, no code name
+            assertFalse(l, l.contains("HTTP") || l.contains("401") || l.contains("{") || l.contains("invalid_api_key") || l.contains("\n"))
+            assertEquals(l, !english, hangul.containsMatchIn(l))
+            assertTrue("a line of its own: $l", seen.add(l))
+        }
+        assertEquals("ElevenLabs 키가 거절되었습니다 → 이 문장은 폰의 기본 음성으로 읽었습니다 → '설정'에서 'ElevenLabs 키'를 확인해 주세요", line(Eleven.Why.KEY, false))
+        assertEquals("ElevenLabs refused the key → this sentence was read with the phone's own voice → check the ElevenLabs key in Settings", line(Eleven.Why.KEY, true))
+        // a dropped connection does not send the owner to the key
+        for (english in listOf(false, true)) {
+            val net = line(Eleven.Why.NETWORK, english)
+            assertFalse(net, net.contains("키") || net.contains("key"))
+            assertTrue(net, net.contains("인터넷") || net.contains("internet"))
+            val limit = line(Eleven.Why.LIMIT, english)
+            assertTrue(limit, limit.contains("한도") || limit.contains("limit"))
+            assertFalse(limit, limit.contains("키를") || limit.contains("the ElevenLabs key"))
+        }
+        // what was done is said as it was: cut off midway, or no voice at all
+        assertTrue(line(Eleven.Why.NETWORK, false, played = true).contains("다시 읽지 않았습니다"))
+        assertFalse(line(Eleven.Why.NETWORK, false, played = true).contains("폰의 기본 음성으로 읽었습니다"))
+        assertFalse(line(Eleven.Why.KEY, false, phoneFailed = true).contains("폰의 기본 음성으로 읽었습니다"))
+        assertFalse(line(Eleven.Why.KEY, true, phoneFailed = true).contains("was read with"))
+    }
+
+    @Test
+    fun noLineWhenTheSentenceWasReadAndALineOfItsOwnWhenOnlyThePhoneVoiceFails() {
+        assertNull(Speaking.notice(Speaking.Outcome(null, false), false))
+        assertNull(Speaking.notice(Speaking.Outcome(null, false), true))
+        val ko = Speaking.notice(Speaking.Outcome(null, true), false)!!
+        val en = Speaking.notice(Speaking.Outcome(null, true), true)!!
+        assertEquals(3, ko.split(" → ").size)
+        assertEquals(3, en.split(" → ").size)
+        assertTrue(hangul.containsMatchIn(ko))
+        assertFalse(hangul.containsMatchIn(en))
+        assertFalse(ko.contains("ElevenLabs") || en.contains("ElevenLabs"))
+    }
 }

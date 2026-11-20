@@ -1106,8 +1106,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- 소리 내어 읽기
 
-    /** ElevenLabs 읽기가 실패했다고 이미 알렸는가 (문장마다 같은 오류를 되풀이해 띄우지 않는다). 다시 잘 읽으면 풀린다. */
-    private var elevenFailShown = false
+    /** 소리 내어 읽기가 실패했다고 이미 알렸는가 (ElevenLabs 든 폰의 기본 음성이든, 문장마다 같은 줄을 되풀이해 띄우지 않는다). 다시 잘 읽으면 풀린다. */
+    private var speakFailShown = false
 
     private fun speak(text: String) {
         speaking = true
@@ -1120,19 +1120,13 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 Speaking.read(if (key.isEmpty()) null else viaEleven, stop = { player?.stop() }, current = { epoch == speakEpoch }, phone = { speakWithDevice(board.show(text), epoch) })
             }
             if (epoch != speakEpoch) return@launch
-            val why = out.eleven
-            if (out.phoneFailed) {
-                error = if (english) "Could not speak with the phone's own voice" else "폰의 기본 음성으로 읽지 못함"
-            } else if (why != null) {
-                if (!elevenFailShown) {
-                    val did = if (why.played) (if (english) "this sentence stopped partway and was not read again" else "이 문장은 읽다가 멈췄고 다시 읽지 않았습니다")
-                    else (if (english) "this sentence was read with the phone's own voice" else "이 문장은 폰의 기본 음성으로 읽었습니다")
-                    error = if (english) "The ElevenLabs voice did not work (${why.message}) → $did → check the ElevenLabs key and usage in Settings"
-                    else "ElevenLabs 목소리를 쓰지 못했습니다 (${why.message}) → $did → 설정에서 ElevenLabs 키와 사용량을 확인해 주세요"
-                }
-                elevenFailShown = true
-            } else if (key.isNotEmpty()) {
-                elevenFailShown = false
+            // 한 줄로 알린다 (무엇이 문제 → 이 문장을 어떻게 했나 → 할 일). 다시 잘 읽을 때까지는 한 번만.
+            val line = Speaking.notice(out, english)
+            if (line == null) {
+                speakFailShown = false
+            } else {
+                if (!speakFailShown) error = line
+                speakFailShown = true
             }
             speaking = false
             advanceSpeech()
@@ -1142,7 +1136,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     /** ElevenLabs 키가 없거나 ElevenLabs 가 소리를 내기 전에 실패했을 때: 폰에 들어 있는 음성으로 읽는다. */
     private suspend fun speakWithDevice(text: String, epoch: Int) {
         val tts = deviceTts ?: TextToSpeech(getApplication()) { status -> deviceTtsReady.complete(status == TextToSpeech.SUCCESS) }.also { deviceTts = it }
-        if (!deviceTtsReady.await()) throw Exception("폰의 음성 엔진을 쓸 수 없음")
+        if (!deviceTtsReady.await()) throw Exception("the phone's speech engine did not start") // 화면에는 Speaking.notice 의 글이 나간다
         tts.language = if (english) Locale.ENGLISH else Locale.KOREAN
         val done = CompletableDeferred<Unit>()
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -1189,7 +1183,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (converse == on) return
         converse = on
-        if (on) elevenFailShown = false
+        if (on) speakFailShown = false
         talkMode(getApplication(), on)
         if (on) {
             player?.release()
