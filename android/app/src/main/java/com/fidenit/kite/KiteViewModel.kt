@@ -46,6 +46,7 @@ import com.fidenit.kite.engine.SshFatal
 import com.fidenit.kite.engine.Waker
 import com.fidenit.kite.voice.Eleven
 import com.fidenit.kite.voice.Mic
+import com.fidenit.kite.voice.MicProblem
 import com.fidenit.kite.voice.Player
 import com.fidenit.kite.voice.Speaking
 import com.fidenit.kite.voice.Words
@@ -1237,7 +1238,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         m.error?.let {
-            error = (if (english) "Microphone unavailable: " else "마이크를 쓸 수 없음: ") + it
+            // 마이크는 "열지 못했다 / 멈췄다"까지만 안다. 권한이 없어서인지는 여기서 본다. 말로 대화하기를 끄고 한 줄로 알린다.
+            val granted = getApplication<Application>().checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            error = Speaking.micNotice(if (granted) it else MicProblem.PERMISSION, english)
             converse(false)
             return
         }

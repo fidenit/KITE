@@ -188,4 +188,21 @@ class SpeakingTest {
         assertEquals(listOf("ready"), late.first)
         assertNull(late.second)
     }
+
+    /** W2: the microphone line: one line of everyday words per cause, no error text or number, and it says that talking was switched off. */
+    @Test
+    fun theMicrophoneLineIsEverydayWordsForEachCause() {
+        val seen = HashSet<String>()
+        for (p in com.fidenit.kite.voice.MicProblem.values()) for (english in listOf(false, true)) {
+            val l = Speaking.micNotice(p, english)
+            assertEquals(l, 3, l.split(" → ").size)
+            assertFalse(l, Regex("[0-9]").containsMatchIn(l) || l.contains("Exception") || l.contains("\n"))
+            assertEquals(l, !english, hangul.containsMatchIn(l))
+            assertTrue(l, l.contains("말로 대화하기를 껐습니다") || l.contains("talking was switched off"))
+            assertTrue("a line of its own: $l", seen.add(l))
+        }
+        assertEquals("이 앱에 마이크 권한이 없습니다 → 말로 대화하기를 껐습니다 → 폰의 '설정 > 애플리케이션(앱) > 이 앱 > 권한'에서 마이크를 허용한 뒤 다시 켜 주세요", Speaking.micNotice(com.fidenit.kite.voice.MicProblem.PERMISSION, false))
+        assertTrue(Speaking.micNotice(com.fidenit.kite.voice.MicProblem.PERMISSION, true).contains("Settings > Apps > this app > Permissions"))
+        assertFalse(Speaking.micNotice(com.fidenit.kite.voice.MicProblem.OPEN, false).contains("권한"))
+    }
 }

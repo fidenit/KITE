@@ -5,6 +5,9 @@ package com.fidenit.kite.voice
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 
+/** 마이크를 쓸 수 없게 된 까닭 (코드가 알 수 있는 만큼): 이 앱에 마이크 권한이 없음, 열지 못함, 듣는 중에 멈춤. */
+enum class MicProblem { PERMISSION, OPEN, STOPPED }
+
 object Speaking {
     /** 문장 하나를 읽은 결과. `eleven`: ElevenLabs 가 실패했으면 그 까닭. `phoneFailed`: 폰의 기본 음성으로 읽으려 했는데 못 읽었다. */
     class Outcome(val eleven: Eleven.Failure?, val phoneFailed: Boolean)
@@ -109,5 +112,24 @@ object Speaking {
         val done = CompletableDeferred<Boolean>()
         if (!start { done.complete(it) }) throw Exception("the phone's speech engine did not take the sentence")
         if (!done.await()) throw Exception("the phone's speech engine failed while reading")
+    }
+
+    /**
+     * 마이크를 쓸 수 없을 때 화면에 띄울 한 줄 (무엇이 문제 → 앱이 한 일 → 할 일). 앱은 그때 말로 대화하기를 끈다.
+     * 오류 글이나 번호는 넣지 않는다.
+     */
+    fun micNotice(p: MicProblem, english: Boolean): String {
+        val what = when (p) {
+            MicProblem.PERMISSION -> if (english) "This app has no microphone permission" else "이 앱에 마이크 권한이 없습니다"
+            MicProblem.OPEN -> if (english) "The microphone could not be opened" else "마이크를 열지 못했습니다"
+            MicProblem.STOPPED -> if (english) "The microphone stopped while listening" else "마이크가 듣는 중에 멈췄습니다"
+        }
+        val did = if (english) "talking was switched off" else "말로 대화하기를 껐습니다"
+        val todo = when (p) {
+            MicProblem.PERMISSION -> if (english) "allow Microphone under the phone's Settings > Apps > this app > Permissions, then switch talking on again" else "폰의 '설정 > 애플리케이션(앱) > 이 앱 > 권한'에서 마이크를 허용한 뒤 다시 켜 주세요"
+            MicProblem.OPEN -> if (english) "end a call or another app that is recording, then switch talking on again" else "통화나 녹음 중인 다른 앱이 있으면 끝낸 뒤 다시 켜 주세요"
+            MicProblem.STOPPED -> if (english) "switch talking on again; if it goes on, close the app completely and open it again" else "다시 켜 주세요. 계속되면 앱을 완전히 닫았다가 다시 열어 주세요"
+        }
+        return "$what → $did → $todo"
     }
 }

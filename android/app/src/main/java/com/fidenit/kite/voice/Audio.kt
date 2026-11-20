@@ -50,8 +50,9 @@ class Mic {
     var level: Float = 0f
         private set
 
+    /** 마이크를 쓸 수 없게 됐으면 그 까닭 (열지 못함 / 듣는 중에 멈춤). 화면의 글은 `Speaking.micNotice` 가 만든다. */
     @Volatile
-    var error: String? = null
+    var error: MicProblem? = null
         private set
 
     @Volatile
@@ -71,21 +72,23 @@ class Mic {
         var rec: AudioRecord? = null
         var aec: AcousticEchoCanceler? = null
         var ns: NoiseSuppressor? = null
+        var recording = false // 듣기 시작한 뒤의 오류인가
         try {
             val min = AudioRecord.getMinBufferSize(MIC_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
             rec = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, MIC_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, MIC_RATE))
             if (rec.state != AudioRecord.STATE_INITIALIZED) {
-                error = "마이크를 열지 못함"
+                error = MicProblem.OPEN
                 return
             }
             if (AcousticEchoCanceler.isAvailable()) aec = AcousticEchoCanceler.create(rec.audioSessionId)?.also { it.enabled = true }
             if (NoiseSuppressor.isAvailable()) ns = NoiseSuppressor.create(rec.audioSessionId)?.also { it.enabled = true }
             rec.startRecording()
+            recording = true
             val buf = ShortArray(MIC_RATE / 50) // 20ms
             while (running) {
                 val n = rec.read(buf, 0, buf.size)
                 if (n < 0) {
-                    error = "마이크 오류 ($n)"
+                    error = MicProblem.STOPPED
                     return
                 }
                 if (n == 0) continue
@@ -102,7 +105,7 @@ class Mic {
                 }
             }
         } catch (e: Exception) {
-            error = e.message ?: e.toString()
+            error = if (recording) MicProblem.STOPPED else MicProblem.OPEN
         } finally {
             try {
                 rec?.stop()
