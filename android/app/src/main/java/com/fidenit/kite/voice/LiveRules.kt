@@ -33,7 +33,7 @@ object LiveRules {
     }
 
     /** D11: 이만큼(ms) 조용하면 말이 끝난 것으로 본다 = vad_s × (1 − tp) */
-    fun earlyQuietMs(vadS: Double, tp: Double): Long = (vadS * (1 - tp.coerceIn(0.0, 1.0)) * 1000).toLong()
+    fun earlyQuietMs(vadS: Double, tp: Double): Long = Math.round(vadS * (1 - tp.coerceIn(0.0, 1.0)) * 1000)
 
     /** 상태 줄에 보일 들은 말의 끝 부분 길이 (가장 새 낱말이 보이게) */
     const val TAIL = 24
