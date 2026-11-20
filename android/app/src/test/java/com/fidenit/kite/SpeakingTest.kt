@@ -49,7 +49,12 @@ class SpeakingTest {
         // any other error (the speaker could not be opened) counts as nothing played
         val other = read({ throw IllegalStateException("no speaker") })
         assertEquals(listOf("eleven", "stop", "phone"), other.calls)
-        assertEquals(Eleven.Why.OTHER, other.out.eleven!!.why)
+        assertEquals(Eleven.Why.SPEAKER, other.out.eleven!!.why)
+        // S1: that line does not send the owner to the ElevenLabs key
+        for (english in listOf(false, true)) {
+            val l = Speaking.notice(other.out, english)!!
+            assertFalse(l, l.contains("키") || l.contains("key") || l.contains("목소리 ID") || l.contains("voice ID"))
+        }
         assertFalse(other.out.eleven!!.played)
     }
 

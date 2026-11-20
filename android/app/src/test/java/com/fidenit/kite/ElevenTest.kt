@@ -130,6 +130,23 @@ class ElevenTest {
         assertEquals(Eleven.Why.NETWORK, cause())
     }
 
+    /** S1: sound arrived but the phone could not play it: that is its own cause, and nothing counts as played. */
+    @Test
+    fun aSpeakerThatCannotPlayIsItsOwnCause() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("a".repeat(9600)))
+        val f = speakFailure(object : Eleven.Sink {
+            override fun push(pcm: ShortArray, n: Int) {
+                throw IllegalStateException("no speaker")
+            }
+
+            override fun pendingSecs(): Float = 0f
+
+            override fun stop() {}
+        })!!
+        assertEquals(Eleven.Why.SPEAKER, f.why)
+        assertFalse(f.played)
+    }
+
     @Test
     fun theDefaultAddressIsHttps() {
         assertEquals("https://api.elevenlabs.io", real)

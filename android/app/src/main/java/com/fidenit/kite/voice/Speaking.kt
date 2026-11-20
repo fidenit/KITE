@@ -23,7 +23,8 @@ object Speaking {
                 eleven()
                 return Outcome(null, false)
             } catch (e: Exception) {
-                e as? Eleven.Failure ?: Eleven.Failure(Eleven.Why.OTHER, false, e.message ?: e.toString(), e)
+                // ElevenLabs 를 부르는 쪽은 Failure 만 낸다: 다른 예외는 폰의 스피커를 열지 못한 것이다
+                e as? Eleven.Failure ?: Eleven.Failure(Eleven.Why.SPEAKER, false, e.message ?: e.toString(), e)
             }
         }
         if (failure != null) {
@@ -56,6 +57,7 @@ object Speaking {
             Eleven.Why.KEY -> if (english) "ElevenLabs refused the key" else "ElevenLabs 키가 거절되었습니다"
             Eleven.Why.LIMIT -> if (english) "An ElevenLabs usage limit was reached" else "ElevenLabs 사용 한도에 걸렸습니다"
             Eleven.Why.NETWORK -> if (english) "The connection to ElevenLabs dropped or did not answer" else "ElevenLabs 연결이 끊겼거나 응답이 없습니다"
+            Eleven.Why.SPEAKER -> if (english) "The phone could not play the ElevenLabs voice" else "ElevenLabs 목소리를 폰에서 틀지 못했습니다"
             Eleven.Why.OTHER -> if (english) "The ElevenLabs voice did not work" else "ElevenLabs 목소리를 쓰지 못했습니다"
         }
         val did = when {
@@ -67,6 +69,7 @@ object Speaking {
             Eleven.Why.KEY -> if (english) "check the ElevenLabs key in Settings" else "'설정'에서 'ElevenLabs 키'를 확인해 주세요"
             Eleven.Why.LIMIT -> if (english) "check the usage and the limits of your ElevenLabs account" else "ElevenLabs 계정에서 남은 사용량과 한도를 확인해 주세요"
             Eleven.Why.NETWORK -> if (english) "check the internet connection" else "인터넷 연결을 확인해 주세요"
+            Eleven.Why.SPEAKER -> if (english) "close the app completely and open it again" else "앱을 완전히 닫았다가 다시 열어 주세요"
             Eleven.Why.OTHER -> if (english) "try again in a moment; if it goes on, check the ElevenLabs key and the voice ID in Settings" else "잠시 뒤 다시 해 보고, 계속되면 '설정'에서 'ElevenLabs 키'와 '목소리 ID'를 확인해 주세요"
         }
         return "$what → $did → $todo"

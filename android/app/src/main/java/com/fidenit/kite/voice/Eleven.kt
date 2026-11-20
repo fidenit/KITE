@@ -51,8 +51,8 @@ object Eleven {
         fun stop()
     }
 
-    /** 말하기가 실패한 까닭: 키가 거절됨, 사용 한도, 연결이 끊기거나 응답이 없음, 그 밖. */
-    enum class Why { KEY, LIMIT, NETWORK, OTHER }
+    /** 실패한 까닭: 키가 거절됨, 사용 한도, 연결이 끊기거나 응답이 없음, 폰이 받은 소리를 틀지 못함, 그 밖. */
+    enum class Why { KEY, LIMIT, NETWORK, SPEAKER, OTHER }
 
     /**
      * 말하기가 실패했다. `played` 는 이 문장의 소리를 조금이라도 스피커 쪽에 넘긴 뒤에 실패했는가
@@ -113,8 +113,13 @@ object Eleven {
                 }
                 if (i < n) carry = buf[i].toInt() and 0xFF
                 if (count > 0 && !stopped()) {
+                    val before = played
                     played = true
-                    player.push(pcm, count)
+                    try {
+                        player.push(pcm, count)
+                    } catch (e: Exception) {
+                        throw Failure(Why.SPEAKER, before, e.message ?: e.toString(), e)
+                    }
                 }
             }
             // 다 틀 때까지 기다린다.
