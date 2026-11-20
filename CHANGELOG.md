@@ -4,6 +4,12 @@ APERIT was called KITE up to version 0.3; the entries below 0.4.0 use the name o
 
 The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://github.com/fidenit/patet/blob/main/CHANGELOG.md).
 
+## Android 0.2.0 (not released yet)
+
+- **APERIT Pro works with nothing to enter.** On first launch the phone makes its own device id and secret (kept only in the encrypted store, excluded from backup and transfer) and enrolls with our gateway; it is ready once approved, and shows `허용 대기 482913` / `Waiting 482913` while it waits. Turns run detached on the server's Claude Code through the gateway with the same reconnect and restart rules as the SSH engine; the board is kept on the server too and comes back after a reinstall. Settings in Pro show only the connection status and the short device id. Voice and Jev are off in Pro for now.
+- A turn that ended on the server (lost, failed, stopped elsewhere, already cleaned) now shows its end instead of reconnecting again and again.
+- `android/scripts/check-apk-secrets.sh` checks a built apk for secret-shaped strings and lists the URL hosts in it.
+
 ## Android 0.1.1 (not released yet)
 
 - **A turn on your server no longer depends on the connection.** With the Claude Code (SSH) engine, each turn now runs detached on the server and the app follows its output. If the connection drops, the app reconnects by itself and continues where it was; if the app is closed or killed, it takes the turn up again when it is opened and the result lands on the board. Stop ends Claude Code and the tools it started on the server (the app only leaves a stop request there, and the run ends its own processes; a helper command that fails on the server no longer makes the run miss the request or look lost); if the server cannot be reached the app says so and stops the run as soon as it can connect, and nothing starts by itself after a Stop. A turn that ends with an error on the server shows that error once instead of reconnecting forever. A turn is only picked up again on the server it was started on.

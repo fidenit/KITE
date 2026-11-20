@@ -84,12 +84,13 @@ add k2 o1 강릉 | 멀지만 시설이 좋음
 | 갈래 | 앱 | 엔진 |
 |---|---|---|
 | `free` | APERIT (`com.fidenit.kite`) | 사용자가 넣은 Claude API 키로 폰이 Claude API 를 직접 부른다. 고급 선택으로 내 서버의 Claude Code(SSH)도 쓸 수 있다 |
-| `pro` | APERIT Pro (`com.fidenit.kite.pro`) | 아무것도 넣지 않는다. 같은 요청을 중계 서버로 보내고, 키와 사용량은 서버가 맡는다 |
+| `pro` | APERIT Pro (`com.fidenit.kite.pro`) | 아무것도 넣지 않는다. 한 턴은 우리 서버의 Claude Code 에서 떼어 돌고 폰은 HTTPS 게이트웨이(아래)로 따라 읽는다. 처음 켤 때 폰이 스스로 등록한다 |
 
 ```sh
 cd android
 ./gradlew assembleFreeDebug                                   # app/build/outputs/apk/free/debug/app-free-debug.apk
-./gradlew -PkiteRelayUrl=https://<중계 서버> assembleProDebug # 주소를 안 주면 에뮬레이터에서 이 PC 의 http://10.0.2.2:8787
+./gradlew -PaperitGatewayUrl=https://<게이트웨이> assembleProDebug # 주소를 안 주면 에뮬레이터에서 이 PC 의 http://10.0.2.2:8787
+android/scripts/check-apk-secrets.sh <apk>                       # apk 에 키·기기 토큰·개인 키·Bearer 토큰이 있으면 exit 1, 들어 있는 URL 호스트를 모두 보인다
 ./gradlew testFreeDebugUnitTest                               # 보드·수정 언어·API 엔진(가짜 서버로 한 턴)·서버 명령 줄·Jev/ElevenLabs 호출(가짜 서버)·앱 시작과 복원(Robolectric, JVM)
 ```
 
@@ -123,10 +124,13 @@ JDK 17 이상(Android Studio 의 jbr)과 안드로이드 SDK 가 필요하다. `
 - 확인하지 못한 것: Jev와 ElevenLabs 경로는 가짜 서버로만 돌려 봤다(api.typesafe.ai·api.elevenlabs.io 에는 부르지 않았다). 실제 폰도 에뮬레이터도 쓰지 않았고, 뷰모델은 JVM 에서 Robolectric 으로 돌렸다.
 - 아직 없는 것: 경로 찾기, 작업자, 브라우저 도구, 문자·전화, 붙인 사진, Pro 의 Play 구독 연결.
 
-## 중계 서버
+## 게이트웨이 (APERIT Pro)
 
-APERIT Pro 가 붙는 서버(키 보관, 이용자별 사용량 계량·한도, 구독 확인)는 이 공개 저장소에 두지 않고 별도 비공개 저장소에서 관리한다. 앱 쪽에서 알아야 할 약속만 적는다.
+APERIT Pro 는 별도 비공개 저장소의 게이트웨이에 붙는다. 게이트웨이는 한 턴을 서버의 Claude Code 로 떼어 돌리고(SSH 엔진과 같은 방식), 보드를 서버에도 둔다. 주소는 빌드할 때 넣는다 (`-PaperitGatewayUrl=https://…`, `BuildConfig.GATEWAY_URL`. 저장소에는 적지 않는다). 앱 쪽 약속:
 
-- Anthropic Java SDK 의 `baseUrl` 을 중계 서버 주소로, `apiKey` 를 구독자 토큰으로 둔다. 주소는 빌드할 때 `-PkiteRelayUrl=https://…` 로 넣는다 (저장소에는 적지 않는다).
-- 이번 달 한도를 넘으면 HTTP 402. 앱은 "이번 달 사용량을 모두 썼습니다"로 보여 준다.
-- `GET /v1/usage` (헤더 `x-api-key: <토큰>`) 로 이번 달 사용량(`used_usd`, `budget_usd`, `plan`)을 묻는다.
+- **이름표.** 처음 켤 때 기기 번호(UUID)와 비밀 글(`apd_` + 무작위 32바이트, base64url)을 만들어 암호화 저장소에만 둔다. 그 저장소를 열거나 읽지 못하면(다른 폰에 복원, 손상) 지우고 새 기기로 다시 등록한다 (일반 저장소로 내려가지 않는다). `POST /v1/enroll` 은 번호와 비밀 글의 SHA-256 을 보내고, 답은 `approved`, 6자리 번호가 붙은 `pending`(서버에서 대표가 허용), `revoked`. 빌드에 한 번만 쓰는 등록 표를 넣을 수 있다 (`-PaperitEnrollTicket=…`, `BuildConfig.ENROLL_TICKET`, 저장소에 두지 않는다): 서버가 판단할 때까지만 보내고, 이미 쓰였거나 기한이 지난 표면 폰은 번호로 허용을 기다린다. 허용 대기는 서버에서 30분 뒤 사라지고, 그러면 `/v1/me` 가 401 을 주어 앱이 다시 등록하고 새 번호를 보인다. 상태는 앱이 켜질 때, 앞으로 돌아올 때, 말을 보내기 전에 묻는다.
+- **턴.** `engine/Link.kt` 가 `ClaudeCode` 아래의 이음매다: `SshLink` 는 지금까지의 명령을 SSH 로 보내고, `GatewayLink`(OkHttp)는 `PUT /v1/runs/{id}/input`, `POST …/start`, `GET …/follow?n=`(server-sent events: `data:` 하나가 SSH 따라 읽기의 한 줄), `POST …/stop`, `DELETE /v1/runs/{id}`, `GET …/err`, `PUT /v1/system`, `GET /v1/core`, `GET /v1/info` 를 쓴다. 끊긴 호출은 끊긴 SSH 명령과 같이 "n번 줄부터 다시 붙기"가 되고, HTTP 401·403 은 이유를 적은 한 줄로 턴을 끝낸다. `APERITFAIL busy`(서버가 이미 한도만큼 턴을 돌리거나 메모리가 모자람)는 따로 한 줄. 모든 요청에 `Authorization: Bearer <비밀 글>` 과 `X-Aperit-App: <판>-pro` 가 붙는다.
+- **상태.** 폰에 저장할 때마다 보드·저장하는 40개의 말·보던 주제를 조금 뒤에 `PUT /v1/state` 로 올린다 (모아서, 다시 해 보며, 화면을 막지 않는다. `If-Match` 는 폰이 가진 마지막 판). 켤 때 폰에 저장된 보드가 없거나 폰의 판이 오래됐으면 서버 것을 쓰고, 412 면 서버 것을 쓰고 한 줄로 알린다. 바뀌기 전 폰의 것은 `state-backup.json` 에 남긴다.
+- 앱 파일의 `pro.log` 에 상태 변화와 상태 판 번호·크기를 남긴다 (비밀 글·등록 표·내용은 적지 않는다).
+- Pro 에서 음성과 Jev 는 아직 꺼져 있다. 설정에는 연결 상태와 짧은 기기 번호(앞 8글자)만 있다.
+- Pro 앱은 클라우드 백업과 기기 간 옮기기에서 빠진다 (`allowBackup="false"`, `src/pro/` 의 `dataExtractionRules`).

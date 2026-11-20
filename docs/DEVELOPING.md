@@ -112,12 +112,13 @@ One codebase, two apps (`productFlavors` in `android/app/build.gradle.kts`).
 | Flavor | App | Engine |
 |---|---|---|
 | `free` | APERIT (`com.fidenit.kite`) | The phone calls the Claude API with the key the user enters. As an advanced choice, the Claude Code on a server of the user's (SSH) |
-| `pro` | APERIT Pro (`com.fidenit.kite.pro`) | Nothing to enter. The same requests go to a relay server, which holds the key and meters usage |
+| `pro` | APERIT Pro (`com.fidenit.kite.pro`) | Nothing to enter. Each turn runs detached on our server's Claude Code behind an HTTPS gateway (below); the phone enrolls itself on first launch |
 
 ```sh
 cd android
 ./gradlew assembleFreeDebug                                    # app/build/outputs/apk/free/debug/app-free-debug.apk
-./gradlew -PkiteRelayUrl=https://<relay> assembleProDebug      # without it: http://10.0.2.2:8787, this PC seen from the emulator
+./gradlew -PaperitGatewayUrl=https://<gateway> assembleProDebug # without it: http://10.0.2.2:8787, this PC seen from the emulator
+android/scripts/check-apk-secrets.sh <apk>                     # exit 1 when a key, device token, private key or bearer token is in the apk; lists every URL host
 ./gradlew testFreeDebugUnitTest                                # board, language, conformance cases, API engine and Jev/ElevenLabs clients against fake servers, KiteViewModel start-up and restore (Robolectric, on the JVM)
 ```
 
@@ -151,13 +152,16 @@ JDK 17 or newer (the `jbr` of Android Studio) and the Android SDK (`ANDROID_HOME
 - Not tested: the Jev and ElevenLabs paths were run against fake servers only (never api.typesafe.ai or api.elevenlabs.io), and no real phone or emulator was used for any of this; the ViewModel is run on the JVM with Robolectric.
 - Not there yet: routes, workers, browser tools, messages and calls, attached pictures, the Play subscription for Pro, and the bindings for outside agents (MCP, AG-UI, the socket).
 
-## The relay
+## The gateway (APERIT Pro)
 
-The server APERIT Pro talks to (it holds the key, meters and limits each user, checks the subscription) is kept in a separate private repository. What the app relies on:
+APERIT Pro talks to a gateway kept in a separate private repository. It runs each turn as a detached Claude Code run on the server, exactly like the SSH engine, and keeps the board on the server. The address is given at build time (`-PaperitGatewayUrl=https://…`, `BuildConfig.GATEWAY_URL`) and is not in this repository. What the app relies on:
 
-- The `baseUrl` of the Anthropic Java SDK is the relay's address and the `apiKey` is the subscriber's token. The address is given at build time (`-PkiteRelayUrl=https://…`) and is not in this repository.
-- Over the month's limit the relay answers HTTP 402, which the app shows as "this month's usage is used up".
-- `GET /v1/usage` (header `x-api-key: <token>`) returns `used_usd`, `budget_usd` and `plan`.
+- **Identity.** On first launch the app makes a device id (UUID) and a device secret (`apd_` + 32 random bytes, base64url) and keeps both only in the encrypted store; if that store cannot be opened or read (restored onto another phone, damaged) it is wiped and the phone enrolls again as a new device, never falling back to plain storage. `POST /v1/enroll` sends the id and the SHA-256 of the secret; the answer is `approved`, `pending` with a 6-digit code (approved on the server by the owner) or `revoked`. A build may carry a single-use enrollment ticket (`-PaperitEnrollTicket=…`, `BuildConfig.ENROLL_TICKET`, never in the repository): it is sent until the server has judged it, and a used or expired ticket leaves the phone pending with its code. A pending device expires on the server after 30 minutes; `/v1/me` then answers 401 and the app enrolls again and shows the new code. The status is checked when the app starts, when it comes to the front and before each message.
+- **Turns.** `engine/Link.kt` is the seam under `ClaudeCode`: `SshLink` sends today's commands over SSH, `GatewayLink` (OkHttp) uses `PUT /v1/runs/{id}/input`, `POST …/start`, `GET …/follow?n=` (server-sent events: each `data:` is one line of the SSH follow loop), `POST …/stop`, `DELETE /v1/runs/{id}`, `GET …/err`, `PUT /v1/system`, `GET /v1/core`, `GET /v1/info`. A dropped call gives the same "reconnect from line n" outcome as a dropped SSH command; HTTP 401/403 end the turn with a line naming the reason; `APERITFAIL busy` (the server already runs its limit of turns or is short of memory) has its own line. Every request carries `Authorization: Bearer <device secret>` and `X-Aperit-App: <version>-pro`.
+- **State.** After each local save the board, the last 40 exchanges and the current topic go to `PUT /v1/state` (debounced, retried, never blocking the screen; `If-Match` = the last revision the phone has). On start the app takes the server's document when the phone has no saved board or an older revision; on 412 it takes the server's document and says so in one line. The replaced local copy is kept in `state-backup.json`.
+- `pro.log` in the app's files records status changes and state revisions and sizes (never the secret, the ticket or the content).
+- Voice and Jev are off in Pro for now; Settings shows the connection status and the short device id (first 8 characters) only.
+- The pro app is excluded from cloud backup and device-to-device transfer (`allowBackup="false"`, and `dataExtractionRules` in `src/pro/`).
 
 ## Releasing
 
