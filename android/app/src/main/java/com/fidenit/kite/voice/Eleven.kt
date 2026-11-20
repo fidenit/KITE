@@ -42,8 +42,6 @@ object Eleven {
         ""
     }
 
-    private fun failure(c: HttpURLConnection): String = "HTTP ${status(c)}: ${errorBody(c).take(200)}"
-
     /** 소리 조각을 받아 트는 쪽 (앱에서는 [Player], 시험에서는 가짜). */
     interface Sink {
         fun push(pcm: ShortArray, n: Int)
@@ -138,10 +136,11 @@ object Eleven {
         }
     }
 
-    /** 녹음한 소리(16kHz, 16비트, 한 채널)를 글로 바꾼다. */
+    /** 녹음한 소리(16kHz, 16비트, 한 채널)를 글로 바꾼다. 실패하면 [Failure] 를 낸다 (까닭은 값으로, `message` 는 기록용). */
     fun transcribe(key: String, pcm: ShortArray, english: Boolean): String {
         val audio = ByteBuffer.allocate(pcm.size * 2).order(ByteOrder.LITTLE_ENDIAN).also { it.asShortBuffer().put(pcm) }.array()
         var first = ""
+        var firstWhy = Why.OTHER
         for (model in listOf("scribe_v3", "scribe_v2")) {
             val boundary = "----ali7d81b3c9f2a44e6f"
             val body = ByteArrayOutputStream()
@@ -162,14 +161,23 @@ object Eleven {
                 if (code == 200) {
                     return JSONObject(c.inputStream.bufferedReader().readText()).optString("text").trim()
                 }
-                val failed = failure(c)
-                if (first.isEmpty()) first = failed
-                // 키가 거절됐거나 한도에 닿았으면 다른 모델로 다시 불러도 소용없다: 첫 오류 글을 그대로 알린다
-                if (code == 401 || code == 403 || code == 429) throw Exception(first)
+                val answer = errorBody(c)
+                if (first.isEmpty()) {
+                    first = "HTTP $code: ${answer.take(200)}"
+                    firstWhy = why(code, answer)
+                }
+                // 키가 거절됐거나 한도에 닿았으면 다른 모델로 다시 불러도 소용없다: 첫 오류를 그대로 알린다
+                if (code == 401 || code == 403 || code == 429) throw Failure(firstWhy, false, first)
+            } catch (e: Failure) {
+                throw e
+            } catch (e: IOException) {
+                throw Failure(Why.NETWORK, false, e.message ?: e.toString(), e)
+            } catch (e: Exception) {
+                throw Failure(Why.OTHER, false, e.message ?: e.toString(), e)
             } finally {
                 c.disconnect()
             }
         }
-        throw Exception(first)
+        throw Failure(firstWhy, false, first)
     }
 }

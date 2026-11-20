@@ -107,6 +107,29 @@ class ElevenTest {
         assertFalse(f.played)
     }
 
+    /** V3: a failed transcription carries its cause as a value (the text with the status number is only for the record). */
+    @Test
+    fun aFailedTranscriptionCarriesItsCause() {
+        fun cause(): Eleven.Why = try {
+            Eleven.transcribe("test-key-not-real", pcm, false)
+            throw AssertionError("no failure")
+        } catch (e: Eleven.Failure) {
+            assertFalse(e.played)
+            e.why
+        }
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"detail":{"status":"invalid_api_key"}}"""))
+        assertEquals(Eleven.Why.KEY, cause())
+        server.enqueue(MockResponse().setResponseCode(429).setBody("slow down"))
+        assertEquals(Eleven.Why.LIMIT, cause())
+        server.enqueue(MockResponse().setResponseCode(500).setBody("busy"))
+        server.enqueue(MockResponse().setResponseCode(502).setBody("still busy"))
+        assertEquals(Eleven.Why.OTHER, cause())
+        val dead = MockWebServer().apply { start() }
+        Eleven.api = dead.url("/").toString().trimEnd('/')
+        dead.shutdown()
+        assertEquals(Eleven.Why.NETWORK, cause())
+    }
+
     @Test
     fun theDefaultAddressIsHttps() {
         assertEquals("https://api.elevenlabs.io", real)

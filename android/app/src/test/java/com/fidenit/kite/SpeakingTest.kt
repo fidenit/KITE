@@ -123,4 +123,22 @@ class SpeakingTest {
         assertFalse(hangul.containsMatchIn(en))
         assertFalse(ko.contains("ElevenLabs") || en.contains("ElevenLabs"))
     }
+
+    /** V3: the line for a failed transcription: one line of everyday words per cause, in the language of the app, true to what was done. */
+    @Test
+    fun theLineForAFailedTranscriptionIsEverydayWordsForEachCause() {
+        val seen = HashSet<String>()
+        for (why in listOf(Eleven.Why.KEY, Eleven.Why.LIMIT, Eleven.Why.NETWORK, Eleven.Why.OTHER)) for (english in listOf(false, true)) {
+            val l = Speaking.heardNotice(why, english)
+            assertEquals(l, 3, l.split(" → ").size)
+            assertFalse(l, l.contains("HTTP") || l.contains("401") || l.contains("{") || l.contains("\n"))
+            assertEquals(l, !english, hangul.containsMatchIn(l))
+            assertTrue(l, l.contains("보내지 않았고, 계속 듣고 있습니다") || l.contains("was not sent, and the app keeps listening"))
+            assertTrue("a line of its own: $l", seen.add(l))
+        }
+        assertEquals("ElevenLabs 키가 거절되었습니다 → 방금 하신 말은 보내지 않았고, 계속 듣고 있습니다 → '설정'에서 'ElevenLabs 키'를 확인해 주세요", Speaking.heardNotice(Eleven.Why.KEY, false))
+        assertEquals("ElevenLabs refused the key → what you just said was not sent, and the app keeps listening → check the ElevenLabs key in Settings", Speaking.heardNotice(Eleven.Why.KEY, true))
+        assertFalse(Speaking.heardNotice(Eleven.Why.NETWORK, false).contains("키"))
+        assertFalse(Speaking.heardNotice(Eleven.Why.NETWORK, true).contains("key"))
+    }
 }

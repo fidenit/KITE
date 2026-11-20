@@ -70,4 +70,25 @@ object Speaking {
         }
         return "$what → $did → $todo"
     }
+
+    /**
+     * 받아쓰기가 실패했을 때 화면에 띄울 한 줄 (같은 순서: 무엇이 문제 → 방금 한 말을 어떻게 했나 → 할 일).
+     * 앱은 그 말을 버리고(보내지 않는다) 마이크를 다시 열어 계속 듣는다.
+     */
+    fun heardNotice(why: Eleven.Why, english: Boolean): String {
+        val what = when (why) {
+            Eleven.Why.KEY -> if (english) "ElevenLabs refused the key" else "ElevenLabs 키가 거절되었습니다"
+            Eleven.Why.LIMIT -> if (english) "An ElevenLabs usage limit was reached" else "ElevenLabs 사용 한도에 걸렸습니다"
+            Eleven.Why.NETWORK -> if (english) "The connection to ElevenLabs dropped or did not answer" else "ElevenLabs 연결이 끊겼거나 응답이 없습니다"
+            else -> if (english) "ElevenLabs could not turn your words into text" else "ElevenLabs 가 말을 글로 바꾸지 못했습니다"
+        }
+        val did = if (english) "what you just said was not sent, and the app keeps listening" else "방금 하신 말은 보내지 않았고, 계속 듣고 있습니다"
+        val todo = when (why) {
+            Eleven.Why.KEY -> if (english) "check the ElevenLabs key in Settings" else "'설정'에서 'ElevenLabs 키'를 확인해 주세요"
+            Eleven.Why.LIMIT -> if (english) "check the usage and the limits of your ElevenLabs account" else "ElevenLabs 계정에서 남은 사용량과 한도를 확인해 주세요"
+            Eleven.Why.NETWORK -> if (english) "check the internet connection and say it again" else "인터넷 연결을 확인하고 다시 말해 주세요"
+            else -> if (english) "say it again; if it goes on, check the ElevenLabs key in Settings" else "다시 말해 주세요. 계속되면 '설정'에서 'ElevenLabs 키'를 확인해 주세요"
+        }
+        return "$what → $did → $todo"
+    }
 }

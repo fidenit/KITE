@@ -1183,7 +1183,10 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (converse == on) return
         converse = on
-        if (on) speakFailShown = false
+        if (on) {
+            speakFailShown = false
+            hearFailShown = false
+        }
         talkMode(getApplication(), on)
         if (on) {
             player?.release()
@@ -1277,6 +1280,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 받아쓰기가 실패했다고 이미 알렸는가 (말할 때마다 같은 줄을 되풀이해 띄우지 않는다). 다시 받아쓰면 풀린다. */
+    private var hearFailShown = false
+
     private fun transcribe(pcm: ShortArray) {
         transcribing = true
         val key = store.elevenKey.trim()
@@ -1284,7 +1290,14 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { Eleven.transcribe(key, pcm, en) } }
             transcribing = false
-            result.onSuccess { heardText(it) }.onFailure { error = (if (en) "Transcription failed: " else "받아쓰기 실패: ") + it.message }
+            result.onSuccess {
+                hearFailShown = false
+                heardText(it)
+            }.onFailure {
+                // 방금 들은 말은 버리고 계속 듣는다 (tick 이 마이크를 다시 연다). 한 줄로, 다시 받아쓸 때까지 한 번만 알린다.
+                if (!hearFailShown) error = Speaking.heardNotice((it as? Eleven.Failure)?.why ?: Eleven.Why.OTHER, en)
+                hearFailShown = true
+            }
         }
     }
 
