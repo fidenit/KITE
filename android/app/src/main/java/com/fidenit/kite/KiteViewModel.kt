@@ -1146,7 +1146,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun speakWithDevice(text: String, epoch: Int) {
         val tts = deviceTts ?: TextToSpeech(getApplication()) { status -> deviceTtsReady.complete(status == TextToSpeech.SUCCESS) }.also { deviceTts = it }
         // 엔진이 안 켜졌거나 읽기를 받아들이지 않았거나 읽다가 오류가 나면 예외: 읽지 못한 것으로 알리고 다음 문장으로 넘어간다 (Speaking.phone)
-        Speaking.phone(ready = { deviceTtsReady.await() }, current = { epoch == speakEpoch }) { done ->
+        Speaking.phone(ready = { deviceTtsReady.await() }, current = { epoch == speakEpoch }, readMs = Speaking.phoneReadMs(text.length)) { done ->
             tts.language = if (english) Locale.ENGLISH else Locale.KOREAN
             tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(id: String?) {}

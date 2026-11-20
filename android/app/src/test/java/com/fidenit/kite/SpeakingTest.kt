@@ -155,7 +155,7 @@ class SpeakingTest {
                 Speaking.phone(ready = {
                     calls.add("ready")
                     ready
-                }, current = { current }) { done ->
+                }, current = { current }, readMs = 2000) { done ->
                     calls.add("start")
                     if (accepted) done(ok)
                     accepted
@@ -176,7 +176,7 @@ class SpeakingTest {
         assertEquals(listOf("ready"), notReady.first)
         assertTrue(notReady.second != null)
         // through read(): the line on screen is the "not read aloud" one, not "read with the phone's own voice"
-        val out = runBlocking { Speaking.read(null, stop = {}, current = { true }, phone = { Speaking.phone(ready = { true }, current = { true }) { done -> done(false); true } }) }
+        val out = runBlocking { Speaking.read(null, stop = {}, current = { true }, phone = { Speaking.phone(ready = { true }, current = { true }, readMs = 2000) { done -> done(false); true } }) }
         assertTrue(out.phoneFailed)
         assertTrue(Speaking.notice(out, false)!!.contains("소리 내어 읽지 못했습니다"))
     }
@@ -217,5 +217,25 @@ class SpeakingTest {
             assertEquals(off, !english, hangul.containsMatchIn(off))
             assertTrue(Speaking.heardNotice(why, true, english) != off)
         }
+    }
+
+    /** W4: a speech engine that never gets ready, or takes a sentence and never reports its end, is given up after the time limit. */
+    @Test
+    fun aPhoneVoiceThatNeverAnswersIsGivenUpAfterItsTimeLimit() {
+        fun gaveUp(block: suspend () -> Unit): Long {
+            val t0 = System.nanoTime()
+            val error = runBlocking { runCatching { block() }.exceptionOrNull() }
+            assertTrue("counts as not read", error != null)
+            return (System.nanoTime() - t0) / 1_000_000
+        }
+        val never = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        val notReady = gaveUp { Speaking.phone(ready = { never.await() }, current = { true }, readMs = 60_000, readyMs = 100) { true } }
+        assertTrue("gave up waiting for the engine after ${notReady}ms", notReady in 50..20000)
+        val noEnd = gaveUp { Speaking.phone(ready = { true }, current = { true }, readMs = 100) { true } }
+        assertTrue("gave up waiting for the end after ${noEnd}ms", noEnd in 50..20000)
+        // the limits: 10 s for the engine, 5 s + 1 s per character for a sentence
+        assertEquals(10_000L, Speaking.PHONE_READY_MS)
+        assertEquals(5_000L, Speaking.phoneReadMs(0))
+        assertEquals(45_000L, Speaking.phoneReadMs(40))
     }
 }

@@ -4,6 +4,7 @@ package com.fidenit.kite.voice
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** 마이크를 쓸 수 없게 된 까닭 (코드가 알 수 있는 만큼): 이 앱에 마이크 권한이 없음, 열지 못함, 듣는 중에 멈춤. */
 enum class MicProblem { PERMISSION, OPEN, STOPPED }
@@ -105,16 +106,23 @@ object Speaking {
      * 폰의 기본 음성으로 문장 하나를 읽고, 다 읽을 때까지 기다린다. `ready`: 폰의 음성 엔진이 켜졌는가 (처음에는 켜질 때까지 기다린다).
      * `start`: 읽기를 시작시킨다. 엔진이 받아들였으면 참을 돌려주고, 읽기가 끝나면 넘겨받은 `done` 을 부른다 (오류로 끝났으면 거짓으로).
      * 엔진이 안 켜졌거나, 읽기를 받아들이지 않았거나, 읽다가 오류가 났으면 예외를 낸다: 그 문장은 읽지 못한 것이다.
-     * 어느 경우에도 끝없이 기다리지 않는다 (받아들이지 않은 읽기에는 끝났다는 알림이 오지 않는다).
+     * 어느 경우에도 끝없이 기다리지 않는다: 받아들이지 않은 읽기는 기다리지 않고, 엔진이 켜지기는 `readyMs` 까지,
+     * 읽기가 끝나기는 `readMs` 까지만 기다린다 (넘으면 읽지 못한 것으로 친다: 다음 문장이 막히지 않는다).
      * 엔진이 켜지기를 기다리는 사이에 멈췄으면 (`current` 가 거짓) 읽지 않는다: 그사이 다음 말이 다른 목소리로 나가고 있을 수 있다.
      */
-    suspend fun phone(ready: suspend () -> Boolean, current: () -> Boolean, start: (done: (Boolean) -> Unit) -> Boolean) {
-        if (!ready()) throw Exception("the phone's speech engine did not start")
+    suspend fun phone(ready: suspend () -> Boolean, current: () -> Boolean, readMs: Long, readyMs: Long = PHONE_READY_MS, start: (done: (Boolean) -> Unit) -> Boolean) {
+        if (withTimeoutOrNull(readyMs) { ready() } != true) throw Exception("the phone's speech engine did not start")
         if (!current()) return
         val done = CompletableDeferred<Boolean>()
         if (!start { done.complete(it) }) throw Exception("the phone's speech engine did not take the sentence")
-        if (!done.await()) throw Exception("the phone's speech engine failed while reading")
+        if (withTimeoutOrNull(readMs) { done.await() } != true) throw Exception("the phone's speech engine failed while reading or did not finish in time")
     }
+
+    /** 폰의 음성 엔진이 켜지기를 기다리는 한도: 10초. */
+    const val PHONE_READY_MS = 10_000L
+
+    /** 폰의 기본 음성이 문장 하나를 다 읽기를 기다리는 한도: 5초 + 글자마다 1초 (느리게 읽도록 맞춘 폰에서도 넉넉하게). */
+    fun phoneReadMs(chars: Int): Long = 5_000L + 1_000L * chars
 
     /**
      * 마이크를 쓸 수 없을 때 화면에 띄울 한 줄 (무엇이 문제 → 앱이 한 일 → 할 일). 앱은 그때 말로 대화하기를 끈다.
