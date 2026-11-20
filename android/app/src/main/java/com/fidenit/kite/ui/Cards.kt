@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -31,6 +32,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -39,10 +42,12 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
@@ -85,7 +90,7 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
     val b = vm.board
     // In a field named `text`, the two characters \n are shown as a line break (protocol 0.3).
     fun f(name: String) = b.show(card.field(name)).let { if (name == "text") it.replace("\\n", "\n") else it }
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(C.card).padding(16.dp)) {
+    Column(Modifier.testTag("card").fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(C.card).padding(16.dp)) {
         if (card.title.isNotEmpty()) {
             Text(b.show(card.title), color = C.text, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
@@ -260,6 +265,10 @@ private fun InputCard(vm: KiteViewModel, card: Card) {
     }
     val sent = card.field("sent").isNotEmpty()
     val values = remember(card.id) { mutableStateMapOf<String, String>() }
+    val hide = rememberHideKeyboard()
+    // 이 카드의 글 칸: 마지막 칸만 Done, 나머지는 Next 로 다음 글 칸에 간다 (K3)
+    val boxes = card.items.filter { val h = it.cells.getOrElse(1) { "" }; !h.startsWith("slider") && !h.startsWith("choice ") }.map { it.id }
+    val focus = remember(card.id, boxes) { boxes.map { FocusRequester() } }
     for (item in card.items) {
         val name = item.cells[0]
         val hint = item.cells.getOrElse(1) { "" }
@@ -290,14 +299,16 @@ private fun InputCard(vm: KiteViewModel, card: Card) {
                 }
             }
         } else {
+            val at = boxes.indexOf(item.id)
             OutlinedTextField(
                 value = values[item.id].orEmpty(),
                 onValueChange = { values[item.id] = it },
                 label = { Text(name) },
                 placeholder = { Text(if (hint == "date") "예: 12/3" else if (hint == "time") "예: 18:30" else if (hint == "number") "숫자" else hint, color = C.faint) },
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = if (hint == "number") KeyboardType.Number else KeyboardType.Text),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                keyboardOptions = KeyboardOptions(keyboardType = if (hint == "number") KeyboardType.Number else KeyboardType.Text, imeAction = if (at == boxes.lastIndex) ImeAction.Done else ImeAction.Next),
+                keyboardActions = KeyboardActions(onNext = { focus.getOrNull(at + 1)?.requestFocus() }, onDone = { hide() }),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).focusRequester(focus[at]).testTag("card-field"),
             )
         }
     }
@@ -305,7 +316,10 @@ private fun InputCard(vm: KiteViewModel, card: Card) {
         Spacer(Modifier.height(4.dp))
         // A box whose name ends with `*` must be filled before the form can be sent.
         val missing = card.items.any { it.cells[0].trimEnd().endsWith("*") && values[it.id].isNullOrBlank() }
-        Pill(if (vm.store.lang == "en") "Send" else "보내기", selected = !missing) { if (!missing) vm.submit(card, values.toMap()) }
+        Pill(if (vm.store.lang == "en") "Send" else "보내기", selected = !missing, modifier = Modifier.testTag("card-submit")) {
+            hide() // K3
+            if (!missing) vm.submit(card, values.toMap())
+        }
     }
 }
 

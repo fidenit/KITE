@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,9 +51,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
@@ -103,6 +109,19 @@ fun Pill(label: String, selected: Boolean = false, color: Color = C.text, modifi
     )
 }
 
+/** 글 칸의 포커스를 풀고 자판을 내린다 (K1 바깥 누름, K2 보낸 뒤, K3·K4 Done). */
+@Composable
+fun rememberHideKeyboard(): () -> Unit {
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    return remember(focus, keyboard) {
+        {
+            focus.clearFocus()
+            keyboard?.hide()
+        }
+    }
+}
+
 @Composable
 fun KiteApp(vm: KiteViewModel) {
     var page by remember { mutableStateOf(if (vm.needsSetup()) "settings" else "board") }
@@ -112,7 +131,9 @@ fun KiteApp(vm: KiteViewModel) {
         onDispose { }
     }
     MaterialTheme(colorScheme = darkColorScheme(primary = C.accent, background = C.bg, surface = C.card, onBackground = C.text, onSurface = C.text)) {
-        Box(Modifier.fillMaxSize().background(C.bg).systemBarsPadding().imePadding()) {
+        val hide = rememberHideKeyboard()
+        // 글 칸도 버튼도 아닌 곳을 누르면 자판을 내린다 (K1). 버튼·글 칸이 먼저 받아 쓰므로 그 누름은 여기까지 오지 않는다.
+        Box(Modifier.fillMaxSize().background(C.bg).systemBarsPadding().imePadding().testTag("root").pointerInput(hide) { detectTapGestures(onTap = { hide() }) }) {
             when (page) {
                 "settings" -> {
                     BackHandler { page = "board" }
@@ -136,7 +157,7 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
     val english = vm.store.lang == "en"
     Column(Modifier.fillMaxSize()) {
         // 주제
-        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().testTag("top-bar").padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (t in board.topics) {
                     val on = t.id == vm.current
@@ -155,9 +176,9 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
                 if (board.topics.isEmpty()) Text(if (com.fidenit.kite.BuildConfig.PRO) "APERIT Pro" else "APERIT", color = C.text, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(6.dp))
             }
             Spacer(Modifier.width(8.dp))
-            Pill(if (english) "Talk log" else "대화 기록", onClick = onLog)
+            Pill(if (english) "Talk log" else "대화 기록", modifier = Modifier.testTag("top-log"), onClick = onLog)
             Spacer(Modifier.width(6.dp))
-            Pill(if (english) "Settings" else "설정", onClick = onSettings)
+            Pill(if (english) "Settings" else "설정", modifier = Modifier.testTag("top-settings"), onClick = onSettings)
         }
 
         vm.error?.let { e ->
@@ -176,7 +197,7 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
         val importance = vm.importance
         val ordered = waiting + cards.filter { it !in waiting }.sortedBy { -Decide.level(importance[it.id]) }
         if (ordered.isEmpty()) {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(Modifier.weight(1f).fillMaxWidth().testTag("board-empty"), contentAlignment = Alignment.Center) {
                 // Pro 에는 말로 대화하기가 없고 화면에 안내 문장을 두지 않는다 (A2)
                 if (!com.fidenit.kite.BuildConfig.PRO) {
                     Text(
@@ -188,7 +209,7 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
                 }
             }
         } else {
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("board-list"), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(ordered, key = { it.id }) { card -> CardView(vm, card, rev) }
             }
         }
@@ -213,7 +234,9 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) vm.converse(true) else vm.error = if (english) "Microphone permission is needed to talk." else "말로 대화하려면 마이크 권한이 필요합니다."
     }
-    Column(Modifier.fillMaxWidth().background(C.bg).padding(horizontal = 14.dp, vertical = 10.dp)) {
+    val hide = rememberHideKeyboard()
+    val fieldFocus = remember { FocusRequester() }
+    Column(Modifier.fillMaxWidth().testTag("bottom-bar").background(C.bg).padding(horizontal = 14.dp, vertical = 10.dp)) {
         // 한마디
         val say = vm.liveSay ?: vm.board.show(vm.board.say)
         if (say.isNotEmpty()) Text(say, color = C.text, fontSize = 18.sp, lineHeight = 25.sp, fontWeight = FontWeight.Medium)
@@ -233,7 +256,9 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
-                Modifier.weight(1f).heightIn(min = BAR_H).testTag("bar-input").clip(RoundedCornerShape(22.dp)).background(C.card).border(1.dp, C.line, RoundedCornerShape(22.dp)).padding(horizontal = 16.dp, vertical = 13.dp),
+                Modifier.weight(1f).heightIn(min = BAR_H).testTag("bar-input").clip(RoundedCornerShape(22.dp)).background(C.card).border(1.dp, C.line, RoundedCornerShape(22.dp))
+                    .pointerInput(Unit) { detectTapGestures(onTap = { fieldFocus.requestFocus() }) } // 칸 안의 여백도 글 칸이다 (K1 로 내리지 않는다)
+                    .padding(horizontal = 16.dp, vertical = 13.dp),
                 contentAlignment = Alignment.CenterStart, // 한 줄일 때 글자가 가운데 (네 줄까지는 그대로 늘어난다)
             ) {
                 if (input.isEmpty()) Text(if (english) "Type here" else "여기에 적기", color = C.faint, fontSize = 16.sp)
@@ -247,8 +272,9 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
                     keyboardActions = KeyboardActions(onSend = {
                         vm.send(input)
                         input = ""
+                        hide() // K2
                     }),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().focusRequester(fieldFocus).testTag("bar-field"),
                 )
             }
             Spacer(Modifier.width(8.dp))
@@ -256,6 +282,7 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
                 Pill(if (english) "Send" else "보내기", selected = true, modifier = Modifier.testTag("bar-send"), height = BAR_H) {
                     vm.send(input)
                     input = ""
+                    hide() // K2
                 }
             } else {
                 if (vm.busy || vm.speaking) {
@@ -301,7 +328,7 @@ private fun TalkLog(vm: KiteViewModel, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(if (english) "Talk log" else "대화 기록", color = C.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Pill(if (english) "Back" else "돌아가기", onClick = onBack)
+            Pill(if (english) "Back" else "돌아가기", modifier = Modifier.testTag("page-back"), onClick = onBack)
         }
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp), reverseLayout = true) {
             items(vm.recent.reversed()) { (user, ali) ->

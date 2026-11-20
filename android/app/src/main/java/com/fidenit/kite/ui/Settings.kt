@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
@@ -24,8 +25,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -53,6 +56,7 @@ private fun Hint(text: String) {
 @Composable
 private fun Field(label: String, initial: String, secret: Boolean = false, lines: Int = 1, number: Boolean = false, onChange: (String) -> Unit) {
     var v by remember { mutableStateOf(initial) }
+    val hide = rememberHideKeyboard()
     OutlinedTextField(
         value = v,
         onValueChange = {
@@ -64,7 +68,9 @@ private fun Field(label: String, initial: String, secret: Boolean = false, lines
         minLines = lines,
         maxLines = if (lines == 1) 1 else 6,
         visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
-        keyboardOptions = KeyboardOptions(keyboardType = if (number) KeyboardType.Number else if (secret) KeyboardType.Password else KeyboardType.Ascii),
+        // 한 줄 칸은 Done 으로 자판을 내린다 (K4). 여러 줄 칸의 Enter 는 줄바꿈 그대로
+        keyboardOptions = KeyboardOptions(keyboardType = if (number) KeyboardType.Number else if (secret) KeyboardType.Password else KeyboardType.Ascii, imeAction = if (lines == 1) ImeAction.Done else ImeAction.Default),
+        keyboardActions = KeyboardActions(onDone = { hide() }),
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
     )
 }
@@ -96,7 +102,7 @@ fun SettingsScreen(vm: KiteViewModel, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("설정", color = C.text, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Pill("돌아가기", selected = true) {
+            Pill("돌아가기", selected = true, modifier = Modifier.testTag("page-back")) {
                 vm.resetEngine()
                 onBack()
             }
