@@ -4,6 +4,10 @@ APERIT was called KITE up to version 0.3; the entries below 0.4.0 use the name o
 
 The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://github.com/fidenit/patet/blob/main/CHANGELOG.md).
 
+## Android 0.3.1 (not released yet)
+
+- The input box and the buttons beside it (Send, Stop, Talk) have the same height.
+
 ## Android 0.3.0 (not released yet)
 
 - **APERIT Pro can talk.** Speech in and speech out go through our gateway with the phone's own device secret; the ElevenLabs key stays on the server and nothing is entered on the phone. The Talk button, the microphone button and the voice settings (conversation language and microphone sensitivity only) appear when the server says this phone may use its voice, and stay hidden otherwise. When the server's voice fails, the sentence and the rest of that answer are read with the phone's own voice and one line says so, once per conversation; a sentence that broke off after part of it was played is not read again. When the server cannot turn speech into text, the words are not sent and talking is switched off with one line; when the server cannot be reached the app keeps listening. The lines name no key and none of the app's settings; only when the phone's own voice cannot be used either do they point to the phone's text-to-speech setting. When the server switches talking off during a conversation, the conversation ends with one line. The free app is unchanged.

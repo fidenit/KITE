@@ -22,11 +22,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -52,10 +54,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -76,20 +80,25 @@ object C {
     val amber = Color(0xFFF5B83D)
 }
 
-/** 테두리만 있는 알약형 버튼 */
+/** 아래 줄(입력칸·보내기·멈춤·대화)의 한 높이: 둥근 대화 버튼의 크기. 한 줄에 놓인 것은 높이가 같다. */
+private val BAR_H = 54.dp
+
+/** 테두리만 있는 알약형 버튼. `height` 를 주면 그 높이에 글자를 가운데로 (아래 줄), 안 주면 지금 그대로. */
 @Composable
-fun Pill(label: String, selected: Boolean = false, color: Color = C.text, onClick: () -> Unit) {
+fun Pill(label: String, selected: Boolean = false, color: Color = C.text, modifier: Modifier = Modifier, height: Dp? = null, onClick: () -> Unit) {
     Text(
         label,
         color = if (selected) C.bg else color,
         fontSize = 14.sp,
         fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
         maxLines = 1,
-        modifier = Modifier
+        modifier = modifier
+            .let { if (height != null) it.height(height) else it }
             .clip(RoundedCornerShape(50))
             .background(if (selected) C.text else Color.Transparent)
             .border(1.dp, if (selected) C.text else C.line, RoundedCornerShape(50))
             .clickable(onClick = onClick)
+            .let { if (height != null) it.wrapContentHeight(Alignment.CenterVertically) else it }
             .padding(horizontal = 14.dp, vertical = 8.dp),
     )
 }
@@ -223,7 +232,10 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
         if (status.isNotEmpty()) Text(status, color = C.dim, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f).clip(RoundedCornerShape(22.dp)).background(C.card).border(1.dp, C.line, RoundedCornerShape(22.dp)).padding(horizontal = 16.dp, vertical = 13.dp)) {
+            Box(
+                Modifier.weight(1f).heightIn(min = BAR_H).testTag("bar-input").clip(RoundedCornerShape(22.dp)).background(C.card).border(1.dp, C.line, RoundedCornerShape(22.dp)).padding(horizontal = 16.dp, vertical = 13.dp),
+                contentAlignment = Alignment.CenterStart, // 한 줄일 때 글자가 가운데 (네 줄까지는 그대로 늘어난다)
+            ) {
                 if (input.isEmpty()) Text(if (english) "Type here" else "여기에 적기", color = C.faint, fontSize = 16.sp)
                 BasicTextField(
                     value = input,
@@ -241,13 +253,13 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
             }
             Spacer(Modifier.width(8.dp))
             if (input.isNotBlank()) {
-                Pill(if (english) "Send" else "보내기", selected = true) {
+                Pill(if (english) "Send" else "보내기", selected = true, modifier = Modifier.testTag("bar-send"), height = BAR_H) {
                     vm.send(input)
                     input = ""
                 }
             } else {
                 if (vm.busy || vm.speaking) {
-                    Pill(if (english) "Stop" else "멈춤", color = C.red) { vm.stop() }
+                    Pill(if (english) "Stop" else "멈춤", color = C.red, modifier = Modifier.testTag("bar-stop"), height = BAR_H) { vm.stop() }
                     Spacer(Modifier.width(8.dp))
                 }
                 // 마이크: 켜져 있으면 들리는 소리 크기만큼 테두리가 밝아진다. Pro 는 서버의 목소리를 쓸 수 있을 때만 (D-A1, 아니면 A1)
@@ -256,7 +268,8 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
                 val glow = if (on) (vm.micLevel * 12f).coerceIn(0f, 1f) else 0f
                 Box(
                     Modifier
-                        .size(54.dp)
+                        .size(BAR_H)
+                        .testTag("bar-talk")
                         .clip(CircleShape)
                         .background(if (on) C.accent.copy(alpha = 0.35f + 0.65f * glow) else Color.Transparent)
                         .border(1.5.dp, if (on) C.accent else C.line, CircleShape)

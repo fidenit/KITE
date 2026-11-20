@@ -29,9 +29,9 @@ android {
         create("pro") {
             dimension = "track"
             applicationIdSuffix = ".pro"
-            // Pro 0.3.0: 게이트웨이 판 + 서버의 목소리 (무료 앱의 판은 그대로)
-            versionCode = 4
-            versionName = "0.3.0"
+            // Pro 0.3.1: 게이트웨이 판 + 서버의 목소리, 아래 줄 높이 맞춤 (무료 앱의 판은 그대로)
+            versionCode = 5
+            versionName = "0.3.1"
             buildConfigField("boolean", "PRO", "true")
             // 중계 서버 주소는 빌드할 때 정한다: ./gradlew -PkiteRelayUrl=https://... assembleProDebug
             val relay = (project.findProperty("kiteRelayUrl") as String?) ?: "http://10.0.2.2:8787"
