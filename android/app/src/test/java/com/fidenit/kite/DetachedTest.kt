@@ -18,6 +18,14 @@ import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
 class DetachedTest {
+    private companion object {
+        /** 이 JVM 에서 한 번 고르는 다섯 자리: 가짜 실행의 sleep 값에 넣어, 같은 컴퓨터에서 동시에 도는 다른 시험 실행과 서로 보이지 않게 한다. */
+        val RUN: String = "%05d".format(Random.nextInt(100000))
+
+        /** 이 시험 실행만 쓰는 sleep 명령 (40초쯤 뒤 스스로 끝난다). */
+        fun mark(n: Int): String = "sleep 39.$RUN$n"
+    }
+
     private val cfg = EngineConfig("claude", "~/work dir", "acceptEdits", "low", "--model sonnet")
 
     @Test
@@ -180,7 +188,7 @@ class DetachedTest {
     private val okFake = "#!/bin/sh\nmkdir -p \"\$HOME/cap\"\necho \"\$*\" > \"\$HOME/cap/args\"\npwd > \"\$HOME/cap/pwd\"\ncat > \"\$HOME/cap/stdin\"\n" +
         "echo '{\"type\":\"system\",\"subtype\":\"init\"}'\nfor i in 1 2 3 4; do echo \"{\\\"type\\\":\\\"stream_event\\\",\\\"n\\\":\$i}\"; sleep 0.4; done\necho '{\"type\":\"result\",\"result\":\"ok\"}'\n"
 
-    /** 이 시험의 가짜 실행에서 아직 살아 있는 것: 명령 글에 시험 폴더나 이 시험만 쓰는 sleep 값이 있는 프로세스 (읽기만 한다). */
+    /** 이 시험의 가짜 실행에서 아직 살아 있는 것: 명령 글에 시험 폴더나 이 시험 실행만 쓰는 sleep 값([mark])이 있는 프로세스 (읽기만 한다). */
     private fun alive(home: File, mark: String): List<String> = sh(File("/"), "ps -eo args").lines.filter { (it.contains(home.absolutePath) || it.contains(mark)) && !it.contains("ps -eo") }
 
     private fun waitGone(home: File, mark: String, ms: Long): List<String> {
@@ -356,7 +364,7 @@ class DetachedTest {
     @Test
     fun stopEndsWrapperClaudeAndChildren() {
         assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
-        val mark = "sleep 37.31"
+        val mark = mark(1)
         val home = newHome(longFake + "$mark\n")
         val c = DetachedCommands(cfg)
         val id = "stop-1"
@@ -394,7 +402,7 @@ class DetachedTest {
     @Test
     fun stopEndsAClaudeThatIgnoresTerm() {
         assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
-        val mark = "sleep 37.32"
+        val mark = mark(2)
         val home = newHome("#!/bin/sh\ntrap '' TERM\ncat > /dev/null\necho '{\"type\":\"system\"}'\n$mark\n")
         val c = DetachedCommands(cfg)
         val id = "stop-2"
@@ -425,8 +433,8 @@ class DetachedTest {
     fun stopEndsADoubleForkedGrandchild() {
         assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
         assumeTrue(sh(File("/"), "command -v setsid >/dev/null 2>&1 && echo yes").lines == listOf("yes"))
-        val mark = "sleep 38.1"
-        val home = newHome("#!/bin/sh\ncat > /dev/null\n( trap '' TERM; sleep 38.11 & )\n( sleep 38.12 & )\necho '{\"type\":\"system\"}'\nsleep 38.13\n")
+        val mark = mark(5)
+        val home = newHome("#!/bin/sh\ncat > /dev/null\n( trap '' TERM; ${mark}1 & )\n( ${mark}2 & )\necho '{\"type\":\"system\"}'\n${mark}3\n")
         val c = DetachedCommands(cfg)
         val id = "stop-3"
         try {
@@ -434,7 +442,7 @@ class DetachedTest {
             assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
             Thread.sleep(600)
             val before = alive(home, mark)
-            assertTrue("손자가 돌고 있어야 한다: $before", before.any { it.contains("sleep 38.11") } && before.any { it.contains("sleep 38.12") } && before.any { it.contains("sleep 38.13") })
+            assertTrue("손자가 돌고 있어야 한다: $before", before.any { it.contains("${mark}1") } && before.any { it.contains("${mark}2") } && before.any { it.contains("${mark}3") })
             val st = sh(home, c.stop(id))
             assertTrue("멈춤이 ${st.ms}ms 걸림", st.ms < 5000)
             assertEquals("남은 프로세스", emptyList<String>(), waitGone(home, mark, 3000))
@@ -449,7 +457,7 @@ class DetachedTest {
     @Test
     fun stopBeforeStartLaunchesNothing() {
         assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
-        val mark = "sleep 37.37"
+        val mark = mark(7)
         val home = newHome(okFake)
         val c = DetachedCommands(cfg)
         val id = "stop-4"
@@ -478,7 +486,7 @@ class DetachedTest {
     @Test
     fun cleanOfARunningRunEndsIt() {
         assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
-        val mark = "sleep 37.35"
+        val mark = mark(6)
         val home = newHome(longFake + "$mark\n")
         val c = DetachedCommands(cfg)
         val id = "clean-1"
@@ -512,7 +520,7 @@ class DetachedTest {
         assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
         val home = newHome(okFake)
         val c = DetachedCommands(cfg)
-        val other = ProcessBuilder("sh", "-c", "echo \$\$; exec sleep 36.7").start()
+        val other = ProcessBuilder("sh", "-c", "echo \$\$; exec sleep 36.$RUN").start()
         val otherPid = other.inputStream.bufferedReader().readLine().trim() // 이 시험이 띄운 프로세스가 알려 준 자기 번호
         try {
             val runs = File(home, ".kite/runs").also { it.mkdirs() }
