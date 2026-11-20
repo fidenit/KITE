@@ -183,10 +183,27 @@ class DetachedTest {
         pb.environment()["HOME"] = home.absolutePath
         pb.redirectErrorStream(true)
         val proc = pb.start()
-        proc.outputStream.use { if (stdin != null) it.write(stdin.toByteArray()) }
-        val lines = proc.inputStream.bufferedReader().readLines()
-        assertTrue("시간 초과: $cmd", proc.waitFor(timeoutSec, TimeUnit.SECONDS))
-        return Out(lines, System.currentTimeMillis() - t0)
+        // 출력은 다른 스레드가 읽는다: 여기서 읽으면 명령이 끝나지 않을 때 시간 제한에 닿지 못한다
+        val lines = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val reader = kotlin.concurrent.thread(isDaemon = true) {
+            try {
+                proc.inputStream.bufferedReader().forEachLine { lines.add(it) }
+            } catch (_: Exception) {
+            }
+        }
+        try {
+            proc.outputStream.use { if (stdin != null) it.write(stdin.toByteArray()) }
+        } catch (_: java.io.IOException) {
+        }
+        val done = proc.waitFor(timeoutSec, TimeUnit.SECONDS)
+        if (!done) {
+            // 시간이 넘었다: 이 시험이 띄운 그 프로세스를 그 핸들로 끝내고, 읽는 쪽도 풀어 준다
+            proc.destroyForcibly()
+            runCatching { proc.inputStream.close() }
+        }
+        reader.join(if (done) 10_000 else 2000)
+        assertTrue("시간 초과(${timeoutSec}초): $cmd", done)
+        return Out(lines.toList(), System.currentTimeMillis() - t0)
     }
 
     private fun newHome(fake: String, dir: String = "work dir"): File {
@@ -376,6 +393,28 @@ class DetachedTest {
         assertEquals(1, Regex("(^|[\\s;])c=").findAll(r).count())
         assertTrue(r.contains("\nc=\$!\n"))
         assertEquals(listOf("TERM;", "KILL;"), Regex("\\bsw (\\S+)").findAll(r).map { it.groupValues[1] }.toList())
+        // 신호 함수들이 불리는 곳을 빠짐없이 적는다: 따옴표 없는 번호, 숫자로 적은 번호, 다른 변수는 여기서 걸린다
+        fun uses(name: String) = Regex("\\b$name\\b[^;\\n]*").findAll(r).map { it.value.trim() }.toList()
+        assertEquals(listOf("kill -\"\$2\" \"\$1\" 2>/dev/null", "kill -0 \"\$c\" 2>/dev/null || return 1"), uses("kill"))
+        assertEquals(listOf("k1() { ok \"\$1\" && kill -\"\$2\" \"\$1\" 2>/dev/null", "k1 \"\$1\" \"\$2\"", "k1 \"\$k\" \"\$1\" && o=1"), uses("k1"))
+        assertEquals(listOf("kt() { ok \"\$1\" || return 1", "kt \"\$k\" \"\$2\"", "kt \"\$c\" TERM", "kt \"\$c\" KILL"), uses("kt"))
+        assertEquals(listOf("sw() { o=0", "sw TERM", "sw KILL"), uses("sw"))
+        // 번호가 나오는 곳은 셋뿐이다: `$!`, 그리고 pgrep 을 바로 도는 for 두 개. `k` 는 그 for 에서만 정해진다
+        assertEquals(0, Regex("(^|[\\s;])k=").findAll(r).count())
+        assertEquals(listOf("for k in \$(exec pgrep -P \"\$1\" 2>/dev/null)", "for k in \$(exec pgrep -s \"\$\$\" 2>/dev/null)"), uses("for"))
+        // 다른 명령의 출력을 받는 곳도 그 둘과, 부모·좀비 검사의 ps 하나뿐이다 (`$((` 는 셈). 역따옴표는 없다
+        assertEquals(
+            listOf("\$(exec pgrep -P \"\$1\" 2>/dev/null)", "\$(exec pgrep -s \"\$\$\" 2>/dev/null)", "\$(ps -o ppid= -o stat= -p \"\$c\" 2>/dev/null)"),
+            Regex("\\$\\((?!\\()[^)]*\\)").findAll(r).map { it.value }.toList(),
+        )
+        assertFalse(r.contains("`"))
+        // 파일을 읽는 곳: claude 의 입력(.in)과 자기 자식의 /proc 상태 줄뿐
+        assertEquals(listOf("\"\$HOME/.kite/runs/$id.in\"", "\"/proc/\$c/stat\";"), Regex("<\\s*(\\S+)").findAll(r).map { it.groupValues[1] }.toList())
+        // 번호를 파일이나 다른 출력에서 뽑아낼 만한 명령, 이름으로 여럿을 끝내는 명령이 없다 (claude 한 줄은 빼고 본다)
+        val own = r.replace(c.claudeLine(), "").replace(procRead, "")
+        assertEquals(1, count(r, c.claudeLine()))
+        assertFalse(Regex("\\b(cat|head|tail|sed|awk|cut|grep|xargs|tr|read|source|eval|pkill|killall|killpg|skill|fuser)\\b").containsMatchIn(own))
+        assertEquals(3, count(r, "set --"))
         // 시작 글은 감싼 글을 그대로 싣고, 그 밖에는 신호를 보내는 명령이 없다
         assertEquals(2, count(c.start(id).replace("kt \"\$c\" KILL", "").replace("sw KILL;", "").lowercase(), "kill"))
         assertEquals(2, count(c.start(id), "pgrep"))
@@ -417,6 +456,81 @@ class DetachedTest {
             assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
             Thread.sleep(300)
             assertEquals(emptyList<String>(), alive(home, mark))
+        } finally {
+            endRuns(home, mark, id)
+        }
+    }
+
+    /** 이 컴퓨터의 진짜 명령 자리 (가짜를 PATH 맨 앞에 둘 때 그 가짜가 부를 것). */
+    private fun real(name: String): String = sh(File("/"), "command -v $name").lines.first().trim()
+
+    /** 시험 폴더의 `.local/bin` 에 가짜 명령을 둔다 (서버 명령은 PATH 맨 앞에 이 자리를 둔다). 가짜는 신호를 보내지 않는다: 부른 것을 적고 실패하거나 진짜를 부른다. */
+    private fun shim(home: File, name: String, body: String) {
+        val f = File(home, ".local/bin/$name")
+        f.writeText("#!/bin/sh\necho x >> \"\$HOME/$name.calls\"\n$body\n")
+        f.setExecutable(true)
+    }
+
+    private fun calls(home: File, name: String): Int = File(home, "$name.calls").let { if (it.exists()) it.readLines().size else 0 }
+
+    /** `ps` 가 실패해도 감싼 bash 는 멈춤 요청을 계속 지켜본다: 멈춤 뒤 실행이 끝나고 남는 프로세스가 없다. */
+    private fun stopEndsTheRunWithPs(psBody: String, id: String, mark: String) {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val home = newHome(longFake + "$mark\n")
+        shim(home, "ps", psBody)
+        val c = DetachedCommands(cfg)
+        try {
+            sh(home, c.upload(id), "hi")
+            assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
+            val pid = File(home, ".kite/runs/$id.pid").readText().trim()
+            Thread.sleep(1000)
+            assertTrue("가짜 ps 를 불렀어야 한다", calls(home, "ps") >= 1)
+            assertTrue("돌고 있어야 한다: ${alive(home, mark)}", alive(home, mark).any { it.contains(mark) })
+            assertTrue(runnerAlive(pid))
+            assertEquals("", exitOf(home, id))
+            assertEquals(listOf(Detached.STOP_SENT), sh(home, c.stop(id)).lines)
+            val exit = waitExit(home, id)
+            assertTrue("끝난 값: '$exit' (가짜 ps ${calls(home, "ps")}번 불림)", exit in listOf("143", "137"))
+            assertEquals("남은 프로세스", emptyList<String>(), waitGone(home, mark, 2000))
+            Thread.sleep(300)
+            assertFalse("감싼 bash 가 남았다", runnerAlive(pid))
+        } finally {
+            endRuns(home, mark, id)
+        }
+    }
+
+    /** `ps` 가 처음 한 번만 실패한다 (프로세스를 못 띄운 순간 같은 것). */
+    @Test
+    fun stopEndsTheRunWhenPsFailsOnce() {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        val ps = real("ps")
+        stopEndsTheRunWithPs("n=\$(wc -l < \"\$HOME/ps.calls\")\nif [ \"\$n\" -le 1 ]; then exit 1; fi\nexec $ps \"\$@\"", "ps-1", mark(8))
+    }
+
+    /** `ps` 가 늘 실패한다 (`-p` 를 모르는 BusyBox 의 ps 처럼). */
+    @Test
+    fun stopEndsTheRunWhenPsAlwaysFails() {
+        stopEndsTheRunWithPs("echo \"ps: invalid option -- 'p'\" >&2\nexit 1", "ps-2", mark(9))
+    }
+
+    /** 따라 읽기에서 `tr` 가 한 번 실패해도 (명령 글을 못 읽었다) 멀쩡한 실행을 lost 라 하지 않는다. */
+    @Test
+    fun followDoesNotSayLostWhenTrFailsOnce() {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        assumeTrue("명령 글을 /proc 에서 tr 로 읽는 컴퓨터에서만", File("/proc/self/cmdline").canRead())
+        val tr = real("tr")
+        val mark = mark(4)
+        val home = newHome(okFake)
+        shim(home, "tr", "n=\$(wc -l < \"\$HOME/tr.calls\")\nif [ \"\$n\" -le 1 ]; then exit 1; fi\nexec $tr \"\$@\"")
+        val c = DetachedCommands(cfg)
+        val id = "tr-1"
+        try {
+            sh(home, c.upload(id), "hi")
+            assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
+            val all = sh(home, c.follow(id, 0)).lines
+            assertTrue("가짜 tr 를 불렀어야 한다", calls(home, "tr") >= 1)
+            assertEquals(all.toString(), "APERITEXIT 0", all.last())
+            assertEquals(all.toString(), 6, Detached.countData(all))
         } finally {
             endRuns(home, mark, id)
         }
@@ -545,9 +659,10 @@ class DetachedTest {
         assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
         val home = newHome(okFake)
         val c = DetachedCommands(cfg)
-        val other = ProcessBuilder("sh", "-c", "echo \$\$; exec sleep 36.$RUN").start()
-        val otherPid = other.inputStream.bufferedReader().readLine().trim() // 이 시험이 띄운 프로세스가 알려 준 자기 번호
+        var started: Process? = null
         try {
+            val other = ProcessBuilder("sh", "-c", "echo \$\$; exec sleep 36.$RUN").start().also { started = it }
+            val otherPid = other.inputStream.bufferedReader().readLine().trim() // 이 시험이 띄운 프로세스가 알려 준 자기 번호
             val runs = File(home, ".kite/runs").also { it.mkdirs() }
             File(runs, "f1.in").writeText("hi")
             File(runs, "f1.pid").writeText(otherPid + "\n")
@@ -569,7 +684,7 @@ class DetachedTest {
             assertTrue("남의 프로세스가 살아 있어야 한다", other.isAlive)
             assertEquals(listOf("f1.exit", "f2.stop"), runs.list()!!.sorted())
         } finally {
-            other.destroyForcibly()
+            started?.destroyForcibly()
             home.deleteRecursively()
         }
     }
