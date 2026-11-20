@@ -155,7 +155,7 @@ class LivePlayTest {
                 while (true) {
                     val l = logs.poll() ?: break
                     if (l.startsWith("live speak stopped")) stopped = true
-                    if (l.startsWith("live speak close=upstream")) closed = true
+                    if (l.startsWith("live speak close=code4502")) closed = true
                 }
             }
             assertTrue("the speaker is still blocked", out.gate.count == 1L)
