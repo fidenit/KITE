@@ -41,6 +41,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -63,6 +64,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
@@ -71,8 +73,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.fidenit.kite.KiteViewModel
@@ -92,7 +96,22 @@ object C {
     val amber = Color(0xFFF5B83D)
 }
 
-/** 테두리만 있는 알약형 버튼. 높이는 고정이고 글자는 가운데 (아래 줄 밖은 [Dim.PILL_H], 아래 줄은 [Dim.BAR_H] 를 준다). */
+/**
+ * 한 줄에 나란한 칸들의 높이: 보통 글꼴에서는 [min] 그대로, 글꼴을 크게 키워 [sizes] 의 글자 한 줄이 그보다 높으면 그 높이.
+ * 같은 줄의 칸이 모두 이 값을 쓰니 높이가 같이 커진다 (글자는 잘리지 않는다).
+ */
+@Composable
+fun rowHeight(min: Dp, sizes: List<TextUnit>): Dp {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val base = LocalTextStyle.current
+    return remember(min, sizes, measurer, density, base) {
+        val tallest = sizes.maxOf { measurer.measure("가Ag", base.merge(TextStyle(fontSize = it, fontWeight = FontWeight.Bold)), maxLines = 1).size.height }
+        maxOf(min, with(density) { tallest.toDp() })
+    }
+}
+
+/** 테두리만 있는 알약형 버튼. 글자는 가운데, 높이는 적어도 [height] (아래 줄 밖은 [Dim.PILL_H], 줄 높이를 맞출 때는 [rowHeight]); 글꼴이 아주 크면 글자 한 줄만큼 커진다. */
 @Composable
 fun Pill(label: String, selected: Boolean = false, color: Color = C.text, modifier: Modifier = Modifier, height: Dp = Dim.PILL_H, onClick: () -> Unit) {
     Text(
@@ -102,7 +121,7 @@ fun Pill(label: String, selected: Boolean = false, color: Color = C.text, modifi
         fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
         maxLines = 1,
         modifier = modifier
-            .height(height)
+            .heightIn(min = height)
             .clip(RoundedCornerShape(50))
             .background(if (selected) C.text else Color.Transparent)
             .border(1.dp, if (selected) C.text else C.line, RoundedCornerShape(50))
@@ -216,6 +235,8 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
     var boardH by remember { mutableIntStateOf(0) }
     var dockH by remember { mutableIntStateOf(0) }
     val dockTopic = vm.dockedId?.let { board.card(it)?.topic }
+    // 위 줄의 주제·알약은 같은 높이 (보통 PILL_H, 글꼴이 아주 크면 같이 커진다)
+    val topH = rowHeight(Dim.PILL_H, listOf(Dim.topic, Dim.pill))
     Column(Modifier.fillMaxSize()) {
         // 주제
         Row(Modifier.fillMaxWidth().testTag("top-bar").padding(start = Dim.topPadH, end = Dim.topPadH, top = Dim.topPadTop, bottom = Dim.topPadBottom), verticalAlignment = Alignment.CenterVertically) {
@@ -231,7 +252,7 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
                             maxLines = 1,
                             // 같은 줄의 알약과 같은 높이, 글자는 가운데
                             modifier = Modifier
-                                .height(Dim.PILL_H)
+                                .height(topH)
                                 .clip(RoundedCornerShape(Dim.topicCorner))
                                 .combinedClickable(onClick = { vm.current = t.id }, onLongClick = { vm.archive(t.id) })
                                 .wrapContentHeight(Alignment.CenterVertically)
@@ -241,12 +262,12 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
                         if (t.id == dockTopic) Box(Modifier.align(Alignment.TopEnd).padding(top = Dim.topicDotTop, end = Dim.topicDotEnd).size(Dim.topicDot).clip(CircleShape).background(C.accent).testTag("topic-dot"))
                     }
                 }
-                if (board.topics.isEmpty()) Text(if (com.fidenit.kite.BuildConfig.PRO) "APERIT Pro" else "APERIT", color = C.text, fontSize = Dim.topic, fontWeight = FontWeight.Bold, modifier = Modifier.height(Dim.PILL_H).wrapContentHeight(Alignment.CenterVertically).padding(horizontal = Dim.topicPadH))
+                if (board.topics.isEmpty()) Text(if (com.fidenit.kite.BuildConfig.PRO) "APERIT Pro" else "APERIT", color = C.text, fontSize = Dim.topic, fontWeight = FontWeight.Bold, modifier = Modifier.height(topH).wrapContentHeight(Alignment.CenterVertically).padding(horizontal = Dim.topicPadH))
             }
             Spacer(Modifier.width(Dim.topTopicsGap))
-            Pill(if (english) "Talk log" else "대화 기록", modifier = Modifier.testTag("top-log"), onClick = onLog)
+            Pill(if (english) "Talk log" else "대화 기록", modifier = Modifier.testTag("top-log"), height = topH, onClick = onLog)
             Spacer(Modifier.width(Dim.topPillGap))
-            Pill(if (english) "Settings" else "설정", modifier = Modifier.testTag("top-settings"), onClick = onSettings)
+            Pill(if (english) "Settings" else "설정", modifier = Modifier.testTag("top-settings"), height = topH, onClick = onSettings)
         }
 
         vm.error?.let { e ->
@@ -324,9 +345,11 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean, dock: @Composable () 
         // 내 차례 칸: 입력 줄 바로 위 (붙은 카드가 없으면 아무것도 그리지 않는다)
         dock()
         Spacer(Modifier.height(Dim.barRowTop))
+        // 아래 줄의 글 칸(한 줄일 때)·알약·마이크는 같은 높이: 보통 BAR_H, 글꼴이 아주 크면 같이 커진다
+        val barH = rowHeight(Dim.BAR_H, listOf(Dim.input, Dim.pill, Dim.talk))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
-                Modifier.weight(1f).heightIn(min = Dim.BAR_H).testTag("bar-input").clip(RoundedCornerShape(Dim.inputCorner)).background(C.card).border(1.dp, C.line, RoundedCornerShape(Dim.inputCorner))
+                Modifier.weight(1f).heightIn(min = barH).testTag("bar-input").clip(RoundedCornerShape(Dim.inputCorner)).background(C.card).border(1.dp, C.line, RoundedCornerShape(Dim.inputCorner))
                     .pointerInput(Unit) { detectTapGestures(onTap = { fieldFocus.requestFocus() }) } // 칸 안의 여백도 글 칸이다 (K1 로 내리지 않는다)
                     .padding(horizontal = Dim.inputPadH, vertical = if (multiLine) Dim.inputPadV else 0.dp),
                 // 한 줄일 때 글자가 BAR_H 안 가운데 (글자를 키워도 한 줄이면 BAR_H), 두 줄부터 위아래 여백을 두고 네 줄까지 늘어난다
@@ -351,14 +374,14 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean, dock: @Composable () 
             }
             Spacer(Modifier.width(Dim.barGap))
             if (input.isNotBlank()) {
-                Pill(if (english) "Send" else "보내기", selected = true, modifier = Modifier.testTag("bar-send"), height = Dim.BAR_H) {
+                Pill(if (english) "Send" else "보내기", selected = true, modifier = Modifier.testTag("bar-send"), height = barH) {
                     vm.send(input)
                     input = ""
                     hide() // K2
                 }
             } else {
                 if (vm.busy || vm.speaking) {
-                    Pill(if (english) "Stop" else "멈춤", color = C.red, modifier = Modifier.testTag("bar-stop"), height = Dim.BAR_H) { vm.stop() }
+                    Pill(if (english) "Stop" else "멈춤", color = C.red, modifier = Modifier.testTag("bar-stop"), height = barH) { vm.stop() }
                     Spacer(Modifier.width(Dim.barGap))
                 }
                 // 마이크: 켜져 있으면 들리는 소리 크기만큼 테두리가 밝아진다. Pro 는 서버의 목소리를 쓸 수 있을 때만 (D-A1, 아니면 A1)
@@ -367,7 +390,7 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean, dock: @Composable () 
                 val glow = if (on) (vm.micLevel * 12f).coerceIn(0f, 1f) else 0f
                 Box(
                     Modifier
-                        .size(Dim.BAR_H)
+                        .size(barH)
                         .testTag("bar-talk")
                         .clip(CircleShape)
                         .background(if (on) C.accent.copy(alpha = 0.35f + 0.65f * glow) else Color.Transparent)

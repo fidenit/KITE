@@ -25,6 +25,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,12 +47,17 @@ import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import com.fidenit.kite.KiteViewModel
 import com.fidenit.kite.core.BoardLayout
 import com.fidenit.kite.core.BoardPoint
 import com.fidenit.kite.core.Card
 import com.fidenit.kite.core.GridSizes
 import java.lang.ref.WeakReference
+
+/** 줄 안에서 이 카드가 받는 폭 (dp). 카드는 이것으로 글자 크기를 그리기 전에 정한다 (지표 숫자). 줄 밖(내 차례 칸 등)은 Unspecified. */
+val LocalCardWidth = compositionLocalOf { Dp.Unspecified }
 
 /** 가리킨 카드가 반짝이는 동안 그 카드의 semantics 에 true 로 실린다 (화면 시험이 본다). */
 val FlashKey = SemanticsPropertyKey<Boolean>("AperitFlash")
@@ -117,10 +124,13 @@ fun BoardGrid(vm: KiteViewModel, cards: List<Card>, rev: Int, state: LazyListSta
             items(rows, key = { it.first().card.id }) { row ->
                 // 여러 장이면 가장 높은 카드에 맞춰 같은 높이 (혼자면 잴 필요가 없다)
                 val rowMod = if (row.size > 1) Modifier.height(IntrinsicSize.Min) else Modifier
+                val cardW = BoardLayout.cardWidth(row.size, inner, sizes).dp
                 Row(Modifier.fillMaxWidth().then(rowMod).testTag("board-row"), horizontalArrangement = Arrangement.spacedBy(Dim.cardGap)) {
                     for (cell in row) {
                         val m = Modifier.weight(1f).fillMaxHeight().flashMark(cell.card.id in flashing) { flash.value }
-                        if (cell.compact) AskCompact(vm, cell.card, m) else CardView(vm, cell.card, rev, m)
+                        CompositionLocalProvider(LocalCardWidth provides cardW) {
+                            if (cell.compact) AskCompact(vm, cell.card, m) else CardView(vm, cell.card, rev, m)
+                        }
                     }
                 }
             }

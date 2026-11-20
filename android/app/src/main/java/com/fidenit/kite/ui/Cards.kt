@@ -14,8 +14,6 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -52,17 +50,24 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineBreak
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import com.fidenit.kite.KiteViewModel
 import com.fidenit.kite.core.Card
 import com.fidenit.kite.core.Kind
@@ -94,14 +99,13 @@ private fun Dot(color: Color) = Box(Modifier.size(Dim.dot).clip(CircleShape).bac
 
 /** 본문: 좁은 카드에서도 같은 크기, 문단 줄바꿈. */
 @Composable
-internal fun Body(s: String, color: Color = C.text) = Text(s, color = color, fontSize = Dim.body, lineHeight = Dim.bodyLine, style = LocalTextStyle.current.merge(TextStyle(lineBreak = LineBreak.Paragraph)))
+internal fun Body(s: String, color: Color = C.text, modifier: Modifier = Modifier) = Text(s, color = color, fontSize = Dim.body, lineHeight = Dim.bodyLine, style = LocalTextStyle.current.merge(TextStyle(lineBreak = LineBreak.Paragraph)), modifier = modifier)
 
 /** 카드 제목: 말줄임 없이 줄을 바꾼다 (제목 줄바꿈). */
 @Composable
 internal fun CardTitle(s: String) = Text(s, color = C.text, fontSize = Dim.title, fontWeight = FontWeight.Bold, style = LocalTextStyle.current.merge(TextStyle(lineBreak = LineBreak.Heading)))
 
 /** 카드 하나. `rev` 는 보드가 바뀌었을 때 다시 그리게 하려고 받는다. `modifier` 는 카드 바탕(`card`)에 붙는다 (줄 안의 폭·높이, 반짝임). */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: Int, modifier: Modifier = Modifier) {
     val b = vm.board
@@ -117,30 +121,10 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
             Kind.Status -> Row(verticalAlignment = Alignment.CenterVertically) {
                 Dot(stateColor(card.field("state")))
                 Spacer(Modifier.width(Dim.dotGap))
-                Body(f("text"))
+                Body(f("text"), modifier = Modifier.weight(1f))
             }
             Kind.Metric -> {
-                // 숫자는 한 줄: 넘치면 Dim.metricSteps 차례로 줄이고, 마지막 크기에서도 넘치면 줄을 바꾼다. 단위·증감은 자리가 없으면 다음 줄로.
-                val value = f("value")
-                var step by remember(card.id, value) { mutableIntStateOf(0) }
-                val last = Dim.metricSteps.lastIndex
-                FlowRow {
-                    Text(
-                        value,
-                        color = C.text,
-                        fontSize = Dim.metricSteps[step],
-                        fontWeight = FontWeight.Bold,
-                        maxLines = if (step < last) 1 else Int.MAX_VALUE,
-                        softWrap = step >= last,
-                        onTextLayout = { if (it.hasVisualOverflow && step < last) step++ },
-                        modifier = Modifier.align(Alignment.Bottom),
-                    )
-                    if (f("unit").isNotEmpty()) Text(f("unit"), color = C.dim, fontSize = Dim.metricUnit, modifier = Modifier.align(Alignment.Bottom).padding(start = Dim.metricUnitStart, bottom = Dim.metricBaseline))
-                    val delta = f("delta")
-                    if (delta.isNotEmpty()) {
-                        Text(delta, color = if (delta.startsWith("+")) C.green else if (delta.startsWith("-")) C.red else C.dim, fontSize = Dim.metricDelta, modifier = Modifier.align(Alignment.Bottom).padding(start = Dim.metricDeltaStart, bottom = Dim.metricBaseline))
-                    }
-                }
+                MetricLine(f("value"), f("unit"), f("delta"))
                 if (f("text").isNotEmpty()) Body(f("text"), C.dim)
             }
             Kind.Chart -> Chart(vm, card)
@@ -171,7 +155,7 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                     Row(Modifier.padding(top = Dim.inGap), verticalAlignment = Alignment.CenterVertically) {
                         Dot(stateColor(item.cells[0]))
                         Spacer(Modifier.width(Dim.dotGap))
-                        Body(b.show(item.cells.getOrElse(1) { "" }), if (item.cells[0] == "todo") C.dim else C.text)
+                        Body(b.show(item.cells.getOrElse(1) { "" }), if (item.cells[0] == "todo") C.dim else C.text, Modifier.weight(1f))
                     }
                 }
             }
@@ -180,7 +164,7 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(Dim.checkRowCorner)).clickable { vm.toggle(card, item) }.padding(vertical = Dim.checkRowV), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(Dim.checkBox).clip(RoundedCornerShape(Dim.checkCorner)).background(if (done) C.green else Color.Transparent).border(1.5.dp, if (done) C.green else C.faint, RoundedCornerShape(Dim.checkCorner)))
                     Spacer(Modifier.width(Dim.checkGap))
-                    Body(b.show(item.cells.getOrElse(1) { "" }), if (done) C.dim else C.text)
+                    Body(b.show(item.cells.getOrElse(1) { "" }), if (done) C.dim else C.text, Modifier.weight(1f))
                 }
             }
             Kind.Decision -> {
@@ -226,7 +210,7 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                     if (name == "text" || name == "cols") continue
                     Row(Modifier.fillMaxWidth().padding(vertical = Dim.recordFieldV)) {
                         Text(name.replace('-', ' ').replace('_', ' '), color = C.dim, fontSize = Dim.small, modifier = Modifier.width(Dim.keyCol))
-                        Text(b.show(value), color = C.text, fontSize = Dim.body, fontWeight = FontWeight.Bold)
+                        Text(b.show(value), color = C.text, fontSize = Dim.body, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     }
                 }
                 val cols = com.fidenit.kite.core.Lang.splitCells(card.field("cols")).filter { it.isNotEmpty() }
@@ -248,7 +232,7 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                     Box(Modifier.padding(top = Dim.timeDotTop)) { Dot(stateColor(item.cells.getOrElse(2) { "" })) }
                     Spacer(Modifier.width(Dim.dotGap))
                     Text(b.show(item.cells[0]), color = C.dim, fontSize = Dim.smallPlus, modifier = Modifier.width(Dim.timeCol))
-                    Body(b.show(item.cells.getOrElse(1) { "" }))
+                    Body(b.show(item.cells.getOrElse(1) { "" }), modifier = Modifier.weight(1f))
                 }
             }
             Kind.Route -> {
@@ -258,7 +242,7 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                     Row(Modifier.padding(top = Dim.inGap), verticalAlignment = Alignment.CenterVertically) {
                         Dot(C.accent)
                         Spacer(Modifier.width(Dim.dotGap))
-                        Text(item.cells[0], color = C.text, fontSize = Dim.body, fontWeight = FontWeight.Bold)
+                        Text(item.cells[0], color = C.text, fontSize = Dim.body, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     }
                     item.cells.getOrNull(2)?.takeIf { it.isNotEmpty() }?.let { Text(it, color = C.dim, fontSize = Dim.small, modifier = Modifier.padding(start = Dim.dot + Dim.dotGap, top = Dim.noteTop)) }
                 }
@@ -282,6 +266,53 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                     }
                 }
             }
+        }
+    }
+}
+
+/** 숫자 칸의 첫 줄 크기: Dim.metricSteps 가운데 카드 안쪽 폭에 한 줄로 들어가는 첫 크기 (없으면 마지막 크기로 줄을 바꾼다). */
+private fun firstFit(widths: List<Float>, room: Float): Int = widths.indexOfFirst { it <= room }.let { if (it < 0) widths.lastIndex else it }
+
+/**
+ * 지표 숫자·단위·증감. 크기는 그리기 전에 카드 폭([LocalCardWidth], 모르면 화면 폭의 혼자인 카드)으로 정한다:
+ * 같은 줄 높이를 재는 측정과 실제 그리기가 같은 크기를 보고, 그린 뒤에 크기가 바뀌지 않는다.
+ * 셋이 한 줄에 들어가면 한 줄, 아니면 숫자 한 줄(넘치면 줄바꿈) 아래에 단위·증감.
+ */
+@Composable
+private fun MetricLine(value: String, unit: String, delta: String) {
+    val known = LocalCardWidth.current
+    val cardW = if (known.isSpecified) known else LocalConfiguration.current.screenWidthDp.dp - Dim.listPadH * 2
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    val base = LocalTextStyle.current
+    val room = with(density) { (cardW - Dim.cardPad * 2).toPx() }
+    fun width(s: String, size: TextUnit, bold: Boolean): Float =
+        if (s.isEmpty()) 0f else measurer.measure(s, base.merge(TextStyle(fontSize = size, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal)), maxLines = 1, softWrap = false).size.width.toFloat()
+    val (size, oneLine) = remember(value, unit, delta, room, measurer, base, density) {
+        val step = firstFit(Dim.metricSteps.map { width(value, it, true) }, room)
+        val sz = Dim.metricSteps[step]
+        val side = with(density) {
+            (if (unit.isEmpty()) 0f else Dim.metricUnitStart.toPx() + width(unit, Dim.metricUnit, false)) +
+                (if (delta.isEmpty()) 0f else Dim.metricDeltaStart.toPx() + width(delta, Dim.metricDelta, false))
+        }
+        sz to (width(value, sz, true) + side <= room)
+    }
+    val deltaColor = if (delta.startsWith("+")) C.green else if (delta.startsWith("-")) C.red else C.dim
+    if (oneLine) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(value, color = C.text, fontSize = size, fontWeight = FontWeight.Bold, maxLines = 1)
+            if (unit.isNotEmpty()) Text(unit, color = C.dim, fontSize = Dim.metricUnit, modifier = Modifier.padding(start = Dim.metricUnitStart, bottom = Dim.metricBaseline))
+            if (delta.isNotEmpty()) Text(delta, color = deltaColor, fontSize = Dim.metricDelta, modifier = Modifier.padding(start = Dim.metricDeltaStart, bottom = Dim.metricBaseline))
+        }
+    } else {
+        Text(value, color = C.text, fontSize = size, fontWeight = FontWeight.Bold)
+        if (unit.isNotEmpty() || delta.isNotEmpty()) {
+            val rest = buildAnnotatedString {
+                if (unit.isNotEmpty()) withStyle(SpanStyle(color = C.dim)) { append(unit) }
+                if (unit.isNotEmpty() && delta.isNotEmpty()) append("  ")
+                if (delta.isNotEmpty()) withStyle(SpanStyle(color = deltaColor)) { append(delta) }
+            }
+            Text(rest, fontSize = Dim.metricDelta, style = LocalTextStyle.current.merge(TextStyle(lineBreak = LineBreak.Paragraph)))
         }
     }
 }
@@ -408,12 +439,12 @@ private fun Chart(vm: KiteViewModel, card: Card) {
                     }
                 }
                 Spacer(Modifier.width(Dim.donutGap))
-                Column {
+                Column(Modifier.weight(1f)) {
                     rows.forEachIndexed { i, (name, v) ->
                         Row(Modifier.padding(vertical = Dim.legendRowV), verticalAlignment = Alignment.CenterVertically) {
                             Dot(shades[i % shades.size])
                             Spacer(Modifier.width(Dim.dotGap))
-                            Text("$name  ${label(v)} (${"%.0f".format(v / total * 100)}%)", color = C.text, fontSize = Dim.smallPlus)
+                            Text("$name  ${label(v)} (${"%.0f".format(v / total * 100)}%)", color = C.text, fontSize = Dim.smallPlus, modifier = Modifier.weight(1f))
                         }
                     }
                 }
