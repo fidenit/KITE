@@ -526,6 +526,39 @@ class DetachedTest {
         stopEndsTheRunWithPs("echo \"ps: invalid option -- 'p'\" >&2\nexit 1", "ps-2", mark(9))
     }
 
+    /**
+     * 멈춤 명령 안에서 감싼 bash 를 알아보는 검사(`tr`)가 두 번 실패해도, 멈춤은 살아 있는 감싼 bash 를 없다고 보고 `stopped` 를 적지 않는다.
+     * 바로 치워도 멈춤 요청은 남고, 실행은 감싼 bash 가 끝낸다 (끝난 값은 감싼 bash 가 적은 코드다).
+     */
+    @Test
+    fun stopStillEndsTheRunWhenItsCheckFailsTwice() {
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows"))
+        assumeTrue("명령 글을 /proc 에서 tr 로 읽는 컴퓨터에서만", File("/proc/self/cmdline").canRead())
+        val tr = real("tr")
+        val mark = mark(0)
+        val home = newHome(longFake + "$mark\n")
+        val c = DetachedCommands(cfg)
+        val id = "stop-5"
+        try {
+            sh(home, c.upload(id), "hi")
+            assertEquals(listOf("APERITRUN $id"), sh(home, c.start(id)).lines)
+            val pid = File(home, ".kite/runs/$id.pid").readText().trim()
+            Thread.sleep(600)
+            assertTrue("돌고 있어야 한다", alive(home, mark).any { it.contains(mark) })
+            shim(home, "tr", "n=\$(wc -l < \"\$HOME/tr.calls\")\nif [ \"\$n\" -le 2 ]; then exit 1; fi\nexec $tr \"\$@\"")
+            assertEquals(listOf(Detached.STOP_SENT), sh(home, c.stop(id)).lines)
+            assertTrue("가짜 tr 를 불렀어야 한다", calls(home, "tr") >= 1)
+            sh(home, c.clean(id))
+            val exit = waitExit(home, id)
+            assertTrue("끝난 값: '$exit' (가짜 tr ${calls(home, "tr")}번 불림)", exit in listOf("143", "137"))
+            assertEquals("남은 프로세스", emptyList<String>(), waitGone(home, mark, 2000))
+            Thread.sleep(300)
+            assertFalse("감싼 bash 가 남았다", runnerAlive(pid))
+        } finally {
+            endRuns(home, mark, id)
+        }
+    }
+
     /** 따라 읽기에서 `tr` 가 한 번 실패해도 (명령 글을 못 읽었다) 멀쩡한 실행을 lost 라 하지 않는다. */
     @Test
     fun followDoesNotSayLostWhenTrFailsOnce() {
@@ -688,14 +721,15 @@ class DetachedTest {
             assertEquals("stopped", File(runs, "f1.exit").readText().trim())
             sh(home, c.clean("f1"))
             assertTrue("남의 프로세스가 살아 있어야 한다", other.isAlive)
-            assertEquals(listOf("f1.exit"), runs.list()!!.toList())
+            // 끝난 값이 감싼 bash 가 적은 코드가 아니라 `stopped` 면 (감싼 bash 가 살아 있는지 잘못 봤을 수도 있다) 멈춤 요청은 지우지 않는다
+            assertEquals(listOf("f1.exit", "f1.stop"), runs.list()!!.sorted())
             // 끝난 값이 없는 채로 치워도 (멈춤 요청만 남는다) 그 프로세스는 그대로다
             File(runs, "f2.in").writeText("hi")
             File(runs, "f2.pid").writeText(otherPid + "\n")
             sh(home, c.clean("f2"))
             Thread.sleep(1500)
             assertTrue("남의 프로세스가 살아 있어야 한다", other.isAlive)
-            assertEquals(listOf("f1.exit", "f2.stop"), runs.list()!!.sorted())
+            assertEquals(listOf("f1.exit", "f1.stop", "f2.stop"), runs.list()!!.sorted())
         } finally {
             started?.destroyForcibly()
             home.deleteRecursively()

@@ -299,8 +299,8 @@ class DetachedCommands(private val cfg: EngineConfig) {
 
     /**
      * 멈춤: 신호를 보내지 않는다. 이 서버가 아는 실행(`.in` 이나 `.pid` 가 있다)이고 아직 끝나지 않았으면 멈춤 요청 파일 `.stop` 을 만들고,
-     * 바로 `APERITSTOP` 한 줄을 낸다 (앱은 이 줄로 멈춤이 서버에 닿았다고 본다). 그 뒤 감싼 bash 가 자기 자식을 끝내고 `.exit` 를 적기를 3초쯤 기다린다. `.pid` 의 번호가 이 실행의 감싼 bash 가 아니거나(서버가 다시 켜져
-     * 번호가 남의 것이 됐을 수 있다) 시작된 적이 없으면 `.exit` 에 `stopped` 를 적는다. 모르는 번호나 이미 끝난 실행에는 아무것도 하지 않는다.
+     * 바로 `APERITSTOP` 한 줄을 낸다 (앱은 이 줄로 멈춤이 서버에 닿았다고 본다). 그 뒤 감싼 bash 가 자기 자식을 끝내고 `.exit` 를 적기를 3초쯤 기다린다. `.pid` 의 번호가 세 번 잇달아 이 실행의 감싼 bash 가 아니거나(서버가 다시 켜져
+     * 번호가 남의 것이 됐을 수 있다; 검사 한두 번의 실패로는 그렇게 보지 않는다) 시작된 적이 없으면 `.exit` 에 `stopped` 를 적는다. 모르는 번호나 이미 끝난 실행에는 아무것도 하지 않는다.
      */
     fun stop(id: String): String {
         Detached.check(id)
@@ -312,26 +312,29 @@ class DetachedCommands(private val cfg: EngineConfig) {
             [ -s "${'$'}f.exit" ] && exit 0
             : > "${'$'}f.stop"
             echo "${Detached.STOP_SENT}"
-            i=0; p=
+            i=0; p=; m=0
             while [ ${'$'}i -lt 15 ] && [ ! -s "${'$'}f.exit" ]; do
               p=; { read -r p < "${'$'}f.pid"; } 2>/dev/null
-              if [ -n "${'$'}p" ]; then ours "${'$'}p" || break; elif [ ${'$'}i -ge 5 ]; then break; fi
+              if [ -z "${'$'}p" ]; then if [ ${'$'}i -ge 5 ]; then m=3; break; fi
+              elif ours "${'$'}p"; then m=0
+              else m=${'$'}((m+1)); if [ ${'$'}m -ge 3 ]; then break; fi
+              fi
               sleep 0.2; i=${'$'}((i+1))
             done
-            if [ ! -s "${'$'}f.exit" ] && ! ours "${'$'}p"; then sleep 0.3; [ -s "${'$'}f.exit" ] || echo stopped > "${'$'}f.exit"; fi
+            if [ ${'$'}m -ge 3 ] && [ ! -s "${'$'}f.exit" ]; then sleep 0.3; [ -s "${'$'}f.exit" ] || echo stopped > "${'$'}f.exit"; fi
             exit 0
             """.trimIndent(),
         )
     }
 
     /**
-     * 치우기: `.in .out .err .pid` 를 지운다. 아직 도는 실행(`.pid` 가 있고 `.exit` 가 없다)이면 멈춤 요청 `.stop` 을 남겨 감싼 bash 가 끝내게 하고,
-     * 아니면 `.stop` 도 지운다. `.in` 을 맨 먼저 지운다 (`.stop` 을 지운 뒤 늦게 닿은 시작이 `.in` 을 보고 띄우지 않게). `.exit` 는 남긴다 (이레 뒤 정리에서 지워진다): 이미 끝나 치워진 실행에 다시 붙으면
+     * 치우기: `.in .out .err .pid` 를 지운다. 아직 돌 수 있는 실행(`.pid` 가 있고, `.exit` 가 없거나 감싼 bash 가 적은 끝난 코드가 아니라 `stopped` 다)이면
+     * 멈춤 요청 `.stop` 을 남겨 감싼 bash 가 끝내게 하고, 아니면 `.stop` 도 지운다 (멈춤 요청은 감싼 bash 가 스스로 끝난 코드를 적은 뒤에만 지워진다). `.in` 을 맨 먼저 지운다 (`.stop` 을 지운 뒤 늦게 닿은 시작이 `.in` 을 보고 띄우지 않게). `.exit` 는 남긴다 (이레 뒤 정리에서 지워진다): 이미 끝나 치워진 실행에 다시 붙으면
      * `APERITEXIT gone` 이 나오고, 같은 말이 처음부터 다시 돌지 않는다.
      */
     fun clean(id: String): String = serverShell(
-        "rm -f ${path(id, "in")}; " +
-            "if [ -s ${path(id, "pid")} ] && [ ! -s ${path(id, "exit")} ]; then : > ${path(id, "stop")}; else rm -f ${path(id, "stop")}; fi; " +
+        "rm -f ${path(id, "in")}; x=; { read -r x < ${path(id, "exit")}; } 2>/dev/null; " +
+            "if [ -s ${path(id, "pid")} ] && { [ -z \"\$x\" ] || [ \"\$x\" = stopped ]; }; then : > ${path(id, "stop")}; else rm -f ${path(id, "stop")}; fi; " +
             "rm -f ${path(id, "out")} ${path(id, "err")} ${path(id, "pid")}",
     )
 
