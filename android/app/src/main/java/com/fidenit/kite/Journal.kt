@@ -227,16 +227,21 @@ class Journal(private val dir: File, private val async: Boolean = false) {
 
     fun readToClean(): List<String> = synchronized(lock) { cleanIds.toList() }
 
-    fun writeCurrent(id: String?) {
-        put(currentFile, id.orEmpty())
-    }
-
-    fun readCurrent(): String? = try {
-        flush()
+    // 지금 보는 주제도 메모리에 들고 있다 (만들 때 한 번 읽는다): 읽는 쪽(메인 스레드)이 디스크도 일꾼도 기다리지 않고, 방금 쓴 값을 그대로 읽는다.
+    @Volatile
+    private var currentId: String? = try {
         currentFile.readText().trim().ifEmpty { null }
     } catch (_: Exception) {
         null
     }
+
+    fun writeCurrent(id: String?) {
+        currentId = id?.trim()?.ifEmpty { null }
+        put(currentFile, id.orEmpty())
+    }
+
+    /** 지금 보는 주제 (마지막으로 쓴 값). 일꾼을 기다리지 않는다: 메인 스레드에서 부른다. */
+    fun readCurrent(): String? = currentId
 
     private fun strings(a: JSONArray): List<String> = (0 until a.length()).map { a.getString(it) }
 

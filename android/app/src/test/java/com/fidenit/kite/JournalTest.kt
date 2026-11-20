@@ -297,4 +297,28 @@ class JournalTest {
         assertEquals("마지막 보드", File(d, "board.txt").readText())
         d.deleteRecursively()
     }
+
+    /** J1: the current topic is read without waiting for the writer (the main thread reads it), and it is the value written last. */
+    @Test
+    fun theCurrentTopicIsReadWithoutWaitingForTheWriter() {
+        val d = dir()
+        Journal(d).writeCurrent("t1")
+        val j = Journal(d, async = true)
+        assertEquals("t1", j.readCurrent())
+        val hold = java.util.concurrent.CountDownLatch(1)
+        j.beforeApply = { _, _ -> hold.await(5, java.util.concurrent.TimeUnit.SECONDS) }
+        j.writeFile("board.txt", "보드") // the writer is stuck on this
+        val t0 = System.nanoTime()
+        j.writeCurrent("t2")
+        assertEquals("t2", j.readCurrent())
+        j.writeCurrent(null)
+        assertNull(j.readCurrent())
+        j.writeCurrent("t3")
+        assertEquals("t3", j.readCurrent())
+        assertTrue("no wait for the writer", (System.nanoTime() - t0) / 1_000_000 < 1000)
+        hold.countDown()
+        assertTrue(j.flush())
+        assertEquals("t3", Journal(d).readCurrent())
+        d.deleteRecursively()
+    }
 }
