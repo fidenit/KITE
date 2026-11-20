@@ -4,6 +4,11 @@ APERIT was called KITE up to version 0.3; the entries below 0.4.0 use the name o
 
 The apps. Changes to the protocol itself are in [PATET's CHANGELOG](https://github.com/fidenit/patet/blob/main/CHANGELOG.md).
 
+## Android 0.4.0 (not released yet)
+
+- The board fills rows with several cards side by side when they fit (up to 3 small or 2 text cards on a 411 dp phone, more in landscape and on tablets). Cards keep their board order, a row splits its width equally and its cards have the same height; text never gets smaller to make room (the row packer is `core/BoardLayout.kt`, drawn by `ui/BoardGrid.kt`).
+- "My turn" dock right above the input row: the one question the AI is waiting for (a decision or a form not answered yet, from any topic) sits there with a bar `● My turn · topic · N left … Next ›`. After an answer the next waiting question docks at once; with nothing else waiting the answered card stays as "Applying" until the AI is done, then the dock goes. The board above switches to the docked card's topic and flashes the cards the AI changed with that question. Other waiting questions show in the board as a small card with Answer, which brings them to the dock. Typed values stay when a card moves between the dock and the board. The dock is never higher than 60 % of the space above the input row while the board shows other cards.
+
 ## Android 0.3.2 (not released yet)
 
 - Everything on the screen is smaller: text, cards, buttons, the top bar and the bottom bar (body text 14 sp, buttons 32 dp, the bottom row 44 dp, text boxes 44 dp). All sizes are in one file, `android/app/src/main/java/com/fidenit/kite/ui/Dim.kt`.

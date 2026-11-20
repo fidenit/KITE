@@ -163,4 +163,16 @@ object Dim {
     val setStateTop = 4.dp
     val setChoiceV = 4.dp
     val setEnd = 40.dp
+
+    // 내 차례 칸 (memory/specs/aperit-pro-grid-dock-v1.md §C2): 상태 줄과 아래 입력 줄 사이. 줄의 모든 것은 PILL_H 높이
+    val DOCK_MAX = 0.6f // 칸(카드 + 줄) ≤ 이 비율 × (보드 목록 + 칸), 보드에 다른 카드가 있을 때. 없으면 입력 줄 위 전부
+    val DOCK_FADE_MS = 200 // 다음 카드가 들어오는 시간
+    val dockTop = 6.dp // 상태 줄과 카드 사이
+    val dockBarTop = 4.dp // 카드와 줄 사이
+    val dockText = 13.sp
+    val dockDot = 6.dp
+    val dockGap = 6.dp
+    val topicDot = 5.dp // 위 줄: 칸에 붙은 카드의 주제
+    val topicDotTop = 5.dp
+    val topicDotEnd = 1.dp
 }

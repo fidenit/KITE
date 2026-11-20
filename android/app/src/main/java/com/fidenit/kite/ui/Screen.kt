@@ -49,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -60,6 +61,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -210,26 +212,34 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
     val board = vm.board
     val english = vm.store.lang == "en"
     val listState = rememberLazyListState() // 보드 목록의 스크롤 (가리키기가 움직인다)
+    // 내 차례 칸의 높이 한도 (§C2): 보드 목록 + 칸의 높이는 칸이 커지고 줄어도 같다 (보드가 나머지를 채운다)
+    var boardH by remember { mutableIntStateOf(0) }
+    var dockH by remember { mutableIntStateOf(0) }
+    val dockTopic = vm.dockedId?.let { board.card(it)?.topic }
     Column(Modifier.fillMaxSize()) {
         // 주제
         Row(Modifier.fillMaxWidth().testTag("top-bar").padding(start = Dim.topPadH, end = Dim.topPadH, top = Dim.topPadTop, bottom = Dim.topPadBottom), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Dim.topicGap)) {
                 for (t in board.topics) {
                     val on = t.id == vm.current
-                    Text(
-                        t.name,
-                        color = if (on) C.text else C.dim,
-                        fontSize = Dim.topic,
-                        fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
-                        maxLines = 1,
-                        // 같은 줄의 알약과 같은 높이, 글자는 가운데
-                        modifier = Modifier
-                            .height(Dim.PILL_H)
-                            .clip(RoundedCornerShape(Dim.topicCorner))
-                            .combinedClickable(onClick = { vm.current = t.id }, onLongClick = { vm.archive(t.id) })
-                            .wrapContentHeight(Alignment.CenterVertically)
-                            .padding(horizontal = Dim.topicPadH),
-                    )
+                    Box {
+                        Text(
+                            t.name,
+                            color = if (on) C.text else C.dim,
+                            fontSize = Dim.topic,
+                            fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1,
+                            // 같은 줄의 알약과 같은 높이, 글자는 가운데
+                            modifier = Modifier
+                                .height(Dim.PILL_H)
+                                .clip(RoundedCornerShape(Dim.topicCorner))
+                                .combinedClickable(onClick = { vm.current = t.id }, onLongClick = { vm.archive(t.id) })
+                                .wrapContentHeight(Alignment.CenterVertically)
+                                .padding(horizontal = Dim.topicPadH),
+                        )
+                        // 내 차례 칸에 붙은 카드의 주제
+                        if (t.id == dockTopic) Box(Modifier.align(Alignment.TopEnd).padding(top = Dim.topicDotTop, end = Dim.topicDotEnd).size(Dim.topicDot).clip(CircleShape).background(C.accent).testTag("topic-dot"))
+                    }
                 }
                 if (board.topics.isEmpty()) Text(if (com.fidenit.kite.BuildConfig.PRO) "APERIT Pro" else "APERIT", color = C.text, fontSize = Dim.topic, fontWeight = FontWeight.Bold, modifier = Modifier.height(Dim.PILL_H).wrapContentHeight(Alignment.CenterVertically).padding(horizontal = Dim.topicPadH))
             }
@@ -253,7 +263,7 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
         val docked = vm.dockedId
         val ordered = board.cards.filter { it.topic == vm.current && it.id != docked }.sortedBy { -Decide.level(importance[it.id]) }
         if (ordered.isEmpty()) {
-            Box(Modifier.weight(1f).fillMaxWidth().testTag("board-empty"), contentAlignment = Alignment.Center) {
+            Box(Modifier.weight(1f).fillMaxWidth().onSizeChanged { boardH = it.height }.testTag("board-empty"), contentAlignment = Alignment.Center) {
                 // Pro 에는 말로 대화하기가 없고 화면에 안내 문장을 두지 않는다 (A2)
                 if (!com.fidenit.kite.BuildConfig.PRO) {
                     Text(
@@ -265,15 +275,18 @@ private fun BoardScreen(vm: KiteViewModel, onSettings: () -> Unit, onLog: () -> 
                 }
             }
         } else {
-            BoardGrid(vm, ordered, rev, listState, Modifier.weight(1f).fillMaxWidth())
+            BoardGrid(vm, ordered, rev, listState, Modifier.weight(1f).fillMaxWidth().onSizeChanged { boardH = it.height })
         }
 
-        BottomBar(vm, english)
+        // 보드에 다른 카드가 있으면 칸은 DOCK_MAX 까지, 없으면 입력 줄 위 전부
+        val area = boardH + dockH
+        val dockMax = if (area <= 0) 0 else if (ordered.isNotEmpty()) (area * Dim.DOCK_MAX).toInt() else area
+        BottomBar(vm, english) { TodoDock(vm, dockMax, dockH) { dockH = it } }
     }
 }
 
 @Composable
-private fun BottomBar(vm: KiteViewModel, english: Boolean) {
+private fun BottomBar(vm: KiteViewModel, english: Boolean, dock: @Composable () -> Unit = {}) {
     val context = LocalContext.current
     var input by remember { mutableStateOf("") }
     // Pro: 보내기 전에 막힌 말은 입력칸으로 돌아온다 (A4)
@@ -308,6 +321,8 @@ private fun BottomBar(vm: KiteViewModel, english: Boolean) {
             else -> vm.statsLine
         }
         if (status.isNotEmpty()) Text(status, color = C.dim, fontSize = Dim.status, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = Dim.statusTop))
+        // 내 차례 칸: 입력 줄 바로 위 (붙은 카드가 없으면 아무것도 그리지 않는다)
+        dock()
         Spacer(Modifier.height(Dim.barRowTop))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(

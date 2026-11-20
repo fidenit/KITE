@@ -3,12 +3,15 @@
 package com.fidenit.kite.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -30,9 +33,10 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -40,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -187,8 +192,8 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
                 val multi = card.field("multi") == "yes"
                 val danger = card.field("tone") == "danger"
                 val answered = card.field("chosen").isNotEmpty()
-                // With several answers a tap only marks the option; the answer goes out with "Done".
-                val marks = remember(card.id) { mutableStateMapOf<String, String>() }
+                // With several answers a tap only marks the option; the answer goes out with "Done". The marks live in the view model (dock ↔ board).
+                val marks = vm.marksOf(card.id)
                 Column(verticalArrangement = Arrangement.spacedBy(Dim.optGap)) {
                     for (item in card.items) {
                         val on = item.id in chosen || (multi && !answered && marks.containsKey(item.id))
@@ -281,6 +286,7 @@ fun CardView(vm: KiteViewModel, card: Card, @Suppress("UNUSED_PARAMETER") rev: I
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun InputCard(vm: KiteViewModel, card: Card) {
     val b = vm.board
@@ -289,11 +295,18 @@ private fun InputCard(vm: KiteViewModel, card: Card) {
         Spacer(Modifier.height(Dim.inGap))
     }
     val sent = card.field("sent").isNotEmpty()
-    val values = remember(card.id) { mutableStateMapOf<String, String>() }
+    // 적는 중인 값은 화면 모델에 둔다: 내 차례 칸과 보드를 오가도 남는다 (§C1)
+    val values = vm.draftOf(card.id)
     val hide = rememberHideKeyboard()
     // 이 카드의 글 칸: 마지막 칸만 Done, 나머지는 Next 로 다음 글 칸에 간다 (K3)
     val boxes = card.items.filter { val h = it.cells.getOrElse(1) { "" }; !h.startsWith("slider") && !h.startsWith("choice ") }.map { it.id }
     val focus = remember(card.id, boxes) { boxes.map { FocusRequester() } }
+    // 포커스를 받은 글 칸은 보이게 한다: 받을 때, 그리고 내 차례 칸의 높이가 바뀐 뒤 (자판이 올라와 칸이 줄었을 때) (§C2)
+    val bring = remember(card.id, boxes) { boxes.map { BringIntoViewRequester() } }
+    var focusedAt by remember(card.id) { mutableIntStateOf(-1) }
+    val dockHeight = LocalDockHeight.current
+    LaunchedEffect(focusedAt, dockHeight) { bring.getOrNull(focusedAt)?.bringIntoView() }
+    DisposableEffect(card.id) { onDispose { vm.fieldFocus(card.id, false) } }
     for (item in card.items) {
         val name = item.cells[0]
         val hint = item.cells.getOrElse(1) { "" }
@@ -332,7 +345,15 @@ private fun InputCard(vm: KiteViewModel, card: Card) {
                 placeholder = if (hint == "date") "예: 12/3" else if (hint == "time") "예: 18:30" else if (hint == "number") "숫자" else hint,
                 keyboardOptions = KeyboardOptions(keyboardType = if (hint == "number") KeyboardType.Number else KeyboardType.Text, imeAction = if (at == boxes.lastIndex) ImeAction.Done else ImeAction.Next),
                 keyboardActions = KeyboardActions(onNext = { focus.getOrNull(at + 1)?.requestFocus() }, onDone = { hide() }),
-                modifier = Modifier.focusRequester(focus[at]).testTag("card-field"),
+                modifier = Modifier.focusRequester(focus[at]).bringIntoViewRequester(bring[at]).onFocusChanged {
+                    if (it.isFocused) {
+                        focusedAt = at
+                        vm.fieldFocus(card.id, true)
+                    } else if (focusedAt == at) {
+                        focusedAt = -1
+                        vm.fieldFocus(card.id, false)
+                    }
+                }.testTag("card-field"),
             )
         }
     }

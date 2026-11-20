@@ -9,8 +9,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.fidenit.kite.core.Author
@@ -23,6 +25,8 @@ import com.fidenit.kite.core.Lang
 import com.fidenit.kite.core.LineStream
 import com.fidenit.kite.core.Op
 import com.fidenit.kite.core.Rejected
+import com.fidenit.kite.core.Todo
+import com.fidenit.kite.core.TodoPicker
 import com.fidenit.kite.core.partsTable
 import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import com.fidenit.kite.engine.Api
@@ -96,14 +100,27 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     var board = Board()
         private set
 
-    /** 보드가 바뀔 때마다 1씩 는다. 화면은 이 값을 읽어 다시 그린다. */
-    var rev by mutableIntStateOf(0)
-        private set
+    /** 보드가 바뀔 때마다 1씩 는다. 화면은 이 값을 읽어 다시 그린다. 늘 때마다 내 차례 칸을 다시 고른다 (§C1). */
+    private var revState by mutableIntStateOf(0)
+    var rev: Int
+        get() = revState
+        private set(v) {
+            revState = v
+            pickTodo()
+        }
 
     /** 지금 보고 있는 주제 */
     var current by mutableStateOf<String?>(null)
-    var busy by mutableStateOf(false)
-        private set
+
+    /** AI 가 도는 중. 바뀔 때마다 내 차례 칸을 다시 고른다 (§C1: 반영하는 중은 도는 동안만). */
+    private var busyState by mutableStateOf(false)
+    var busy: Boolean
+        get() = busyState
+        private set(v) {
+            if (busyState == v) return
+            busyState = v
+            pickTodo()
+        }
 
     /** 지금 하는 일 ("명령 실행: ..." 등) */
     var activity by mutableStateOf("")
@@ -182,7 +199,111 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     // --- board pointing: the grid (A) shows it, the dock (C) asks for it ---
     var dockedId by mutableStateOf<String?>(null)          // card shown in the dock; the board leaves it out
     var boardPoint by mutableStateOf<BoardPoint?>(null)     // scroll to + flash these cards once (new seq = new request)
-    fun dockAsk(id: String) { dockedId = id }              // C: real picker call
+    fun dockAsk(id: String) { picker.dockManually(id, Todo.asks(board)); afterPick() } // C: real picker call
+
+    // --- "내 차례" 칸 (memory/specs/aperit-pro-grid-dock-v1.md §C1): 고르기는 core/Todo.kt, 그리기는 ui/TodoDock.kt ---
+    /** 칸의 카드에 답했고, 기다리는 다른 일이 없고, AI 가 반영하는 중 ("반영하는 중") */
+    var dockApplying by mutableStateOf(false)
+        private set
+    private val picker = TodoPicker()
+
+    /** 답(고르기·보내기)을 AI 에게 넘기는 중: 턴이 시작되기 전이라도 반영하는 중으로 본다 */
+    private var answering = false
+
+    /** 글 칸에 포커스가 있는 카드 (적는 중인 카드는 AI 의 focus 로도 바꾸지 않는다) */
+    private var fieldFocusCard: String? = null
+
+    /** 적는 중인 값과 여러 답 표시: 카드 ID → 항목 ID → 값. 칸과 보드를 오가도 남고, 카드가 보드에서 빠지면 버린다. */
+    private val drafts = HashMap<String, SnapshotStateMap<String, String>>()
+    private val marks = HashMap<String, SnapshotStateMap<String, String>>()
+
+    /** 질문마다, 그 질문을 만들거나 마지막으로 고친 턴에 AI 가 건드린 같은 주제의 다른 카드 (칸에 붙으면 보드가 가리킨다) */
+    private val relatedOf = HashMap<String, List<String>>()
+    private var pointSeq = 0L
+    private var pointed: Pair<String, List<String>>? = null
+
+    fun draftOf(cardId: String): SnapshotStateMap<String, String> = drafts.getOrPut(cardId) { mutableStateMapOf() }
+    fun marksOf(cardId: String): SnapshotStateMap<String, String> = marks.getOrPut(cardId) { mutableStateMapOf() }
+
+    /** 기다리는 질문 (모든 주제, 보드 순서) */
+    fun waitingAsks(): List<Card> = Todo.asks(board)
+
+    /** 다음 › */
+    fun dockNext() {
+        picker.next(Todo.asks(board))
+        afterPick()
+    }
+
+    /** 입력 카드의 글 칸 포커스 (ui/Cards.kt) */
+    fun fieldFocus(cardId: String, on: Boolean) {
+        if (on) fieldFocusCard = cardId else if (fieldFocusCard == cardId) fieldFocusCard = null
+    }
+
+    private fun editingCard(id: String): Boolean {
+        if (fieldFocusCard == id) return true
+        val d = drafts[id] ?: return false
+        val card = board.card(id) ?: return false
+        return card.items.any { item -> val h = item.cells.getOrElse(1) { "" }; !h.startsWith("slider") && !h.startsWith("choice ") && !d[item.id].isNullOrBlank() }
+    }
+
+    private fun pickTodo() {
+        picker.update(Todo.asks(board), board.cards, busy || answering, board.focus, ::editingCard)
+        afterPick()
+    }
+
+    /** 고른 결과를 화면 상태로: 다른 카드가 붙으면 그 주제로 바꾸고 관련 카드를 가리킨다. */
+    private fun afterPick() {
+        val applyingChanged = dockApplying != picker.applying
+        dockApplying = picker.applying
+        if (drafts.isNotEmpty() || marks.isNotEmpty() || relatedOf.isNotEmpty()) {
+            val ids = board.cards.mapTo(HashSet()) { it.id }
+            drafts.keys.retainAll(ids)
+            marks.keys.retainAll(ids)
+            relatedOf.keys.retainAll(ids)
+        }
+        val id = picker.docked
+        if (id == dockedId) {
+            if (applyingChanged) dockLog(id, id?.let { board.card(it)?.topic }, 0)
+            return
+        }
+        dockedId = id
+        val card = id?.let { board.card(it) }
+        var rel = emptyList<String>()
+        if (card != null) {
+            if (current != card.topic) current = card.topic
+            rel = relatedOf[card.id] ?: if (card.id in touched) relatedFrom(touched, card) else emptyList()
+            pointed = card.id to rel
+            boardPoint = BoardPoint(rel, ++pointSeq)
+        }
+        dockLog(id, card?.topic, rel.size)
+    }
+
+    private fun relatedFrom(ids: Collection<String>, ask: Card): List<String> =
+        board.cards.filter { it.id in ids && it.id != ask.id && it.topic == ask.topic && !it.kind.asks }.map { it.id }
+
+    /** 턴 끝 (건드린 카드를 비우기 전): 이번 턴에 AI 가 건드린 질문마다 관련 카드를 적는다. 붙은 질문의 것이 늘었으면 다시 가리킨다. */
+    private fun recordRelated() {
+        for (id in touched) {
+            val c = board.card(id) ?: continue
+            if (c.kind.asks) relatedOf[id] = relatedFrom(touched, c)
+        }
+        val d = dockedId ?: return
+        val now = relatedOf[d] ?: return
+        val p = pointed
+        if (p != null && p.first == d && p.second != now && now.isNotEmpty()) {
+            pointed = d to now
+            boardPoint = BoardPoint(now, ++pointSeq)
+        }
+    }
+
+    /** 칸이 바뀔 때 한 줄 (카드 ID·주제 ID·까닭·남은 건수·반영 중·가리킨 카드 수, 내용은 적지 않는다). 기록 실패는 아무 일도 없다. */
+    private fun dockLog(id: String?, topic: String?, rel: Int) {
+        val line = "dock ${id ?: "-"} topic=${topic ?: "-"} why=${picker.reason} waiting=${Todo.asks(board).size} applying=${picker.applying} busy=$busy related=$rel"
+        try {
+            Thread { proLog(line) }.start()
+        } catch (_: Throwable) {
+        }
+    }
 
     private var lines = LineStream()
     private var eventTimer: Job? = null
@@ -292,6 +413,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         resumeInterrupted()
         settleWhenReachable() // 멈춤을 전하지 못한 채 꺼졌던 실행이 있으면 서버에 닿는 대로 멈추고 치운다
         if (BuildConfig.PRO) proRefresh() // 처음 켰으면 이 폰을 등록한다 (넣을 것은 없다)
+        pickTodo() // 켤 때 기다리는 질문이 있으면 가장 오래된 것이 내 차례 칸에 붙는다 (§C1)
     }
 
     /** 보던 주제와 화면 아래 한마디를 되살린다 (`board.say` 는 보드 파일에 들어 있지 않다). */
@@ -1155,6 +1277,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             save() // 반영한 것을 먼저 저장한다. 그것이 디스크에 닿은 뒤에 돌던 턴의 기록을 지우고, 그 지우기가 닿은 뒤에야 서버의 실행 파일을 치운다
             settleTurn(seq, cc, cleanId)
             if (unreached) settleWhenReachable()
+            recordRelated() // 내 차례 칸이 가리킬 관련 카드 (건드린 카드를 비우기 전에)
             if (result.isSuccess) reviewTurn() else touched.clear()
             // 기억이 바뀌었을 수 있으니 다음 턴을 위해 다시 읽어 둔다.
             launch(Dispatchers.IO) {
@@ -1680,21 +1803,34 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 결정 카드에서 선택지를 고른다. */
-    fun choose(card: Card, item: Item) {
+    fun choose(card: Card, item: Item) = answer {
         userLine("set ${card.id} chosen ${item.id}")
         send("")
+    }
+
+    /** 답을 넘기는 동안은 반영하는 중으로 본다 (답한 줄이 반영된 때는 아직 턴이 시작되기 전이다). 끝나고 한 번 더 고른다. */
+    private inline fun answer(block: () -> Unit) {
+        answering = true
+        try {
+            block()
+        } finally {
+            answering = false
+        }
+        pickTodo()
     }
 
     /** Several answers to a decision card that takes them (`multi yes`), in item order. */
     fun chooseMany(card: Card, picked: Set<String>) {
         val ids = card.items.map { it.id }.filter { it in picked }
         if (ids.isEmpty()) return
-        userLine("set ${card.id} chosen ${ids.joinToString(",")}")
-        send("")
+        answer {
+            userLine("set ${card.id} chosen ${ids.joinToString(",")}")
+            send("")
+        }
     }
 
     /** 입력 카드에 적은 값을 보낸다 (항목 ID → 값). */
-    fun submit(card: Card, values: Map<String, String>) {
+    fun submit(card: Card, values: Map<String, String>) = answer {
         for (item in card.items) {
             val v = safe(values[item.id].orEmpty())
             userLine("upd ${card.id} ${item.id} ${item.cells.getOrElse(0) { "" }} | ${item.cells.getOrElse(1) { "" }} | $v", persist = false)
