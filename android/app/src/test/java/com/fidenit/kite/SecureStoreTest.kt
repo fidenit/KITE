@@ -88,6 +88,10 @@ class SecureStoreTest {
         assertFalse(unreadable(java.security.ProviderException("p")))
         assertFalse(unreadable(IllegalStateException("s")))
         assertFalse(unreadable(java.io.IOException("io")))
+        // a transient failure wrapped in a crypto or security exception is still transient: never wiped
+        assertFalse(unreadable(java.security.GeneralSecurityException("wrap", java.security.KeyStoreException("busy"))))
+        assertFalse(unreadable(SecurityException("wrap", java.security.ProviderException("p"))))
+        assertFalse(unreadable(RuntimeException("a", java.security.InvalidKeyException("b", java.security.KeyStoreException("c")))))
     }
 
     @Test

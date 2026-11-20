@@ -283,4 +283,28 @@ class ProDeviceTest {
         d.refused("unknown", "")
         assertEquals("", m.proStatus)
     }
+
+    @Test
+    fun aSendMayForceOneFreshCheckAfterAFailure() {
+        val m = Mem().apply { deviceId = "x"; deviceSecret = "apd_s"; proStatus = "approved" }
+        val d = dev(m)
+        server.enqueue(MockResponse().setResponseCode(503))
+        assertEquals("error", d.check().status) // back-off 15 s starts
+        clock += 5_000
+        assertEquals("error", d.check(force = true).status) // last attempt only 5 s ago: still cached
+        assertEquals(1, server.requestCount)
+        clock += 11_000
+        server.enqueue(MockResponse().setBody("""{"status":"approved","code":""}"""))
+        assertEquals("approved", d.check(force = true).status) // 16 s after the last attempt: one fresh check
+        assertEquals(2, server.requestCount)
+        // forced sends in a burst never exceed one exchange per 15 s
+        repeat(3) { server.enqueue(MockResponse().setResponseCode(503)) }
+        clock += 1
+        d.stale()
+        repeat(20) {
+            d.check(force = true)
+            clock += 1_000
+        }
+        assertTrue("${server.requestCount}", server.requestCount <= 2 + 2)
+    }
 }

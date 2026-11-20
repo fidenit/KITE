@@ -259,6 +259,9 @@ class ClaudeCode(private val ssh: Link, private val cfg: EngineConfig) : Runner 
         waker.wake()
     }
 
+    /** 서버로 가는 연결을 끊는다: 막혀 있는 호출이 바로 풀린다 (Pro 의 게이트웨이 길은 뷰모델의 `ssh` 가 아니라 여기로만 닫힌다). */
+    fun closeLink() = ssh.close()
+
     /** 다시 붙기를 기다리는 중이면 바로 시도한다 (앱이 앞으로 돌아왔을 때). */
     fun wake() = waker.wake()
 

@@ -44,6 +44,7 @@ class ProDevice(
     private var fails = 0
     private var last: DeviceStatus? = null
     private var renewed = false
+    private var lastAttempt = Long.MIN_VALUE / 2
     private var ticketNoVerdict = 0
 
     /** 이름표와 비밀 글이 없으면 만든다. 한 번 만든 것은 바꾸지 않는다 (서버가 409 로 거절했을 때만 새로). */
@@ -76,10 +77,13 @@ class ProDevice(
      * 지금 상태. 물을 때가 됐으면 서버에 묻고(아직 등록 안 했으면 등록, 했으면 `/v1/me`), 아니면 마지막 상태를 그대로 준다. 예외를 던지지 않는다.
      * 서버가 이 기기를 잊었으면(401, 허용 대기가 30분 지남) 같은 이름표로 다시 등록하고, 같은 이름표가 다른 비밀 글로 있으면(409) 새 이름표로 한 번 다시 등록한다.
      */
-    fun check(): DeviceStatus = synchronized(lock) {
+    fun check(force: Boolean = false): DeviceStatus = synchronized(lock) {
         if (store.memoryOnly) return DeviceStatus("nostore")
         val t = now()
-        last?.let { if (t < nextAt) return it }
+        // 사용자가 보내기를 눌렀으면 실패 간격을 기다리지 않고 한 번 더 묻는다: 마지막 시도가 [FORCE_GAP_MS] 넘게 지났을 때만 (분당 등록 5번 한도 안)
+        val forced = force && nextAt != Long.MAX_VALUE && t - lastAttempt >= FORCE_GAP_MS
+        last?.let { if (t < nextAt && !forced) return it }
+        lastAttempt = t
         ticketRejected = ""
         val st = try {
             ask()
@@ -96,6 +100,10 @@ class ProDevice(
         }
         last = st
         st
+    }
+
+    companion object {
+        const val FORCE_GAP_MS = 15_000L
     }
 
     private fun backoff(n: Int): Long = longArrayOf(15, 30, 60, 120, 240, 300)[n.coerceIn(0, 5)] * 1000

@@ -557,4 +557,71 @@ class GatewayLinkTest {
         assertEquals(1, f.log.count { it.startsWith("start ") })
         assertEquals(1, f.follows.size)
     }
+
+    // ------------------------------------------------------------ review round 2
+
+    @Test
+    fun anOpenFollowEndsSoonAfterCloseAndAfterAbandon() {
+        // link level: close() releases a follow that is waiting for data
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody(sse(">$init") + sse(*Array(400) { "APERITBEAT" })).throttleBody(16, 200, TimeUnit.MILLISECONDS))
+        val l = link()
+        var rc = 99
+        val t = Thread { rc = l.follow("r-1", 0) {}.first }
+        t.start()
+        Thread.sleep(400)
+        val t0 = System.currentTimeMillis()
+        l.close()
+        t.join(3000)
+        assertFalse(t.isAlive)
+        assertTrue("released in ${System.currentTimeMillis() - t0} ms", System.currentTimeMillis() - t0 < 1500)
+        assertEquals(-1, rc)
+        // engine level: abandon() + closeLink() ends the turn with ABANDONED and leaves the server's run alone
+        val f = Fake()
+        f.followAnswer = { _, _ -> MockResponse().setBody(sse(">$init") + sse(*Array(400) { "APERITBEAT" })).throttleBody(16, 200, TimeUnit.MILLISECONDS) }
+        val c = cc(f)
+        var err: Throwable? = null
+        val run = Thread { err = runCatching { c.run("t", { false }) {} }.exceptionOrNull() }
+        run.start()
+        val until = System.currentTimeMillis() + 5000
+        while (f.follows.isEmpty() && System.currentTimeMillis() < until) Thread.sleep(20)
+        Thread.sleep(300)
+        val t1 = System.currentTimeMillis()
+        c.abandon()
+        c.closeLink()
+        run.join(3000)
+        assertFalse(run.isAlive)
+        assertTrue("released in ${System.currentTimeMillis() - t1} ms", System.currentTimeMillis() - t1 < 1500)
+        assertEquals(com.fidenit.kite.engine.ABANDONED, err?.message)
+        assertFalse("no stop sent on abandon", f.log.any { it.contains("/stop") })
+    }
+
+    @Test
+    fun aSlowPrepareIsReleasedByClose() {
+        server.enqueue(MockResponse().setResponseCode(204).setHeadersDelay(20, TimeUnit.SECONDS))
+        val l = link()
+        var e: Throwable? = null
+        val t = Thread { e = runCatching { l.prepare("system") }.exceptionOrNull() }
+        t.start()
+        Thread.sleep(300)
+        val t0 = System.currentTimeMillis()
+        l.close()
+        t.join(3000)
+        assertFalse(t.isAlive)
+        assertTrue(System.currentTimeMillis() - t0 < 1500)
+        assertTrue("$e", e is java.io.IOException)
+    }
+
+    @Test
+    fun textsFitTheirSituation() {
+        val h = GatewayLink(base(), { "apd_bad\nvalue" })
+        val stop = runCatching { h.stop("r-1") }.exceptionOrNull()!!.message!!
+        assertTrue(stop, stop.contains("멈춤·치우기를 전하지 못했습니다") && !stop.contains("보내지 않았습니다"))
+        val up = runCatching { h.upload("r-1", "t") }.exceptionOrNull()!!.message!!
+        assertTrue(up, up.contains("보내지 않았습니다"))
+        val long = com.fidenit.kite.engine.GatewayText.lineTooLong(false)
+        assertFalse(long, long.contains("다시 켜졌을"))
+        // an over-long line through the link: its own line, not "lost"
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream").setBody("data: >ok\n\n"))
+        assertEquals(0, link().follow("r-1", 0) {}.first)
+    }
 }

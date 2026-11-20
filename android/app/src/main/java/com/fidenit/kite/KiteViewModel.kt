@@ -529,13 +529,14 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------- 엔진
 
     /** 설정이 바뀌었으면 엔진을 새로 만든다. (입출력 스레드에서 부른다) */
-    private fun engine(): Runner {
+    private fun engine(resume: Boolean = false): Runner {
         runnerOverride?.let { return it }
         val sig = store.signature()
         var e = engine
         if (e == null || sig != engineSig) {
             (engine as? ClaudeCode)?.abandon() // 바꾸는 엔진은 따라 읽기를 그만둔다 (새 엔진이 따라 읽는 실행을 치우지 못하게)
             ssh?.close()
+            if (BuildConfig.PRO) (engine as? ClaudeCode)?.closeLink() // Pro: 게이트웨이 길은 ssh 가 아니다
             ssh = null
             e = if (serverEngine) {
                 val made = if (BuildConfig.PRO) {
@@ -569,7 +570,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             engineSig = sig
             prepared = false
         }
-        if (BuildConfig.PRO) proReady() // 보내기 전에 이 폰이 허용됐는지 서버에 묻는다
+        if (BuildConfig.PRO) proReady(resume) // 보내기 전에 이 폰이 허용됐는지 서버에 묻는다
         if (!prepared) {
             if (e is ClaudeCode) {
                 e.connect()
@@ -739,8 +740,9 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 보내기 전 (입출력 스레드): 허용된 폰이 아니면 이 말을 보내지 않는다. 서버에 묻는 간격은 [ProDevice] 가 지킨다. */
-    private fun proReady() {
-        val st = device.check()
+    private fun proReady(resume: Boolean = false) {
+        // 사용자가 보낸 말이면 실패 간격을 건너뛰고 한 번 더 묻는다 (ProDevice 가 15초 간격을 지킨다). 다시 붙는 턴은 이미 보낸 말이다.
+        val st = device.check(force = !resume)
         val rejected = device.ticketRejected
         viewModelScope.launch { proShow(st, rejected) }
         val en = english
@@ -755,7 +757,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 else "서버가 지금 요청을 받지 못합니다 → 이 말은 보내지 않았습니다 → 1분쯤 뒤 다시 보내 주세요",
             )
             "refused", "conflict", "nostore" -> throw SshFatal(proBroken(st.status, en))
-            else -> throw SshFatal(GatewayText.refused(st.status, st.code, en))
+            else -> throw SshFatal(GatewayText.refused(st.status, st.code, en, if (resume) com.fidenit.kite.engine.LinkPhase.FOLLOW else com.fidenit.kite.engine.LinkPhase.BEFORE))
         }
     }
 
@@ -1172,7 +1174,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             // 설정이 그사이 다른 서버로 바뀌었으면 그 서버에는 붙지 않는다 (거기서 이 턴이 새로 시작되면 같은 말이 두 번 돈다)
             if (!serverEngine || needsSetup() || record.server != serverSig()) throw Exception(OTHER_SERVER)
             try {
-                return engine()
+                return engine(resume = true)
             } catch (e: SshFatal) {
                 throw e
             } catch (e: RemoteFail) {
@@ -1238,6 +1240,8 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             if (!prepared) {
                 val now = ssh
                 if (now != null) viewModelScope.launch(Dispatchers.IO) { now.close() }
+                val pc = if (BuildConfig.PRO) engine as? ClaudeCode else null
+                if (pc != null) viewModelScope.launch(Dispatchers.IO) { pc.closeLink() }
             }
             // 서버에 닿는 단계(연결·준비)에서 멈추지 못하고 매달려 있으면 10초 뒤 연결을 끊어 풀어 준다
             val seq = turnSeq
@@ -1245,7 +1249,11 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                 delay(10_000)
                 if (busy && seq == turnSeq) {
                     val s = ssh
-                    withContext(Dispatchers.IO) { s?.close() }
+                    val pc = if (BuildConfig.PRO) engine as? ClaudeCode else null
+                    withContext(Dispatchers.IO) {
+                        s?.close()
+                        pc?.closeLink()
+                    }
                 }
             }
         }
@@ -1662,7 +1670,11 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         player?.release()
         deviceTts?.shutdown()
         val s = ssh
-        Thread { s?.close() }.start()
+        val pc = if (BuildConfig.PRO) engine as? ClaudeCode else null
+        Thread {
+            s?.close()
+            pc?.closeLink()
+        }.start()
         journal.flush(1000)
     }
 }

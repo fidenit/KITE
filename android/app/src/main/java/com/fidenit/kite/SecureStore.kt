@@ -12,15 +12,12 @@ import android.content.SharedPreferences
  * 그 밖 (java.security.KeyStoreException, android.security.KeyStoreException, ProviderException, IllegalStateException, IOException …) 은 잠깐의 문제로 본다.
  */
 fun unreadable(e: Throwable): Boolean {
-    var c: Throwable? = e
-    var depth = 0
-    while (c != null && depth++ < 10) {
-        if (c is java.security.GeneralSecurityException && c !is java.security.KeyStoreException) return true
-        if (c is SecurityException) return true
-        if (c.javaClass.simpleName == "InvalidProtocolBufferException") return true
-        c = c.cause
+    val chain = generateSequence(e) { it.cause }.take(10).toList()
+    // 사슬 어디에든 잠깐의 키 저장소·제공자 문제가 있으면 (다른 예외로 싸여 있어도) 지우지 않는다
+    if (chain.any { it is java.security.KeyStoreException || it is java.security.ProviderException || it.javaClass.simpleName == "KeyStoreException" }) return false
+    return chain.any {
+        (it is java.security.GeneralSecurityException) || it is SecurityException || it.javaClass.simpleName == "InvalidProtocolBufferException"
     }
-    return false
 }
 
 /**

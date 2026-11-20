@@ -45,8 +45,19 @@ object GatewayText {
     }
 
     /** 앱에 넣은 게이트웨이 주소나 이 폰의 정보로 요청을 만들 수 없다 (잘못 만든 빌드). */
-    fun badConfig(en: Boolean): String = if (en) "The gateway address built into this app is not valid → this message was not sent → install a correctly built app."
-    else "앱에 넣은 게이트웨이 주소가 올바르지 않습니다 → 이 말은 보내지 않았습니다 → 제대로 만든 앱을 다시 설치해 주세요."
+    fun badConfig(en: Boolean, phase: LinkPhase = LinkPhase.BEFORE): String {
+        val done = when (phase) {
+            LinkPhase.BEFORE -> if (en) "this message was not sent" else "이 말은 보내지 않았습니다"
+            LinkPhase.FOLLOW -> if (en) "its result could not be received" else "결과를 받지 못했습니다"
+            LinkPhase.AFTER -> if (en) "the stop or clean-up could not be delivered to the server" else "서버에 멈춤·치우기를 전하지 못했습니다"
+        }
+        return if (en) "The gateway address built into this app is not valid → $done → install a correctly built app."
+        else "앱에 넣은 게이트웨이 주소가 올바르지 않습니다 → $done → 제대로 만든 앱을 다시 설치해 주세요."
+    }
+
+    /** 서버의 답 한 줄이 [SSE_MAX_LINE] 보다 길어 받을 수 없었다 (서버의 실행은 게이트웨이가 멈춘다). */
+    fun lineTooLong(en: Boolean): String = if (en) "One line of the server's answer was too long for the phone to receive → what arrived before it is on the board and the rest was not received → ask again in smaller steps."
+    else "서버의 답 한 줄이 너무 길어 폰이 받을 수 없었습니다 → 그 앞까지 받은 것만 화면에 반영했고 나머지는 받지 않았습니다 → 더 작게 나눠 다시 말해 주세요."
 
     /** 빌드에 넣은 등록 표가 이미 쓰였거나 기한이 지났다 (`ticket` = used / expired / revoked / invalid): 이 폰은 번호로 허용을 기다린다. */
     fun ticketRejected(kind: String, code: String, en: Boolean): String = if (en) "The built-in enrollment ticket was already used or has expired ($kind) → this phone now waits for approval → approve it on the server with the code $code."
@@ -223,19 +234,19 @@ class GatewayLink(
     private val followHttp = http.newBuilder().readTimeout(FOLLOW_READ_MS, TimeUnit.MILLISECONDS).callTimeout(0, TimeUnit.MILLISECONDS).build()
 
     /** 요청을 만든다. 주소나 머리글 값이 잘못됐으면(잘못 만든 빌드) 다시 해도 소용없다: [SshFatal]. */
-    private fun req(path: String): Request.Builder = try {
+    private fun req(path: String, phase: LinkPhase = LinkPhase.BEFORE): Request.Builder = try {
         Request.Builder().url(join(base, path)).header("Authorization", "Bearer ${token()}")
     } catch (e: IllegalArgumentException) {
-        throw SshFatal(GatewayText.badConfig(english()))
+        throw SshFatal(GatewayText.badConfig(english(), phase))
     }
 
-    private fun <T> call(r: Request, client: OkHttpClient = http, body: (Response) -> T): T {
+    private fun <T> call(r: Request, client: OkHttpClient = http, phase: LinkPhase = LinkPhase.BEFORE, body: (Response) -> T): T {
         val c = client.newCall(r)
         calls.add(c)
         try {
             return c.execute().use(body)
         } catch (e: IllegalArgumentException) {
-            throw SshFatal(GatewayText.badConfig(english()))
+            throw SshFatal(GatewayText.badConfig(english(), phase))
         } finally {
             calls.remove(c)
         }
@@ -290,7 +301,7 @@ class GatewayLink(
     }
 
     /** 실패하면 예외를 던지는 짧은 호출. */
-    private fun text(r: Request, phase: LinkPhase = LinkPhase.BEFORE): String = call(r) { resp ->
+    private fun text(r: Request, phase: LinkPhase = LinkPhase.BEFORE): String = call(r, http, phase) { resp ->
         refusedCheck(resp, phase)
         when {
             resp.isSuccessful -> resp.body?.string().orEmpty()
@@ -327,12 +338,12 @@ class GatewayLink(
 
     override fun follow(id: String, n: Int, onLine: (String) -> Unit): Pair<Int, String> {
         require(n >= 0)
-        val r = req("v1/runs/${Detached.check(id)}/follow?n=$n")
+        val r = req("v1/runs/${Detached.check(id)}/follow?n=$n", LinkPhase.FOLLOW)
             .header("Accept", "text/event-stream")
             .header("Accept-Encoding", "identity")
             .build()
         return try {
-            call(r, followHttp) { resp ->
+            call(r, followHttp, LinkPhase.FOLLOW) { resp ->
                 refusedCheck(resp, LinkPhase.FOLLOW)
                 when {
                     resp.isSuccessful && resp.header("Content-Type").orEmpty().startsWith("text/event-stream") -> {
@@ -346,7 +357,7 @@ class GatewayLink(
                                 onLine(data)
                             }
                         } catch (e: SseTooLong) {
-                            onLine("APERITEXIT lost") // 받을 수 없는 길이의 줄: 서버도 이 실행을 멈춘다
+                            throw SshFatal(GatewayText.lineTooLong(english())) // 받을 수 없는 길이의 줄: 다시 붙어도 같다 (게이트웨이가 그 실행을 멈춘다)
                         }
                         0 to ""
                     }
@@ -366,16 +377,16 @@ class GatewayLink(
 
     /** 게이트웨이는 멈춤 요청을 적고(같은 번호의 시작을 기다린 뒤) 204 로 답한다: 그것이 "요청이 적혔다" 이다. */
     override fun stop(id: String, onLine: (String) -> Unit): Pair<Int, String> {
-        text(req("v1/runs/${Detached.check(id)}/stop").post(ByteArray(0).toRequestBody(null)).build(), LinkPhase.AFTER)
+        text(req("v1/runs/${Detached.check(id)}/stop", LinkPhase.AFTER).post(ByteArray(0).toRequestBody(null)).build(), LinkPhase.AFTER)
         onLine(Detached.STOP_SENT)
         return 0 to ""
     }
 
     override fun clean(id: String) {
-        text(req("v1/runs/${Detached.check(id)}").delete().build(), LinkPhase.AFTER)
+        text(req("v1/runs/${Detached.check(id)}", LinkPhase.AFTER).delete().build(), LinkPhase.AFTER)
     }
 
-    override fun errTail(id: String): String = text(req("v1/runs/${Detached.check(id)}/err").get().build(), LinkPhase.AFTER)
+    override fun errTail(id: String): String = text(req("v1/runs/${Detached.check(id)}/err", LinkPhase.AFTER).get().build(), LinkPhase.AFTER)
 
     private fun info(): JSONObject = try {
         JSONObject(text(req("v1/info").get().build()))
