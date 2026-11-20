@@ -8,18 +8,22 @@ import androidx.security.crypto.MasterKeys
 import kotlin.reflect.KProperty
 
 class Store(context: Context) : DeviceStore {
-    private val prefs: SharedPreferences = try {
-        EncryptedSharedPreferences.create(
-            "kite-settings",
-            MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
-            context,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
-    } catch (_: Exception) {
-        // 키 저장소를 못 쓰는 기기: 앱 전용 저장소에 그대로 둔다 (다른 앱은 읽지 못한다).
-        context.getSharedPreferences("kite-settings-plain", Context.MODE_PRIVATE)
-    }
+    private val prefs: SharedPreferences = openSettings(
+        BuildConfig.PRO,
+        open = {
+            EncryptedSharedPreferences.create(
+                "kite-settings",
+                MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
+                context,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        },
+        wipe = { wipeSecureSettings(context, "kite-settings") },
+        // 키 저장소를 못 쓰는 기기 (무료 앱만): 앱 전용 저장소에 그대로 둔다 (다른 앱은 읽지 못한다).
+        plain = { context.getSharedPreferences("kite-settings-plain", Context.MODE_PRIVATE) },
+        memory = { MemoryPrefs() },
+    )
 
     inner class Text(private val default: String = "") {
         operator fun getValue(self: Any?, p: KProperty<*>): String = prefs.getString(p.name, default) ?: default
@@ -42,6 +46,7 @@ class Store(context: Context) : DeviceStore {
     override var deviceSecret by Text()
     override var proStatus by Text()
     override var proCode by Text()
+    override var ticketUsed by Text()
 
     // 서버
     var host by Text()

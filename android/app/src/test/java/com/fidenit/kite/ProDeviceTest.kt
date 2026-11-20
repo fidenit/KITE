@@ -10,15 +10,21 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.Timeout
 
 /** Pro 의 기기 등록 흐름: 처음 켜면 이름표·비밀 글을 만들고 등록, 그 뒤에는 `/v1/me`. JVM 만. */
 class ProDeviceTest {
+    @get:Rule
+    val timeout: Timeout = Timeout.seconds(60)
+
     private class Mem : DeviceStore {
         override var deviceId = ""
         override var deviceSecret = ""
         override var proStatus = ""
         override var proCode = ""
+        override var ticketUsed = ""
     }
 
     private val server = MockWebServer()
@@ -29,7 +35,57 @@ class ProDeviceTest {
     @After
     fun down() = server.shutdown()
 
-    private fun dev(m: Mem) = ProDevice(m, Enroller(server.url("/").toString())) { Triple("Pixel 8", "14", "0.2.0") }
+    private fun dev(m: Mem, ticket: String = "") = ProDevice(m, Enroller(server.url("/").toString()), { Triple("Pixel 8", "14", "0.2.0") }, ticket)
+
+    @Test
+    fun theBuildTicketIsSentOnlyUntilApproved() {
+        val m = Mem()
+        val d = dev(m, "tkt-9")
+        // ticket used up on the server: pending, so the ticket is sent again on the next enroll (still not approved)
+        server.enqueue(MockResponse().setBody("""{"status":"pending","code":"482913"}"""))
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setBody("""{"status":"approved"}"""))
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setBody("""{"status":"pending","code":"111111"}"""))
+        assertEquals("pending", d.check().status)
+        assertEquals("482913", m.proCode)
+        assertEquals("approved", d.check().status) // pending expired on the server (401) -> enroll again by itself
+        assertEquals("1", m.ticketUsed)
+        assertEquals("pending", d.check().status) // forgotten after approval: enroll again WITHOUT the ticket
+        assertEquals("111111", m.proCode)
+        assertEquals("tkt-9", JSONObject(server.takeRequest().body.readUtf8()).getString("ticket"))
+        assertEquals("/v1/me", server.takeRequest().path)
+        assertEquals("tkt-9", JSONObject(server.takeRequest().body.readUtf8()).getString("ticket"))
+        assertEquals("/v1/me", server.takeRequest().path)
+        assertFalse(JSONObject(server.takeRequest().body.readUtf8()).has("ticket"))
+    }
+
+    @Test
+    fun aRejectedTicketLeavesThePhonePendingWithTheCodeAndIsNotSentAgain() {
+        val m = Mem()
+        val d = dev(m, "tkt-9")
+        server.enqueue(MockResponse().setBody("""{"status":"pending","code":"482913","ticket":"used"}"""))
+        server.enqueue(MockResponse().setResponseCode(401)) // pending expired after 30 minutes
+        server.enqueue(MockResponse().setBody("""{"status":"pending","code":"777001"}"""))
+        assertEquals("pending", d.check().status)
+        assertEquals("used", d.ticketRejected)
+        assertEquals("482913", m.proCode)
+        assertEquals("1", m.ticketUsed)
+        assertEquals("pending", d.check().status)
+        assertEquals("", d.ticketRejected) // no ticket sent this time
+        assertEquals("777001", m.proCode)
+        assertEquals("tkt-9", JSONObject(server.takeRequest().body.readUtf8()).getString("ticket"))
+        assertEquals("/v1/me", server.takeRequest().path)
+        assertFalse(JSONObject(server.takeRequest().body.readUtf8()).has("ticket"))
+        // a valid ticket: approved at once, nothing to show
+        val m2 = Mem()
+        server.enqueue(MockResponse().setBody("""{"status":"approved","ticket":"ok"}"""))
+        val d2 = dev(m2, "tkt-10")
+        assertEquals("approved", d2.check().status)
+        assertEquals("", d2.ticketRejected)
+        assertEquals("1", m2.ticketUsed)
+        assertTrue(com.fidenit.kite.engine.GatewayText.ticketRejected("expired", "482913", false).contains("482913"))
+    }
 
     @Test
     fun firstLaunchMakesTheIdentityOnceAndEnrolls() {

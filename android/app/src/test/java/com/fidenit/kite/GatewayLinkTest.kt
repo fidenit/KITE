@@ -22,12 +22,18 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.Timeout
 import java.util.Collections
 import java.util.concurrent.TimeUnit
 
 /** Pro 의 게이트웨이 길: 가짜 게이트웨이(MockWebServer)로 등록·따라 읽기·끊김·거절을 본다. JVM 만 (free 변형에서 돈다). */
 class GatewayLinkTest {
+    /** 엔진 고리가 끝없이 다시 붙으면 실패로 끝낸다 (시험 전체가 매달리지 않게). */
+    @get:Rule
+    val timeout: Timeout = Timeout.seconds(60)
+
     private val server = MockWebServer()
     private val tok = "apd_" + "T".repeat(43)
 
@@ -106,6 +112,31 @@ class GatewayLinkTest {
         assertTrue(DeviceKeys.newSecret() != s)
         assertTrue(Regex("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}").matches(DeviceKeys.newId()))
         assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", DeviceKeys.sha256("abc"))
+    }
+
+    @Test
+    fun everyRequestCarriesTheAppHeaderAndBusyIsItsOwnLine() {
+        repeat(3) { server.enqueue(MockResponse().setBody("""{"status":"approved"}""")) }
+        server.enqueue(MockResponse().setBody("APERITFAIL busy\n"))
+        val http = com.fidenit.kite.engine.gatewayClient("0.2.0-pro")
+        val e = Enroller(base(), http)
+        e.enroll("id-1", tok, "m", "14", "0.2.0", ticket = "tkt-1")
+        e.enroll("id-1", tok, "m", "14", "0.2.0")
+        e.me(tok)
+        val l = GatewayLink(base(), { tok }, "", { true }, http)
+        val busy = runCatching { l.start("r-1") {} }.exceptionOrNull()
+        assertTrue(busy is SshFatal)
+        assertEquals(com.fidenit.kite.engine.GatewayText.busy(true), busy!!.message)
+        val r1 = server.takeRequest()
+        assertEquals("tkt-1", JSONObject(r1.body.readUtf8()).getString("ticket"))
+        assertFalse(JSONObject(server.takeRequest().also { assertEquals("0.2.0-pro", it.getHeader("X-Aperit-App")) }.body.readUtf8()).has("ticket"))
+        assertEquals("0.2.0-pro", r1.getHeader("X-Aperit-App"))
+        assertEquals("0.2.0-pro", server.takeRequest().getHeader("X-Aperit-App"))
+        val st = server.takeRequest()
+        assertEquals("0.2.0-pro", st.getHeader("X-Aperit-App"))
+        assertEquals("{}", st.body.readUtf8()) // no explicit effort: none sent
+        assertEquals(30_000, com.fidenit.kite.engine.gatewayClient().readTimeoutMillis) // 30 s for short calls
+        assertTrue(com.fidenit.kite.engine.FOLLOW_READ_MS > com.fidenit.kite.engine.Detached.IDLE_MS)
     }
 
     // ------------------------------------------------------------ SSE
@@ -297,7 +328,7 @@ class GatewayLinkTest {
     @Test
     fun aBrokenConnectionIsRetriedAndARefusalIsNot() {
         val f = Fake()
-        f.inputPlan = { k -> if (k == 1) MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START) else null }
+        f.inputPlan = { k -> if (k == 1) MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST) else null }
         var starts = 0
         f.startAnswer = { id -> if (++starts == 1) MockResponse().setResponseCode(503) else MockResponse().setBody("APERITRUN $id\n") }
         cc(f).run("t", { false }) {}
@@ -321,7 +352,7 @@ class GatewayLinkTest {
 
     @Test
     fun startFailKindsGiveTheirTexts() {
-        for ((kind, text) in listOf("busy" to "다른 말이 여럿", "noin" to "제대로 올라가지", "cd" to "작업 폴더", "start" to "시작하지 못했습니다")) {
+        for ((kind, text) in listOf("busy" to "서버가 지금 바쁩니다", "noin" to "제대로 올라가지", "cd" to "작업 폴더", "start" to "시작하지 못했습니다")) {
             val f = Fake()
             f.startAnswer = { MockResponse().setBody("APERITFAIL $kind\n") }
             val e = runCatching { cc(f).run("t", { false }) {} }.exceptionOrNull()
@@ -343,25 +374,31 @@ class GatewayLinkTest {
         assertTrue(f.log.contains("DELETE /v1/runs/ID true"))
     }
 
+    /**
+     * 끝난 값(lost / gone / 1) 은 따라 읽기에서 SSH 와 같은 줄로 온다. 엔진 고리가 이 끝을 어떻게 다루는지는 f045 의 몫이라 여기서는
+     * 고리를 거치지 않고 길만 본다 (지금 고리는 finish() 의 예외를 끊김처럼 다시 해 본다: 손넘김 맨 위 참고).
+     */
     @Test
-    fun aFailedRunReadsTheErrTailAndCleans() {
+    fun endValuesErrTailAndCleanTravelLikeTheSshPath() {
         val f = Fake()
-        f.followAnswer = { _, _ -> MockResponse().setBody(sse(">$init", "APERITEXIT 1")) }
+        server.dispatcher = f
+        val l = link()
+        for (end in listOf("lost", "gone", "1", "stopped")) {
+            f.followAnswer = { _, _ -> MockResponse().setBody(sse(">$init", "APERITEXIT $end")) }
+            val got = mutableListOf<String>()
+            assertEquals(0, l.follow("a-1", 0) { got.add(it) }.first)
+            assertEquals(listOf(">$init", "APERITEXIT $end"), got)
+            assertEquals(com.fidenit.kite.engine.FollowLine.Exit(end), com.fidenit.kite.engine.Detached.classify(got.last()))
+        }
         f.errBody = "boom: not logged in"
-        val e = runCatching { cc(f).run("t", { false }) {} }.exceptionOrNull()
-        assertTrue(e!!.message!!, e.message!!.contains("답 없이") && e.message!!.contains("boom: not logged in"))
+        assertEquals("boom: not logged in", l.errTail("a-1"))
+        l.clean("a-1")
         assertTrue(f.log.contains("GET /v1/runs/ID/err true"))
         assertTrue(f.log.contains("DELETE /v1/runs/ID true"))
     }
 
     @Test
-    fun lostAndNoneAndGoneMapLikeTheSshPath() {
-        val f = Fake()
-        f.followAnswer = { _, _ -> MockResponse().setBody(sse(">$init", "APERITEXIT lost")) }
-        assertTrue(runCatching { cc(f).run("t", { false }) {} }.exceptionOrNull()!!.message!!.contains("사라졌습니다"))
-        val g = Fake()
-        g.followAnswer = { _, _ -> MockResponse().setBody(sse("APERITEXIT gone")) }
-        assertEquals(com.fidenit.kite.engine.GONE, runCatching { cc(g).resume("a-1", null, 3, { false }) {} }.exceptionOrNull()!!.message)
+    fun noneWithNothingReceivedStartsOnceMoreWithTheSameId() {
         val h = Fake()
         h.followAnswer = { call, _ -> MockResponse().setBody(if (call == 1) sse("APERITEXIT none") else sse(">$init", ">$result", "APERITEXIT 0")) }
         cc(h).resume("a-2", "again", 0, { false }) {}

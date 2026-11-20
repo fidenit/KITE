@@ -30,6 +30,14 @@ object GatewayText {
         else -> if (en) "This phone's access level cannot be used yet ($kind) → this message was not sent → its level has to be changed on the server."
         else "이 폰에 허용된 범위로는 아직 쓸 수 없습니다 ($kind) → 이 말은 보내지 않았습니다 → 서버에서 이 폰의 범위를 바꿔야 합니다."
     }
+
+    /** 빌드에 넣은 등록 표가 이미 쓰였거나 기한이 지났다 (`ticket` = used / expired / revoked / invalid): 이 폰은 번호로 허용을 기다린다. */
+    fun ticketRejected(kind: String, code: String, en: Boolean): String = if (en) "The built-in enrollment ticket was already used or has expired ($kind) → this phone now waits for approval → approve it on the server with the code $code."
+    else "앱에 넣은 등록 표가 이미 쓰였거나 기한이 지났습니다 ($kind) → 이 폰은 허용을 기다립니다 → 서버에서 번호 $code 로 허용해 주세요."
+
+    /** 시작에서 `APERITFAIL busy`: 서버에서 이미 여러 말이 돌거나 메모리가 모자라다. */
+    fun busy(en: Boolean): String = if (en) "The server is busy (other messages are running or memory is short) → this message was not started → send it again shortly."
+    else "서버가 지금 바쁩니다 (다른 말이 돌고 있거나 메모리가 모자람) → 이번 말은 시작하지 않았습니다 → 잠시 뒤 다시 보내 주세요."
 }
 
 /** 이 기기의 이름표와 비밀 글. 앱이 처음 켜질 때 한 번 만든다. */
@@ -45,15 +53,22 @@ object DeviceKeys {
     fun sha256(token: String): String = MessageDigest.getInstance("SHA-256").digest(token.toByteArray()).joinToString("") { "%02x".format(it) }
 }
 
-/** 등록 상태: approved / pending / revoked, 그 밖에 앱 쪽에서 붙이는 conflict(409) / limited(429) / unknown(401). */
-data class DeviceStatus(val status: String, val code: String = "", val voice: Boolean = false, val jev: Boolean = false)
+/**
+ * 등록 상태: approved / pending / revoked, 그 밖에 앱 쪽에서 붙이는 conflict(409) / limited(429) / unknown(401).
+ * `ticket` = 등록 표를 보냈을 때 서버의 판단 (ok / used / expired / revoked / invalid), 보내지 않았으면 빈 글.
+ */
+data class DeviceStatus(val status: String, val code: String = "", val voice: Boolean = false, val jev: Boolean = false, val ticket: String = "")
 
-fun gatewayClient(): OkHttpClient = OkHttpClient.Builder()
+/** 게이트웨이용 OkHttp. `app` (예: `0.2.0-pro`) 은 모든 요청에 `X-Aperit-App` 으로 붙는다. 따라 읽기는 [GatewayLink] 가 읽기 한도만 늘려 쓴다. */
+fun gatewayClient(app: String = ""): OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(15, TimeUnit.SECONDS)
-    // 따라 읽기는 10초마다 APERITBEAT 가 온다. 40초 조용하면 ClaudeCode 가 먼저 끊는다: 이것은 그 뒤의 안전망.
-    .readTimeout(60, TimeUnit.SECONDS)
-    .writeTimeout(60, TimeUnit.SECONDS)
+    .readTimeout(30, TimeUnit.SECONDS)
+    .writeTimeout(30, TimeUnit.SECONDS)
+    .apply { if (app.isNotEmpty()) addInterceptor { ch -> ch.proceed(ch.request().newBuilder().header("X-Aperit-App", app).build()) } }
     .build()
+
+/** 따라 읽기의 읽기 한도: ClaudeCode 의 40초 규칙([Detached.IDLE_MS])이 먼저 판단하도록 그보다 조금 길게. 전체 한도는 없다. */
+const val FOLLOW_READ_MS = 45_000L
 
 private fun join(base: String, path: String) = base.trimEnd('/') + "/" + path
 
@@ -63,7 +78,7 @@ private val JSON = "application/json; charset=utf-8".toMediaType()
 /** 등록과 상태 확인 (`POST /v1/enroll`, `GET /v1/me`). */
 class Enroller(private val base: String, private val http: OkHttpClient = gatewayClient()) {
     /** 등록한다. 연결이 안 되거나 서버가 모르는 답을 하면 IOException. */
-    fun enroll(id: String, secret: String, model: String, android: String, app: String, publicKey: String? = null): DeviceStatus {
+    fun enroll(id: String, secret: String, model: String, android: String, app: String, publicKey: String? = null, ticket: String? = null): DeviceStatus {
         val j = JSONObject()
             .put("device_id", id)
             .put("token_sha256", DeviceKeys.sha256(secret))
@@ -71,6 +86,7 @@ class Enroller(private val base: String, private val http: OkHttpClient = gatewa
             .put("android", android.take(200))
             .put("app", app.take(200))
         if (!publicKey.isNullOrEmpty()) j.put("public_key", publicKey)
+        if (!ticket.isNullOrEmpty()) j.put("ticket", ticket)
         val req = Request.Builder().url(join(base, "v1/enroll")).post(j.toString().toRequestBody(JSON)).build()
         http.newCall(req).execute().use { r ->
             return when (r.code) {
@@ -103,7 +119,7 @@ class Enroller(private val base: String, private val http: OkHttpClient = gatewa
         }
         val s = j.optString("status")
         if (s.isEmpty()) throw IOException("bad answer")
-        return DeviceStatus(s, j.optString("code"), j.optBoolean("voice", false), j.optBoolean("jev", false))
+        return DeviceStatus(s, j.optString("code"), j.optBoolean("voice", false), j.optBoolean("jev", false), j.optString("ticket"))
     }
 }
 
@@ -151,11 +167,12 @@ class GatewayLink(
     var onRefused: ((String, String) -> Unit)? = null
 
     private val calls = ConcurrentHashMap.newKeySet<Call>()
+    private val followHttp = http.newBuilder().readTimeout(FOLLOW_READ_MS, TimeUnit.MILLISECONDS).callTimeout(0, TimeUnit.MILLISECONDS).build()
 
     private fun req(path: String) = Request.Builder().url(join(base, path)).header("Authorization", "Bearer ${token()}")
 
-    private fun <T> call(r: Request, body: (Response) -> T): T {
-        val c = http.newCall(r)
+    private fun <T> call(r: Request, client: OkHttpClient = http, body: (Response) -> T): T {
+        val c = client.newCall(r)
         calls.add(c)
         try {
             return c.execute().use(body)
@@ -238,7 +255,10 @@ class GatewayLink(
         val j = JSONObject()
         if (effort.isNotEmpty()) j.put("effort", effort)
         return coded(req("v1/runs/${Detached.check(id)}/start").post(j.toString().toRequestBody(JSON)).build()) { resp ->
-            readLines(java.io.StringReader(resp.body?.string().orEmpty()), false, onLine)
+            val lines = mutableListOf<String>()
+            readLines(java.io.StringReader(resp.body?.string().orEmpty()), false) { lines.add(it) }
+            if (lines.any { Detached.classify(it) == FollowLine.Fail("busy") }) throw SshFatal(GatewayText.busy(english()))
+            lines.forEach(onLine)
         }
     }
 
@@ -249,7 +269,7 @@ class GatewayLink(
             .header("Accept-Encoding", "identity")
             .build()
         return try {
-            call(r) { resp ->
+            call(r, followHttp) { resp ->
                 refusedCheck(resp)
                 when {
                     resp.isSuccessful -> {
