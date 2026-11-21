@@ -310,6 +310,21 @@ class KiteViewModelTest {
         assertEquals("done", vm.board.card("k3")!!.items.first().cells.first())
     }
 
+    // T9 (c9b): a replayed server turn keeps its tell in the talk log and under the screen (Pro rule), nothing is read during the replay
+    @Test
+    fun aReplayedTurnKeepsItsTell() {
+        serverSettings()
+        write("board.txt", board)
+        Journal(files).writeInflight(Inflight("ssh", "a-1", "<input>x</input>", "여행 짐 정리해 줘", board, 1L, 0, "u@h:22"))
+        val vm = vm()
+        vm.talkAlwaysReads = true // the Pro default (the test build is the free flavor)
+        vm.runnerOverride = Fake(lines = "say 끝\ntell 다 정리했어요\n")
+        until("replay ends") { !vm.busy }
+        assertEquals("여행 짐 정리해 줘" to "끝\n다 정리했어요", vm.recent.last())
+        assertEquals("다 정리했어요", vm.board.say)
+        vm.flushWrites()
+    }
+
     // RV-1c: killed after the save but before the record was deleted: the replay must not add the same exchange twice
     @Test
     fun aTurnThatWasAlreadySavedIsNotAddedToTheConversationAgain() {

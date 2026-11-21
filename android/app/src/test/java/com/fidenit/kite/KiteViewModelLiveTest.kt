@@ -554,4 +554,49 @@ class KiteViewModelLiveTest {
         earlierMicTurn()
         assertTrue(Regex("voice hush-would ms=\\d+").containsMatchIn(proLogHas("voice hush-would ms=")))
     }
+
+    /** T6: talking turned off after the turn started, before the tell: the tell is shown and logged, nothing is read */
+    @Test
+    fun t6TalkOffBeforeTheTellStillShowsIt() {
+        vm.talkAlwaysReads = true
+        val fake = Held(reply1)
+        turnHeld(fake)
+        vm.converse(false)
+        fake.gate.countDown()
+        until("turn ends") { !vm.busy }
+        assertFalse(speaks.last().sent.toString(), speaks.last().sent.any { it.startsWith("say ") })
+        assertEquals(tell1, underScreen())
+        assertEquals("$say1\n$tell1", vm.recent.last().second)
+    }
+
+    /** T7: a tell over 80 characters: the line under the screen is clipped like a say, the log keeps it whole, a restart shows the clipped line */
+    @Test
+    fun t7ALongTellIsClippedUnderTheScreenOnly() {
+        vm.talkAlwaysReads = true
+        val long = "가".repeat(100)
+        val fake = Held("tell $long\n")
+        turnHeld(fake)
+        fake.gate.countDown()
+        until("turn ends") { !vm.busy }
+        val clipped = "가".repeat(79) + "…"
+        assertEquals(clipped, vm.board.say)
+        assertEquals(long, vm.recent.last().second)
+        vm.converse(false)
+        assertTrue(vm.flushWrites())
+        val again = KiteViewModel(app)
+        assertEquals(clipped, again.board.say)
+        again.flushWrites()
+    }
+
+    /** T8: two tells in one turn are kept in order, one space between */
+    @Test
+    fun t8TwoTellsAreJoined() {
+        vm.talkAlwaysReads = true
+        val fake = Held("tell 첫째입니다.\ntell 둘째입니다.\n")
+        turnHeld(fake)
+        fake.gate.countDown()
+        until("turn ends") { !vm.busy }
+        assertEquals("첫째입니다. 둘째입니다.", vm.recent.last().second)
+        assertEquals("첫째입니다. 둘째입니다.", underScreen())
+    }
 }

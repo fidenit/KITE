@@ -27,6 +27,7 @@ import com.fidenit.kite.core.Op
 import com.fidenit.kite.core.Rejected
 import com.fidenit.kite.core.Todo
 import com.fidenit.kite.core.TodoPicker
+import com.fidenit.kite.core.clip
 import com.fidenit.kite.core.partsTable
 import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import com.fidenit.kite.engine.Api
@@ -91,6 +92,9 @@ import java.util.Locale
 
 /** 최근 대화 가운데 모델에게 함께 보내는 턴 수 */
 private const val RECENT = 6
+
+/** 화면 아래 한마디의 길이 (core/Board.kt 의 say 와 같은 80자, 같은 clip) */
+private const val SAY_MAX = 80
 
 /** 다시 붙으려는 사이 서버 설정이 바뀌었다: 그 턴은 다른 서버에 있다 */
 private const val OTHER_SERVER = "__other_server"
@@ -1542,7 +1546,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val op = Lang.parse(line) ?: return
             board.apply(op, by)
-            if (op is Op.Say && by == Author.Ai) turnTell?.let { board.say = it } // 이번 턴에 읽은 대답이 있으면 화면 아래에는 그 대답이 남는다
+            if (op is Op.Say && by == Author.Ai) turnTell?.let { board.say = tellShown(it) } // 이번 턴에 대답이 있으면 화면 아래에는 그 대답이 남는다
             // 지금 바뀌는 카드가 있는 주제를 보여 준다.
             val topic = when (op) {
                 is Op.Card -> op.topic
@@ -1568,7 +1572,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
      */
     internal fun aiLine(line: String) {
         val t = line.trim()
-        if (talkAlwaysReads && voice && !replaying) talkText(t)
+        if (talkAlwaysReads) talkText(t)
         if (!voice || hush || standby) {
             if (!t.startsWith("tell ")) applyLine(line, Author.Ai)
             return
@@ -1605,15 +1609,21 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         hushWouldLogged = false
     }
 
-    /** Pro 말로 대화: 이번 턴의 say 를 기억하고, tell 이 오면 그때부터 화면 아래 한마디를 그 대답으로 바꾼다 (R2). */
+    /**
+     * Pro: 이번 턴의 say 를 기억하고, tell 이 오면 그때부터 화면 아래 한마디를 그 대답으로 바꾼다 (R2).
+     * 소리를 내든 안 내든(대화를 껐어도, 멈춤·기다림·따라잡기 중에도) 모은다. tell 이 여럿이면 차례대로 한 칸 띄워 잇는다.
+     */
     private fun talkText(t: String) {
         if (t.startsWith("say ")) t.removePrefix("say ").trim().takeIf { it.isNotEmpty() }?.let { turnSay = it }
-        if (t.startsWith("tell ")) t.removePrefix("tell ").trim().takeIf { it.isNotEmpty() }?.let {
-            turnTell = it
-            board.say = it
+        if (t.startsWith("tell ")) t.removePrefix("tell ").trim().takeIf { it.isNotEmpty() }?.let { tell ->
+            turnTell = turnTell?.let { "$it $tell" } ?: tell
+            board.say = tellShown(turnTell!!)
             rev++
         }
     }
+
+    /** 화면 아래 한마디의 길이 규칙은 say 와 같다 (Board 의 say: 80자) */
+    private fun tellShown(tell: String): String = clip(tell, SAY_MAX)
 
     /** 대화 기록에 남길 이번 턴의 답: tell 이 없으면 오늘처럼 say, 있으면 say 다음 줄에 tell (같거나 한쪽이 다른 쪽에 들어 있으면 한 번만). */
     private fun talkLog(say: String): String {
@@ -1627,7 +1637,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 대화 기록의 답에서 화면 아래 한마디: 마지막 줄 (say·tell 두 줄이면 tell) */
-    private fun shownLine(reply: String): String = reply.substringAfterLast('\n')
+    private fun shownLine(reply: String): String = tellShown(reply.substringAfterLast('\n'))
 
     /** 일하는 중에 말(소리)이 들렸다. 무료 앱: 남은 말은 소리 내지 않는다. Pro 말로 대화: 그대로 읽고 pro.log 에 한 줄만 (턴마다 한 번, 숫자만). */
     private fun hushWhileWorking(path: String) {
