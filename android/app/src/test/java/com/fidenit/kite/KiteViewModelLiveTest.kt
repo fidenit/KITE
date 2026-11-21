@@ -381,6 +381,7 @@ class KiteViewModelLiveTest {
     /** T1, gateway events 2026-11-21 00:16Z: a phantom partial while the AI works must not silence the reply */
     @Test
     fun t1APartialWhileTheAiWorksStillReadsTheReplyAndShowsTheTell() {
+        vm.talkAlwaysReads = true // the Pro default (the test build is the free flavor)
         val fake = Held(reply1)
         turnHeld(fake)
         gw(In.Partial("네.")) // no loud audio, busy, not speaking
@@ -391,5 +392,166 @@ class KiteViewModelLiveTest {
         assertTrue(sent.toString(), sent.any { it.startsWith("say ") && it.endsWith(" $say1") })
         assertEquals(tell1, underScreen())
         assertTrue(vm.recent.last().second, vm.recent.last().second.contains(tell1))
+    }
+
+    /** R2: the talk log has say then tell; the line under the screen keeps the tell, also after a restart */
+    @Test
+    fun r2TheTalkLogHasSayAndTellAndARestartShowsTheSame() {
+        t1APartialWhileTheAiWorksStillReadsTheReplyAndShowsTheTell()
+        assertEquals("$say1\n$tell1", vm.recent.last().second)
+        vm.converse(false)
+        assertTrue(vm.flushWrites())
+        val again = KiteViewModel(app)
+        assertEquals("$say1\n$tell1", again.recent.last().second)
+        assertEquals(tell1, again.board.show(again.board.say))
+        again.flushWrites()
+    }
+
+    /** R2: the same answer twice (or one inside the other) is kept once */
+    @Test
+    fun r2TheSameSayAndTellIsLoggedOnce() {
+        vm.talkAlwaysReads = true
+        val fake = Held("say 좋아요\ntell 좋아요. 다 됐어요\n")
+        turnHeld(fake)
+        fake.gate.countDown()
+        until("turn ends") { !vm.busy }
+        assertEquals("좋아요. 다 됐어요", vm.recent.last().second)
+        assertEquals("좋아요. 다 됐어요", underScreen())
+    }
+
+    /** R2: a turn without tell stays as today */
+    @Test
+    fun r2ATurnWithoutTellKeepsTheSay() {
+        vm.talkAlwaysReads = true
+        val fake = Held("say $say1\n")
+        turnHeld(fake)
+        fake.gate.countDown()
+        until("turn ends") { !vm.busy }
+        // today's rule: the log takes the line under the screen as the turn ends (the say is applied when its sentence starts)
+        assertEquals(underScreen(), vm.recent.last().second)
+        assertTrue(speaks.last().sent.any { it.endsWith(" $say1") })
+    }
+
+    /** T2: the earlier mic (no realtime listen): a loud sound while the AI works does not silence the reply */
+    @Test
+    fun t2OnTheEarlierMicALoudSoundWhileTheAiWorksStillReadsTheReply() {
+        vm.talkAlwaysReads = true
+        assertEquals(listOf(tell1), earlierMicTurn())
+        assertEquals(tell1, underScreen())
+        assertEquals(tell1, vm.recent.last().second)
+    }
+
+    /** talking on the earlier way, a turn with a loud sound while the engine holds it; what went to speak() */
+    private fun earlierMicTurn(): List<String> {
+        vm.liveListenOverride = null
+        vm.converse(true)
+        idle()
+        vm.store.elevenKey = "" // the earlier way then uses the phone's own voice (no network in the test)
+        val read = mutableListOf<String>()
+        vm.onSpeak = { read.add(it) }
+        val fake = Held("tell $tell1\n")
+        vm.runnerOverride = fake
+        vm.send("테스트.")
+        until("the engine has the turn") { fake.started.count == 0L }
+        vm.loudWhileBusy()
+        fake.gate.countDown()
+        until("turn ends") { !vm.busy }
+        return read
+    }
+
+    /** T3: with the Pro rule on, barge-in by words while the AI speaks still cuts */
+    @Test
+    fun t3BargeInWhileSpeakingStillCuts() {
+        vm.talkAlwaysReads = true
+        aBargeInByWordsStopsReadingSendsStopAndIgnoresStaleAudio()
+    }
+
+    /** T3: "그만" while the AI works stops the work; nothing is read */
+    @Test
+    fun t3AStopWordWhileTheAiWorksStops() {
+        vm.talkAlwaysReads = true
+        val fake = Held(reply1)
+        turnHeld(fake)
+        loud()
+        gw(In.Final("그만", "kor"))
+        fake.gate.countDown()
+        until("turn ends") { !vm.busy }
+        assertFalse(speaks.last().sent.toString(), speaks.last().sent.any { it.startsWith("say ") })
+    }
+
+    /** T3: "잠깐만" while the AI works waits (standby): the reply is not read, the tell is still shown */
+    @Test
+    fun t3AWaitWordWhileTheAiWorksWaits() {
+        vm.talkAlwaysReads = true
+        val fake = Held(reply1)
+        turnHeld(fake)
+        loud()
+        gw(In.Final("잠깐만", "kor"))
+        assertTrue(vm.standby)
+        fake.gate.countDown()
+        until("turn ends") { !vm.busy }
+        assertFalse(speaks.last().sent.toString(), speaks.last().sent.any { it.startsWith("say ") })
+        assertEquals(tell1, underScreen())
+    }
+
+    /** kept: words said while the AI works are queued and sent after the turn */
+    @Test
+    fun wordsSaidWhileTheAiWorksAreSentAfter() {
+        vm.talkAlwaysReads = true
+        val fake = Held(reply1)
+        turnHeld(fake)
+        loud()
+        gw(In.Final("다른 말", "kor"))
+        fake.gate.countDown()
+        until("the queued words' turn ends") { !vm.busy && vm.recent.any { it.first == "다른 말" } }
+    }
+
+    /** T4: the free flavor keeps today's rule: a partial while the AI works silences the reply, tell is not shown */
+    @Test
+    fun t4FlagOffAPartialWhileTheAiWorksSilencesTheReply() {
+        vm.talkAlwaysReads = false
+        val fake = Held(reply1)
+        turnHeld(fake)
+        gw(In.Partial("네."))
+        fake.gate.countDown()
+        until("turn ends") { !vm.busy }
+        assertEquals(listOf("prepare"), speaks.last().sent)
+        assertEquals(say1, underScreen())
+        assertEquals(say1, vm.recent.last().second)
+        assertFalse(proLog().contains("hush-would"))
+    }
+
+    /** T4: the free flavor on the earlier mic: a loud sound while the AI works silences the reply */
+    @Test
+    fun t4FlagOffOnTheEarlierMicALoudSoundSilencesTheReply() {
+        vm.talkAlwaysReads = false
+        assertEquals(emptyList<String>(), earlierMicTurn())
+    }
+
+    private fun proLog(): String = java.io.File(app.filesDir, "pro.log").takeIf { it.exists() }?.readText().orEmpty()
+
+    /** pro.log is written on its own thread */
+    private fun proLogHas(s: String): String {
+        val end = System.currentTimeMillis() + 5_000
+        while (!proLog().contains(s) && System.currentTimeMillis() < end) Thread.sleep(10)
+        return proLog()
+    }
+
+    /** T5: where the old rule would have silenced the reply, one pro.log line with numbers only */
+    @Test
+    fun t5TheOldRuleLeavesOneLogLineWithoutTheWords() {
+        t1APartialWhileTheAiWorksStillReadsTheReplyAndShowsTheTell()
+        val log = proLogHas("live hush-would ms=")
+        val lines = log.lines().filter { it.contains("hush-would") }
+        assertEquals(log, 1, lines.size)
+        assertTrue(lines[0], Regex("live hush-would ms=\\d+$").containsMatchIn(lines[0]))
+    }
+
+    /** T5: the earlier mic path writes its own line */
+    @Test
+    fun t5TheEarlierMicLeavesAVoiceLine() {
+        vm.talkAlwaysReads = true
+        earlierMicTurn()
+        assertTrue(Regex("voice hush-would ms=\\d+").containsMatchIn(proLogHas("voice hush-would ms=")))
     }
 }

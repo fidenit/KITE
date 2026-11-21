@@ -396,6 +396,21 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private var quietSay: String? = null
     private var hush = false
 
+    /**
+     * Pro 말로 대화 (대표 2026-11-21 msg3553): AI 가 일하는 중에 말이 들렸어도 답은 그대로 읽고, 읽은 대답(tell)은 화면 아래 한마디와 대화 기록에도 남긴다.
+     * 무료 앱은 오늘처럼 (일하는 중에 들리면 남은 말은 소리 내지 않고, tell 은 화면에 없다). 시험에서 바꾼다.
+     */
+    internal var talkAlwaysReads = BuildConfig.PRO
+
+    /** 이번 턴의 say·tell (talkAlwaysReads 일 때만 tell 을 모은다) */
+    private var turnSay: String? = null
+    private var turnTell: String? = null
+    private var turnAt = 0L
+    private var hushWouldLogged = false
+
+    /** 테스트에서 예전 방식 읽기(speak)에 넘어간 문장을 본다 (앱은 쓰지 않는다) */
+    internal var onSpeak: ((String) -> Unit)? = null
+
     @Volatile
     private var speakEpoch = 0
     @Volatile
@@ -476,7 +491,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 보던 주제와 화면 아래 한마디를 되살린다 (`board.say` 는 보드 파일에 들어 있지 않다). */
     private fun restoreView() {
-        board.say = recent.lastOrNull()?.second.orEmpty()
+        board.say = shownLine(recent.lastOrNull()?.second.orEmpty())
         current = journal.readCurrent()?.takeIf { id -> board.topics.any { it.id == id } } ?: board.topics.lastOrNull()?.id
     }
 
@@ -523,6 +538,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             hush = true // 따라잡는 동안에는 소리를 내지 않고 화면에만 반영한다
             touched.clear()
             turnSpoken.clear()
+            newTurnTalk()
             quietSay = null
             lines = LineStream()
             synchronized(recordLock) { recordOwner = turnSeq + 1 }
@@ -957,7 +973,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
                         recentBase = 0
                         for (k in 0 until r.length()) r.getJSONArray(k).let { recent.add(it.getString(0) to it.getString(1)) }
                         if (r.length() > 0) recentBase = r.getJSONArray(0).optInt(2, 0)
-                        board.say = recent.lastOrNull()?.second.orEmpty()
+                        board.say = shownLine(recent.lastOrNull()?.second.orEmpty())
                         current = doc.optString("current").takeIf { id -> board.topics.any { it.id == id } } ?: board.topics.lastOrNull()?.id
                         rev++
                         applyingRemote = true
@@ -1106,7 +1122,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (recent.isNotEmpty()) {
             t.append("<recent>\n")
-            for ((u, a) in recent.takeLast(RECENT)) t.append("사용자: $u\nsay: $a\n")
+            for ((u, a) in recent.takeLast(RECENT)) t.append("사용자: $u\n" + (if ('\n' in a) "say: ${a.substringBefore('\n')}\ntell: ${a.substringAfter('\n')}" else "say: $a") + "\n")
             t.append("</recent>\n")
         }
         if (events.isNotEmpty()) t.append("<events>\n${events.joinToString("\n")}\n</events>\n")
@@ -1154,6 +1170,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         hush = false
         touched.clear()
         turnSpoken.clear()
+        newTurnTalk()
         proVoiceSkip = false // 새 답은 서버의 목소리를 다시 써 본다 (D-A4)
         replyHttp = false
         if (voice && !standby) liveRead?.prepare() // 실시간 읽기: 답이 곧 온다 (게이트웨이가 미리 이어 둔다)
@@ -1336,7 +1353,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (unreached) error = stopNotDelivered()
             val wasStopped = stopFlag
-            recent.add(shown to board.say)
+            recent.add(shown to talkLog(board.say))
             activity = ""
             busy = false
             rev++
@@ -1525,6 +1542,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val op = Lang.parse(line) ?: return
             board.apply(op, by)
+            if (op is Op.Say && by == Author.Ai) turnTell?.let { board.say = it } // 이번 턴에 읽은 대답이 있으면 화면 아래에는 그 대답이 남는다
             // 지금 바뀌는 카드가 있는 주제를 보여 준다.
             val topic = when (op) {
                 is Op.Card -> op.topic
@@ -1550,6 +1568,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
      */
     internal fun aiLine(line: String) {
         val t = line.trim()
+        if (talkAlwaysReads && voice && !replaying) talkText(t)
         if (!voice || hush || standby) {
             if (!t.startsWith("tell ")) applyLine(line, Author.Ai)
             return
@@ -1579,6 +1598,51 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         advanceSpeech()
     }
 
+    private fun newTurnTalk() {
+        turnSay = null
+        turnTell = null
+        turnAt = System.currentTimeMillis()
+        hushWouldLogged = false
+    }
+
+    /** Pro 말로 대화: 이번 턴의 say 를 기억하고, tell 이 오면 그때부터 화면 아래 한마디를 그 대답으로 바꾼다 (R2). */
+    private fun talkText(t: String) {
+        if (t.startsWith("say ")) t.removePrefix("say ").trim().takeIf { it.isNotEmpty() }?.let { turnSay = it }
+        if (t.startsWith("tell ")) t.removePrefix("tell ").trim().takeIf { it.isNotEmpty() }?.let {
+            turnTell = it
+            board.say = it
+            rev++
+        }
+    }
+
+    /** 대화 기록에 남길 이번 턴의 답: tell 이 없으면 오늘처럼 say, 있으면 say 다음 줄에 tell (같거나 한쪽이 다른 쪽에 들어 있으면 한 번만). */
+    private fun talkLog(say: String): String {
+        val tell = turnTell ?: return say
+        val s = turnSay ?: return tell
+        return when {
+            s == tell || tell.contains(s) -> tell
+            s.contains(tell) -> s
+            else -> "$s\n$tell"
+        }
+    }
+
+    /** 대화 기록의 답에서 화면 아래 한마디: 마지막 줄 (say·tell 두 줄이면 tell) */
+    private fun shownLine(reply: String): String = reply.substringAfterLast('\n')
+
+    /** 일하는 중에 말(소리)이 들렸다. 무료 앱: 남은 말은 소리 내지 않는다. Pro 말로 대화: 그대로 읽고 pro.log 에 한 줄만 (턴마다 한 번, 숫자만). */
+    private fun hushWhileWorking(path: String) {
+        if (!talkAlwaysReads) {
+            hush = true
+            return
+        }
+        if (hushWouldLogged) return
+        hushWouldLogged = true
+        proVoiceLog("$path hush-would ms=${System.currentTimeMillis() - turnAt}")
+    }
+
+    /** 예전 방식 마이크: 일하는 중에 소리가 커졌다 (tick 이 부른다, 시험에서도 부른다) */
+    internal fun loudWhileBusy() = hushWhileWorking("voice")
+
     /** 앞 문장을 다 읽었으면 다음 문장을 읽기 시작하고 그 문장의 카드를 띄운다. */
     private fun advanceSpeech() {
         val lr = liveRead
@@ -1602,6 +1666,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
     private var speakFailShown = false
 
     private fun speak(text: String) {
+        onSpeak?.invoke(text)
         speaking = true
         val epoch = ++speakEpoch
         speakStartedAt = System.currentTimeMillis()
@@ -1792,7 +1857,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
         }
         // 말소리가 들리다가 1.1초 조용하면 말이 끝난 것으로 본다.
         val loud = level > threshold
-        if (loud && !heard && busy) hush = true // 일하는 중에 사용자가 말하기 시작했다: 남은 말은 소리 내지 않는다
+        if (loud && !heard && busy) loudWhileBusy() // 일하는 중에 사용자가 말하기 시작했다
         if (loud) {
             heard = true
             quietSince = null
@@ -1953,9 +2018,7 @@ class KiteViewModel(app: Application) : AndroidViewModel(app) {
 
         override fun final(text: String) = heardText(text)
 
-        override fun hush() {
-            this@KiteViewModel.hush = true
-        }
+        override fun hush() = hushWhileWorking("live")
 
         override fun barge() {
             proVoiceLog("live barge words ms=${System.currentTimeMillis() - speakStartedAt}")
