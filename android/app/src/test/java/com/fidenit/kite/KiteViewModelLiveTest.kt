@@ -2,6 +2,9 @@ package com.fidenit.kite
 
 import android.app.Application
 import android.os.Looper
+import com.fidenit.kite.engine.Ev
+import com.fidenit.kite.engine.Runner
+import com.fidenit.kite.engine.Stats
 import com.fidenit.kite.voice.LiveEvents
 import com.fidenit.kite.voice.LiveListen
 import com.fidenit.kite.voice.LiveSpeak
@@ -329,5 +332,64 @@ class KiteViewModelLiveTest {
         idle()
         assertNotNull("the rest went the earlier way", vm.board.card("k2"))
         assertEquals(ProVoice.brokeOff(false), vm.error)
+    }
+
+    /** an engine that holds the turn until [gate] opens, then gives [lines] */
+    private class Held(val lines: String) : Runner {
+        override val label = "fake"
+        val started = java.util.concurrent.CountDownLatch(1)
+        val gate = java.util.concurrent.CountDownLatch(1)
+
+        override fun run(turnText: String, stopped: () -> Boolean, send: (Ev) -> Unit): Stats {
+            started.countDown()
+            gate.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            if (!stopped()) send(Ev.Delta(lines))
+            return Stats()
+        }
+    }
+
+    /** Runs the main looper one task at a time until `cond` holds. */
+    private fun until(what: String, cond: () -> Boolean) {
+        val looper = shadowOf(Looper.getMainLooper())
+        val end = System.currentTimeMillis() + 10_000
+        while (!cond()) {
+            check(System.currentTimeMillis() < end) { "timed out: $what" }
+            if (looper.isIdle) Thread.sleep(10) else looper.runOneTask()
+        }
+    }
+
+    private val say1 = "네, 잘 들려요. 말씀하세요."
+    private val tell1 = "네, 잘 들려요. 무엇을 도와드릴까요?"
+    private val reply1 = "say $say1\ntell $tell1\n"
+
+    /** talking on with both sockets open; a final starts a turn the engine holds */
+    private fun turnHeld(fake: Held) {
+        vm.converse(true)
+        idle()
+        speaks.last().events.opened(5)
+        gw(In.Ready())
+        vm.runnerOverride = fake
+        loud()
+        gw(In.Final("테스트.", "kor"))
+        until("the engine has the turn") { fake.started.count == 0L }
+        assertTrue(vm.busy)
+    }
+
+    /** the line under the screen (Screen.kt BottomBar) */
+    private fun underScreen() = vm.liveSay ?: vm.board.show(vm.board.say)
+
+    /** T1, gateway events 2026-11-21 00:16Z: a phantom partial while the AI works must not silence the reply */
+    @Test
+    fun t1APartialWhileTheAiWorksStillReadsTheReplyAndShowsTheTell() {
+        val fake = Held(reply1)
+        turnHeld(fake)
+        gw(In.Partial("네.")) // no loud audio, busy, not speaking
+        fake.gate.countDown()
+        until("turn ends") { !vm.busy }
+        val sent = speaks.last().sent
+        assertTrue(sent.toString(), sent.any { it.startsWith("say ") && it.endsWith(" $tell1") })
+        assertTrue(sent.toString(), sent.any { it.startsWith("say ") && it.endsWith(" $say1") })
+        assertEquals(tell1, underScreen())
+        assertTrue(vm.recent.last().second, vm.recent.last().second.contains(tell1))
     }
 }
